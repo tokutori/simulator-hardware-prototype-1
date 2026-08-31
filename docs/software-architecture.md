@@ -1,418 +1,229 @@
-# 2軸ギヤ駆動ジンバル ソフトウェア構成
+# 2軸コクピ試作 ソフトウェア構成
 
-## 1. 目的
+## 1. 方針
 
-この文書は、`docs/model-design.md` の機械モデルを生成・検証するソースコードの責務と依存方向を、実装開始前に固定する。
+設計のauthorityは、validated parameterからFeature DAG、component definition、instanceおよびframe/joint graphを作るRustコードである。
 
-設計の中心はCADアプリケーションのファイルではなく、検証済みparameterから2D Region、3D Solid、Assembly、ManufacturingおよびMotionを生成するRustコードである。
+- domain coreは `no_std + alloc`
+- TOML、filesystem、CAD kernel、file formatおよびBlenderをcoreへ入れない
+- nominal geometryとprocess compensationを分離する
+- 2D `RegionId` と3D `SolidId` を別型にする
+- local geometryとassembly placementを分離する
+- component definitionとinstanceを分離する
+- yawを0として保持せず、自由度そのものを型から除く
+- animationと検証は同じkinematicsを使う
+- 生成物は `output/` に置き、Gitへ入れない
 
-## 2. 基本原則
-
-- domain coreは `no_std + alloc` を維持する
-- filesystem、TOML、3MF、DXF、レンダラー、CAD kernelをcoreへ入れない
-- 生の数値と文字列をCLI境界でvalidated typeへ変換する
-- `Length`、`Angle`、`RegionId`、`SolidId`、`PartId`等を別型にする
-- 2D Regionと3D Solidを同じhandleで扱わない
-- geometry operationをimmutableなDAGとして保持する
-- nominal geometryとmanufacturing compensationを分離する
-- I/Oとplatform dependencyをadapterへ隔離する
-- 同じ入力から同じDAGと成果物を生成する
-- errorをpanicやmagic valueではなく `Result` とenumで返す
-- 未実装parameterを設定ファイルへ置かない
-- 生成物をsourceとしてcommitしない
-
-## 3. Workspace構成
+## 2. Workspaceと依存方向
 
 ```text
 simulator-hardware-prototype-1/
-├─ Cargo.toml
-├─ Cargo.lock
-├─ LICENSE
-├─ parameters.toml
-├─ fabrication.toml
-├─ docs/
-│  ├─ model-design.md
-│  └─ software-architecture.md
 ├─ crates/
 │  ├─ gimbal-core/
 │  ├─ gimbal-kernel-manifold/
 │  ├─ gimbal-export/
 │  └─ gimbal-cli/
 ├─ adapters/
+│  ├─ blender/
 │  └─ render-preview/
-├─ tests/
-│  └─ fixtures/
-└─ output/                 # Git ignored
+├─ parameters.toml
+├─ fabrication.toml
+├─ docs/
+└─ output/
 ```
-
-crate数は依存境界が異なる4個に限定する。機能単位で無制限に分割しない。
-
-## 4. 依存関係
 
 ```mermaid
 flowchart TD
     CLI[gimbal-cli]
-    EXPORT[gimbal-export]
+    CORE[gimbal-core no_std]
     KERNEL[gimbal-kernel-manifold]
-    CORE[gimbal-core<br/>no_std + alloc]
-    RENDER[render-preview adapter]
+    EXPORT[gimbal-export]
+    BLENDER[Blender adapter]
 
     CLI --> CORE
     CLI --> KERNEL
     CLI --> EXPORT
-    EXPORT --> CORE
-    EXPORT --> KERNEL
     KERNEL --> CORE
-    RENDER --> EXPORT
+    EXPORT --> CORE
+    BLENDER -->|generated glTF only| EXPORT
 ```
 
-禁止する依存は次のとおりである。
+`gimbal-export` はkernelへ依存しない。両者が共有する `TriangleMesh` はcoreのbackend非依存IRである。
 
-- `gimbal-core -> gimbal-kernel-manifold`
-- `gimbal-core -> gimbal-export`
-- `gimbal-core -> gimbal-cli`
-- `gimbal-core -> renderer`
-- `gimbal-kernel-manifold -> file format writer`
+## 3. gimbal-core
 
-## 5. `gimbal-core`
+coreは次を持つ。
 
-`gimbal-core` は純粋なdomain modelと計算を担当する。
+- `Length`、`Angle`
+- involute外歯、内歯、gear pair、`GearSector`
+- 2D polygon region
+- Extrude、primitive、Transform、Union、Difference、IntersectionのFeature DAG
+- `Body::Solid` と `Body::Sheet`
+- `ComponentDefinition` と `ComponentInstance`
+- append-only `FrameGraph`
+- `Joint::Fixed` と `Joint::Revolute`
+- `PitchRollCommand`
+- prototype設計規則とerror enum
 
-```text
-gimbal-core/src/
-├─ lib.rs
-├─ units.rs
-├─ ids.rs
-├─ geometry/
-│  ├─ point.rs
-│  ├─ curve.rs
-│  ├─ region.rs
-│  ├─ solid.rs
-│  └─ transform.rs
-├─ feature_graph.rs
-├─ gear/
-│  ├─ external.rs
-│  ├─ internal.rs
-│  ├─ pair.rs
-│  └─ profile.rs
-├─ gimbal/
-│  ├─ parameters.rs
-│  ├─ drive_unit.rs
-│  ├─ assembly.rs
-│  └─ kinematics.rs
-├─ manufacturing.rs
-└─ error.rs
-```
-
-### 5.1 単位とvalidated type
-
-最低限、次を別型にする。
+### 3.1 Local geometryとinstance
 
 ```rust
-struct Length(f64);
-struct Angle(f64);
-struct ToothCount(u16);
-struct RegionId(u32);
-struct SolidId(u32);
-struct PartId(u32);
-```
-
-`Length::positive_mm`、`ToothCount::new`等の検証済みconstructor以外から不正値を作れないようにする。
-
-TOMLの値はcoreへ直接deserializeしない。CLI側の `RawParameters` を `TryFrom` で `ValidatedParameters` に変換してからcoreへ渡す。
-
-### 5.2 2D geometry
-
-curve semanticsを可能な限り保持する。
-
-```rust
-enum Curve2 {
-    Line { start: Point2, end: Point2 },
-    Arc { center: Point2, radius: Length, start: Angle, sweep: Angle },
-    Circle { center: Point2, radius: Length },
-    Polyline { points: Vec<Point2>, closed: bool },
-}
-```
-
-involute等のparametric curveは、出力backendへ渡す時点でchord toleranceに従ってadaptive subdivisionする。固定96分割等をsource of truthにしない。
-
-### 5.3 Feature DAG
-
-```rust
-enum SolidNode {
-    Primitive(Primitive3),
-    Extrude { profile: RegionId, distance: Length },
-    Revolve { profile: RegionId, axis: Axis3, angle: Angle },
-    Transform { solid: SolidId, transform: Transform3 },
-    Boolean {
-        operation: BooleanOperation,
-        lhs: SolidId,
-        rhs: SolidId,
-    },
-}
-```
-
-初期operation setは `Extrude`、`Transform`、`Union`、`Difference`、`Intersection` とする。完成したgraphはimmutableとし、builder内部だけ局所的なmutationを許す。
-
-DAG構築時にinvalid ID、cycle、zero-length extrusionおよびdegenerate primitiveを拒否する。
-
-### 5.4 Gear domain
-
-外歯、内歯、外歯同士の噛み合い、内歯と外歯の噛み合いを別の型またはenumで表す。
-
-検証対象は次のとおりである。
-
-- module
-- tooth count
-- pressure angle
-- backlash
-- pitch/base/tip/root diameter
-- standard profileのundercut条件
-- center distance
-- external meshとinternal meshの回転方向
-- tooth phase
-- adaptive subdivision error
-
-gear理論の計算と、Manifoldへ渡すpolygon生成を分ける。
-
-### 5.5 AssemblyとMotion
-
-```rust
-struct Part {
-    id: PartId,
-    solid: SolidId,
+struct ComponentDefinition {
+    name: String,
+    body: Body,
     manufacturing: Manufacturing,
-    motion_group: MotionGroup,
-    nominal_pose: Transform3,
 }
 
-enum MotionGroup {
-    Fixed,
-    YawCarrier,
-    PitchCarrier,
-    DrivePinion { unit: UnitId, branch: Branch },
-    EncoderPinion { unit: UnitId },
-    PitchPinion,
+struct ComponentInstance {
+    definition: ComponentDefinitionId,
+    frame: FrameId,
+    local_pose: RigidTransform,
 }
 ```
 
-運動学は角度を入力し、各motion groupのtransformを純粋関数として返す。animation adapterも干渉検査も同じ関数を使う。
+同じsector 4個、drive pinion 8個等は一つのdefinitionを複数instanceとして配置する。kernel evaluationとFDMファイル生成はdefinitionごとに一回だけ行う。
 
-## 6. `gimbal-kernel-manifold`
-
-`gimbal-kernel-manifold` はfeature DAGを [`manifold-rust`](https://docs.rs/manifold-rust/latest/manifold_rust/) へ評価するadapterである。
-
-担当範囲は次のとおり。
-
-- 2D Regionのpolygon化
-- Extrude、primitive、transform、Booleanの評価
-- `Manifold` statusの検査
-- triangle meshへの変換
-- volume、bounds、manifoldnessの取得
-- solid-solid intersection volumeによる干渉検査
-- DAG node単位のcache
-
-design codeから `manifold-rust` の型を直接参照しない。backend固有errorはadapterでdomain errorへ対応付ける。
-
-初期backendは `manifold-rust 0.13.x` を想定する。公式crate documentationではpure Rustのtriangle mesh/CSG kernelとしてextrude、revolve、union、intersection、differenceおよびMeshGL exportを提供し、Apache-2.0で公開されている。
-
-## 7. `gimbal-export`
-
-`gimbal-export` は評価済みassemblyから成果物を生成する。
+### 3.2 FrameとKinematics
 
 ```text
-gimbal-export/src/
-├─ lib.rs
-├─ three_mf.rs
-├─ stl.rs
-├─ dxf.rs
-├─ gltf_animation.rs
-├─ manifest.rs
-└─ report.rs
+World
+├─ fixed floor / support / rails / gear sectors
+└─ PitchFrame (Y revolute)
+   ├─ orbiting pitch contact units and gearboxes
+   ├─ front/rear roll gearboxes
+   └─ RollFrame (local X revolute)
+      ├─ continuous roll shaft
+      └─ suspended cockpit
 ```
 
-### 7.1 3D manufacturing
+固定sectorと公転pinionの関係はframe親子関係とgear ratioから表す。exporterに個別の角度計算を書かない。
 
-- canonical: 3MF
-- compatibility: STL
+## 4. gimbal-kernel-manifold
 
-3MF writerにはpure RustでMIT licenseの [`lib3mf`](https://docs.rs/lib3mf/latest/lib3mf/) をadapter内部で使用する。unitをmillimeterとして明示し、部品名とassembly itemを保持する。
+Feature DAGを `manifold-rust` へ評価するadapterである。
 
-STLはunitlessであるためcanonicalにしない。互換出力としてのみ生成し、manifestへmm前提を記録する。
+- region polygonのcross-section化
+- primitive、extrude、transform、Boolean
+- node cache
+- manifold status
+- triangle mesh、volume、surface area
 
-### 7.2 Laser cutting
+domain codeからManifold型を参照しない。将来別kernelを追加してもcoreとexporterを変更しない境界とする。
 
-- canonical: DXF
-- preview: SVGまたはPDFは必要になった段階で追加
+## 5. gimbal-export
 
-DXF writerにはMIT licenseの [`dxf`](https://docs.rs/dxf/latest/dxf/) crateを使用する。mm unit、CUT layer、closed contourを出力し、同じcrateで再読込してaudit相当の構造検査を行う。
+評価済みmesh、core kinematicsおよびnominal profileだけを受け取る。
 
-kerfはnominal profileへ適用しない。`fabrication.toml` のlaser processからmanufacturing realizationとして適用する。
+| 出力 | 用途 |
+| --- | --- |
+| definition別3MF | FDM canonical |
+| assembly 3MF | inspection |
+| STL | unitless compatibility |
+| OBJ/MTL | inspection fallback |
+| DXF | laser nominal CUT profile |
+| animated glTF | renderer非依存motion |
 
-### 7.3 Animation
+glTFは右手系Y-up、metreである。coreの右手系Z-up、mmから境界で次へ変換する。
 
-animated glTFは、coreのkinematicsからnode transformとkeyframeを生成する。
+```text
+core (x, y, z) mm -> glTF (x, z, -y) m
+```
 
-- fixed frame
-- yaw carrier
-- pitch carrier
-- 4本の外軸駆動ピニオン
-- 2本の外軸エンコーダピニオン
-- 分配ギヤ
-- 内軸駆動ギヤ
+DXFはR2013、`INSUNITS=Millimeters`、`CUT` layer、closed `LWPOLYLINE` とし、書出し直後に再読込検査する。
 
-の回転を含める。
+3MFはCore packageに必要な `[Content_Types].xml`、`_rels/.rels`、`3D/3dmodel.model` を直接生成する。ZIP timestampを固定し、同一meshからbyte-identicalな出力になることと、mm unit、object/build itemおよびXML escapingをtestする。外部3MF parserはruntime dependencyにしない。
 
-glTF animationはrenderer非依存の検証成果物であり、Blender等をsource of truthにしない。
-
-## 8. `gimbal-cli`
-
-`gimbal-cli` はI/Oと処理順序を管理する。
+## 6. gimbal-cli
 
 ```text
 Raw TOML
-   ↓ parse
-RawParameters
-   ↓ TryFrom
-ValidatedParameters
-   ↓ pure build
-Feature DAG + Assembly + Kinematics
-   ↓ kernel evaluation
-Meshes + collision results
-   ↓ exporters
-3MF / STL / DXF / glTF / manifest / previews
+  -> boundary validation
+PrototypeParameters + process profiles
+  -> pure build
+FeatureGraph + Assembly + Kinematics
+  -> kernel evaluation once per definition
+  -> exporters
+  -> manifest with hashes
 ```
 
-CLI commandは初期段階で次を提供する。
+commandは次の3個である。
 
 ```text
 gimbal generate
 gimbal validate
-gimbal render-preview
 gimbal clean-output
 ```
 
-`clean-output` は明示された `output/` だけを対象とし、workspace rootや任意pathを再帰削除しない。
+`clean-output` はcanonicalizeしたworkspace直下の `output` だけを削除する。
 
-## 9. Preview adapter
+## 7. Manufacturing境界
 
-PNGおよび動画生成は `adapters/render-preview/` に隔離する。
-
-adapterは生成済み3MF、STLまたはglTFとmanifestだけを読み、設計計算を再実装しない。
-
-必須出力は次の4枚とする。
-
-- `output/preview/isometric.png`
-- `output/preview/top.png`
-- `output/preview/side.png`
-- `output/preview/drive-unit-detail.png`
-
-利用可能なrendererがある場合は `motion.mp4` または `motion.gif` も生成する。rendererがない場合でも、animated glTFの生成と構造検査は成功条件に含める。
-
-renderer固有dependencyはcore、kernelおよびexport crateへ追加しない。
-
-## 10. 設定ファイル
-
-```text
-parameters.toml
-    nominal geometryと可動範囲
-
-fabrication.toml
-    material、kerf、FDM compensation、printer/laser envelope
+```rust
+enum Manufacturing {
+    Fdm { material: FdmMaterial },
+    LaserCut,
+    Purchased,
+}
 ```
 
-parameter schemaとderive ruleはRust sourceに置く。すべてを動的なkey-valueへ押し込まない。
+`Body::Sheet` は2D profile、実板厚およびassembly用extrusionを同時に保持する。laser DXFはprofileから、3D inspectionはextrusionから生成する。
 
-文書へ現在値を手書きで複製し続けない。実装後の正確な値は `output/manifest.json` から生成し、この文書の数値は初期設計値として扱う。
+kerf、FDM hole compensationおよびmachine envelopeは `fabrication.toml` のprocess profileであり、nominal Feature DAGへ混ぜない。現在のprototypeでは補正値をmanifestへ記録するが、nominal加工ファイルへ自動適用しない。
 
-## 11. 検証戦略
+## 8. Blender adapter
 
-### 11.1 Unit test
+Blender 5.xをbackground実行し、generated glTFをimportするだけである。
 
-- unit newtype
-- parameter validation
-- involute point、diameter、tooth symmetry
-- internal/external gear pair
-- gear ratioとrotation direction
-- feature graph cycle rejection
-- kinematic transform
-- encoder angle conversion
+- coreと一致するX前、Y右、Z上で方向別cameraを作る
+- scene boundsからcameraとlightを決める
+- floorをshadow receiverとして表示する
+- `.blend`、PNG、連番およびH.264 MP4を生成する
+- MP4 encodingは外部FFmpegを利用可能とする
 
-### 11.2 Property / parameter sweep
+Blender固有処理はcore、kernelおよびexport crateへ入れない。
 
-- yawとpitch可動域のsample
-- chord toleranceを変えた最大形状誤差
-- 歯数、moduleおよびbacklashのvalid/invalid boundary
-- artifact hashの再現性
+## 9. Validation
 
-### 11.3 Kernel integration test
+### Core/unit
 
-- extrusion volume `V = A h`
-- Boolean result status
-- gearとpinionの位相別intersection volume
-- 可動域での非接触部品干渉
-- mesh positive volume
-- 3MF round-trip
-- DXF round-trip
-- glTF node、accessor、animation channel整合性
+- unit、gear diameter、undercut、internal/external ratio
+- RegionId/SolidId分離
+- append-only DAG
+- nested pitch/roll frame
+- pitch/roll limitとyaw非表現性
+- sector中央を切らないwedge
 
-ギヤ歯面は接触境界となるため、浮動小数点誤差を考慮した小さいvolume toleranceを定義する。干渉を見えなくするために描画だけをずらさない。
+### Repository integration
 
-## 12. CIと品質ゲート
+- fixed rackがpitch中も静止する
+- pinion unitが一定半径で公転する
+- drive/retention pinionのplanetary回転比
+- 4 sector、8 drive pinion、4 retention pinion
+- 前後roll gear、pinionおよびgearbox
+- 軸下コクピと重力復元方向
+- floor clearance parameter
 
-最低限、次を実行する。
+### Artifact
+
+- definitionごとのpositive volume
+- 3MF mm unit
+- DXF mm/CUT/closed contour round-trip
+- glTF coordinate conversion、node、animation
+- SHA-256 manifest
+
+## 10. Quality gate
 
 ```text
 cargo fmt --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
-cargo build -p gimbal-core --no-default-features
-cargo build -p gimbal-core --target wasm32-unknown-unknown
-cargo deny check
+cargo check -p gimbal-core --no-default-features
+cargo check -p gimbal-core --target wasm32-unknown-unknown --no-default-features
+cargo audit
 ```
 
-WASM targetが環境に未導入の場合はCIで導入し、ローカル結果では未実行と明示する。
+公開前にはdependency license、secrets、large files、staged contentおよびrelease archiveを検査する。
 
-## 13. Determinismとmanifest
+## 11. License
 
-`output/manifest.json` には最低限、次を記録する。
-
-- validated parameters
-- manufacturing profile
-- gear ratioとcenter distance
-- part一覧と製法
-- feature graph hash
-- 各artifactのSHA-256
-- tool version
-- Git commit SHAまたはdirty state
-- test/validation summary
-- 未検証事項
-
-timestampはartifact identityのhash入力へ含めない。
-
-## 14. Licenseと公開方針
-
-repository全体はMIT Licenseで公開する。
-
-- 各Rust sourceへ `SPDX-License-Identifier: MIT` を付ける
-- dependencyはMIT、Apache-2.0、BSD等の公開互換性を確認する
-- copyleft dependencyの追加は事前に判断を記録する
-- 他CAD projectやgear libraryのソースをコピーしない
-- gear数式は公開された一般理論から独立実装する
-- reference implementationとの比較はtest-time toolとして分離する
-- `.git`、virtual environment、生成物、秘密情報をrelease archiveへ含めない
-
-公開前に `cargo deny`、secret scan、large-file scanおよびstaged-content確認を行う。
-
-## 15. 実装順序
-
-1. `gimbal-core` のunits、gear domain、feature DAG、kinematicsを完成させる。
-2. 外歯・内歯profileとgear pair testを完成させる。
-3. `gimbal-kernel-manifold` でsolidを評価する。
-4. 大型リングと1組の駆動ユニットを生成し、静的干渉を検査する。
-5. 180度反対側のユニット、内軸およびassemblyを追加する。
-6. 3MF、STL、DXF、manifestを生成する。
-7. animated glTFとPNG previewを生成する。
-8. 可動域sample、artifact round-trip、lintおよびlicense checkを通す。
-
-各段階でテストを通し、次段階へ進む。暫定的な形状簡略化は許容するが、coreとI/Oを混在させる暫定設計は残さない。
+repository sourceはMIT Licenseとする。外部実行programのBlenderとFFmpegはrepositoryへ同梱・リンクしない。第三者gear実装をコピーせず、一般公開された数式から独立実装する。dependency追加時はMIT公開との互換性を確認する。
