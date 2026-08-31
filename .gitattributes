@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.3mf binary
+*.bin binary
+*.stl binary
+*.blend binary
+*.mp4 binary

@@ -1,0 +1,19 @@
+[package]
+name = "gimbal-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "gimbal"
+path = "src/main.rs"
+
+[dependencies]
+gimbal-core = { path = "../gimbal-core" }
+gimbal-export = { path = "../gimbal-export" }
+gimbal-kernel-manifold = { path = "../gimbal-kernel-manifold" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+toml = "0.9.5"

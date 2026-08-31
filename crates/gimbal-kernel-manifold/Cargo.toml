@@ -1,0 +1,11 @@
+[package]
+name = "gimbal-kernel-manifold"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gimbal-core = { path = "../gimbal-core" }
+manifold-rust = "0.13.1"
+thiserror.workspace = true

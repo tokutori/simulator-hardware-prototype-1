@@ -1,0 +1,9 @@
+[fdm]
+material = "PETG"
+hole_compensation_mm = 0.20
+
+[laser]
+material = "laser-grade plywood"
+kerf_mm = 0.15
+bed_width_mm = 600.0
+bed_height_mm = 300.0

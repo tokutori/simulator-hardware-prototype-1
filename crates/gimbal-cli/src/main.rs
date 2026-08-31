@@ -1,0 +1,475 @@
+// SPDX-License-Identifier: MIT
+
+mod config;
+
+use std::error::Error;
+use std::fs;
+use std::path::Path;
+
+use config::LoadedConfig;
+use gimbal_core::{
+    Angle, Body, Manufacturing, PitchRollCommand, RegionNode, TriangleMesh, build_prototype,
+};
+use gimbal_export::{
+    AnimationParameters, ExportPart, sha256_file, write_3mf, write_animated_gltf, write_binary_stl,
+    write_dxf_profile, write_mesh_3mf, write_obj,
+};
+use gimbal_kernel_manifold::Evaluator;
+use serde_json::{Value, json};
+
+fn main() {
+    if let Err(error) = run() {
+        eprintln!("error: {error}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<(), Box<dyn Error>> {
+    let command = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "generate".to_string());
+    let workspace = std::env::current_dir()?;
+    let loaded = config::load(
+        &workspace.join("parameters.toml"),
+        &workspace.join("fabrication.toml"),
+    )?;
+    match command.as_str() {
+        "generate" => generate(&workspace, &loaded),
+        "validate" => validate(&loaded),
+        "clean-output" => clean_output(&workspace),
+        unknown => Err(format!(
+            "unknown command {unknown:?}; expected generate, validate, or clean-output"
+        )
+        .into()),
+    }
+}
+
+fn validate(loaded: &LoadedConfig) -> Result<(), Box<dyn Error>> {
+    let design = build_prototype(&loaded.parameters)
+        .map_err(|error| format!("prototype design rejected: {error:?}"))?;
+    let mut evaluator = Evaluator::new(&design.graph);
+    for definition in design.assembly.definitions() {
+        let metrics = evaluator.metrics(definition.body.assembly_solid())?;
+        println!(
+            "validated definition {:<38} {:>8} triangles {:>12.2} mm^3",
+            definition.name, metrics.triangles, metrics.volume_mm3
+        );
+    }
+    println!(
+        "validation complete: {} definitions, {} instances, pitch drive {:.3}:1, gearbox {:.3}:1/stage, roll {:.3}:1",
+        design.assembly.definitions().len(),
+        design.assembly.instances().len(),
+        design.pitch_drive_pair.ratio(),
+        design.pitch_gearbox_pair.ratio(),
+        design.roll_pair.ratio(),
+    );
+    Ok(())
+}
+
+fn generate(workspace: &Path, loaded: &LoadedConfig) -> Result<(), Box<dyn Error>> {
+    let design = build_prototype(&loaded.parameters)
+        .map_err(|error| format!("prototype design rejected: {error:?}"))?;
+    let output = workspace.join("output");
+    let model_dir = output.join("model");
+    let animation_dir = output.join("animation");
+    let preview_dir = output.join("preview");
+    let fdm_dir = output.join("fabrication").join("fdm");
+    let laser_dir = output.join("fabrication").join("laser");
+    for directory in [
+        &model_dir,
+        &animation_dir,
+        &preview_dir,
+        &fdm_dir,
+        &laser_dir,
+    ] {
+        fs::create_dir_all(directory)?;
+    }
+
+    let mut evaluator = Evaluator::new(&design.graph);
+    let mut definition_meshes =
+        Vec::<TriangleMesh>::with_capacity(design.assembly.definitions().len());
+    let mut definition_manifest = Vec::new();
+    let mut fabrication_artifacts = Vec::new();
+    for (definition_index, definition) in design.assembly.definitions().iter().enumerate() {
+        let solid = definition.body.assembly_solid();
+        let mesh = evaluator.mesh(solid)?;
+        let metrics = evaluator.metrics(solid)?;
+        let quantity = design
+            .assembly
+            .instances()
+            .iter()
+            .filter(|instance| instance.definition.index() == definition_index)
+            .count();
+        definition_manifest.push(json!({
+            "name": definition.name,
+            "manufacturing": manufacturing_name(definition.manufacturing),
+            "quantity": quantity,
+            "vertices": metrics.vertices,
+            "triangles": metrics.triangles,
+            "volume_mm3": metrics.volume_mm3,
+            "surface_area_mm2": metrics.surface_area_mm2
+        }));
+        match definition.manufacturing {
+            Manufacturing::Fdm { .. } => {
+                let path = fdm_dir.join(format!("{}.3mf", definition.name));
+                write_mesh_3mf(&definition.name, &mesh, &path)?;
+                fabrication_artifacts.push(path);
+            }
+            Manufacturing::LaserCut => {
+                let Body::Sheet { profile, .. } = definition.body else {
+                    return Err(format!(
+                        "laser definition {:?} does not retain a nominal 2D profile",
+                        definition.name
+                    )
+                    .into());
+                };
+                let Some(RegionNode::Polygon(points)) = design.graph.region(profile) else {
+                    return Err("laser profile references an unknown region".into());
+                };
+                let path = laser_dir.join(format!("{}.dxf", definition.name));
+                write_dxf_profile(points, &path)?;
+                fabrication_artifacts.push(path);
+            }
+            Manufacturing::Purchased => {}
+        }
+        definition_meshes.push(mesh);
+    }
+    let zero_pose = design
+        .kinematics
+        .pose(PitchRollCommand {
+            pitch: Angle::degrees(0.0).expect("zero angle is valid"),
+            roll: Angle::degrees(0.0).expect("zero angle is valid"),
+        })
+        .map_err(|error| format!("zero pose rejected: {error:?}"))?;
+    let mut export_parts = Vec::with_capacity(design.assembly.instances().len());
+    let mut instance_manifest = Vec::with_capacity(design.assembly.instances().len());
+    for instance in design.assembly.instances() {
+        let definition = design
+            .assembly
+            .definition(instance.definition)
+            .ok_or("assembly referenced an unknown definition")?;
+        let frame_pose = zero_pose
+            .frame(instance.frame)
+            .ok_or("assembly referenced an unknown frame")?;
+        let static_pose = frame_pose.compose(instance.local_pose);
+        instance_manifest.push(json!({
+            "name": instance.name,
+            "definition": definition.name,
+            "frame": instance.frame.index(),
+            "static_translation_mm": static_pose.translation,
+        }));
+        export_parts.push(ExportPart {
+            name: instance.name.clone(),
+            definition: instance.definition,
+            mesh: definition_meshes[instance.definition.index()].clone(),
+            manufacturing: definition.manufacturing,
+            frame: instance.frame,
+            local_pose: instance.local_pose,
+            static_pose,
+            color_rgba: definition.color_rgba,
+        });
+    }
+
+    let three_mf_path = model_dir.join("assembly.3mf");
+    let stl_path = model_dir.join("assembly.stl");
+    let obj_path = model_dir.join("assembly.obj");
+    let mtl_path = model_dir.join("assembly.mtl");
+    let gltf_path = animation_dir.join("gimbal-motion.gltf");
+    let bin_path = animation_dir.join("gimbal-motion.bin");
+    write_3mf(&export_parts, &three_mf_path)?;
+    write_binary_stl(&export_parts, &stl_path)?;
+    write_obj(&export_parts, &obj_path, &mtl_path)?;
+    write_animated_gltf(
+        &export_parts,
+        &design.kinematics,
+        AnimationParameters {
+            pitch_limit_degrees: loaded.parameters.motion.pitch_limit.as_degrees(),
+            roll_limit_degrees: loaded.parameters.motion.roll_limit.as_degrees(),
+            duration_seconds: 6.0,
+        },
+        &gltf_path,
+        &bin_path,
+    )?;
+
+    let mut artifact_paths = vec![
+        three_mf_path,
+        stl_path,
+        obj_path,
+        mtl_path,
+        gltf_path,
+        bin_path,
+    ];
+    artifact_paths.extend(fabrication_artifacts);
+    for optional in [
+        output.join("model/gimbal-prototype.blend"),
+        output.join("preview/isometric.png"),
+        output.join("preview/top-z.png"),
+        output.join("preview/left-side-minus-y.png"),
+        output.join("preview/front-plus-x.png"),
+        output.join("preview/drive-unit-detail.png"),
+        output.join("preview/gimbal-motion.mp4"),
+    ] {
+        if optional.is_file() {
+            artifact_paths.push(optional);
+        }
+    }
+    let artifacts = artifact_paths
+        .iter()
+        .map(|path| {
+            let relative = path.strip_prefix(workspace).unwrap_or(path);
+            Ok(json!({
+                "path": relative.to_string_lossy().replace('\\', "/"),
+                "bytes": fs::metadata(path)?.len(),
+                "sha256": sha256_file(path)?
+            }))
+        })
+        .collect::<Result<Vec<Value>, Box<dyn Error>>>()?;
+    let sector = &loaded.parameters.pitch_sector.sector;
+    let gearbox_stage_ratio = design.pitch_gearbox_pair.ratio();
+    let manifest = json!({
+        "schema_version": 3,
+        "project": "pitch-roll cockpit attitude simulator prototype",
+        "units": "millimeter",
+        "status": "unpowered concept geometry only; not load-rated",
+        "geometry": {
+            "reference_outside_diameter_mm": sector.external_reference().outside_diameter(),
+            "external_reference_teeth": sector.external_reference().teeth(),
+            "internal_reference_teeth": sector.internal_reference().teeth(),
+            "sector_half_angle_deg": sector.half_angle().as_degrees(),
+            "physical_sector_count": 4,
+            "pitch_sectors_ground_fixed": true,
+            "carrier_count": 2,
+            "contact_unit_count": 4,
+            "contact_units_move_with_pitch": true,
+            "drive_pinions_per_unit": 2,
+            "drive_pinion_count": 8,
+            "retention_encoder_pinion_count": 4,
+            "pitch_gearbox_count": 4,
+            "roll_gearbox_count": 2,
+            "roll_mechanism_moves_with_pitch": true,
+            "cockpit_length_mm": loaded.parameters.cockpit.length.mm(),
+            "cockpit_suspension_drop_mm": loaded.parameters.cockpit.suspension_drop.mm(),
+            "continuous_roll_shaft": true,
+            "carrier_rail_offset_mm": loaded.parameters.frame.carrier_rail_offset.mm(),
+            "floor_top_below_axis_mm": loaded.parameters.frame.floor_top_below_axis.mm(),
+            "motor_bodies_included": false,
+            "encoder_bodies_included": false
+        },
+        "ratios": {
+            "pitch_drive_pinion_to_sector_reference": design.pitch_drive_pair.ratio(),
+            "pitch_encoder_pinion_to_sector_reference": design.pitch_encoder_pair.ratio(),
+            "pitch_gearbox_per_stage": gearbox_stage_ratio,
+            "pitch_input_shaft_to_carrier": gearbox_stage_ratio * gearbox_stage_ratio * design.pitch_drive_pair.ratio(),
+            "roll_pinion_to_cockpit": design.roll_pair.ratio(),
+            "roll_input_shaft_to_cockpit": gearbox_stage_ratio * gearbox_stage_ratio * design.roll_pair.ratio()
+        },
+        "motion": {
+            "pitch_limit_deg": loaded.parameters.motion.pitch_limit.as_degrees(),
+            "roll_limit_deg": loaded.parameters.motion.roll_limit.as_degrees(),
+            "yaw_degrees_of_freedom": 0
+        },
+        "process_profiles": {
+            "fdm_material": loaded.fdm_material,
+            "fdm_hole_compensation_mm": loaded.fdm_hole_compensation_mm,
+            "laser_material": loaded.laser_material,
+            "laser_kerf_mm": loaded.laser_kerf_mm,
+            "laser_bed_mm": loaded.laser_bed_mm
+        },
+        "definitions": definition_manifest,
+        "instances": instance_manifest,
+        "artifacts": artifacts,
+        "unverified": [
+            "load capacity, stiffness, fatigue life, and tooth contact stress",
+            "motor, encoder, bearing, brake, and emergency-stop selection",
+            "leaf-spring rate and preload",
+            "real manufactured backlash, runout, and load sharing",
+            "production 2 m / 50-80 kg safety design"
+        ]
+    });
+    fs::write(
+        output.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest)?,
+    )?;
+    println!(
+        "generated {} component definitions and {} instances in {}",
+        design.assembly.definitions().len(),
+        export_parts.len(),
+        output.display()
+    );
+    Ok(())
+}
+
+fn clean_output(workspace: &Path) -> Result<(), Box<dyn Error>> {
+    let output = workspace.join("output");
+    let canonical_workspace = workspace.canonicalize()?;
+    if output.exists() {
+        let canonical_output = output.canonicalize()?;
+        if canonical_output.parent() != Some(canonical_workspace.as_path())
+            || canonical_output.file_name().and_then(|name| name.to_str()) != Some("output")
+        {
+            return Err("refusing to remove an unexpected output path".into());
+        }
+        fs::remove_dir_all(&canonical_output)?;
+        println!("removed {}", canonical_output.display());
+    }
+    Ok(())
+}
+
+fn manufacturing_name(manufacturing: Manufacturing) -> &'static str {
+    match manufacturing {
+        Manufacturing::Fdm { .. } => "fdm",
+        Manufacturing::LaserCut => "laser-cut",
+        Manufacturing::Purchased => "purchased",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gimbal_core::{PrototypeDesign, RigidTransform};
+
+    fn load_design() -> PrototypeDesign {
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let loaded = config::load(
+            &workspace.join("parameters.toml"),
+            &workspace.join("fabrication.toml"),
+        )
+        .expect("repository parameters must be valid");
+        build_prototype(&loaded.parameters).expect("repository design must be valid")
+    }
+
+    fn command(pitch: f64, roll: f64) -> PitchRollCommand {
+        PitchRollCommand {
+            pitch: Angle::degrees(pitch).expect("finite pitch"),
+            roll: Angle::degrees(roll).expect("finite roll"),
+        }
+    }
+
+    fn instance_pose(
+        design: &PrototypeDesign,
+        name: &str,
+        pitch: f64,
+        roll: f64,
+    ) -> RigidTransform {
+        let instance = design
+            .assembly
+            .instances()
+            .iter()
+            .find(|instance| instance.name == name)
+            .unwrap_or_else(|| panic!("missing instance {name}"));
+        design
+            .kinematics
+            .pose(command(pitch, roll))
+            .expect("command within limits")
+            .frame(instance.frame)
+            .expect("instance frame exists")
+            .compose(instance.local_pose)
+    }
+
+    fn count_prefix(design: &PrototypeDesign, prefix: &str) -> usize {
+        design
+            .assembly
+            .instances()
+            .iter()
+            .filter(|instance| instance.name.starts_with(prefix))
+            .count()
+    }
+
+    #[test]
+    fn repository_design_has_the_required_reused_components() {
+        let design = load_design();
+        assert_eq!(count_prefix(&design, "pitch_sector_"), 4);
+        assert_eq!(count_prefix(&design, "pitch_drive_") / 5, 8);
+        assert_eq!(count_prefix(&design, "pitch_retention_") / 7, 4);
+        assert_eq!(count_prefix(&design, "roll_driven_gear_"), 2);
+        assert_eq!(count_prefix(&design, "roll_output_pinion_"), 2);
+        assert_eq!(count_prefix(&design, "roll_gearbox_front_input_pinion"), 1);
+        assert_eq!(count_prefix(&design, "roll_gearbox_rear_input_pinion"), 1);
+    }
+
+    #[test]
+    fn fixed_rack_stays_still_while_pinion_unit_orbits() {
+        let design = load_design();
+        let rack_zero = instance_pose(&design, "pitch_sector_left_front", 0.0, 0.0);
+        let rack_pitch = instance_pose(&design, "pitch_sector_left_front", 20.0, 0.0);
+        assert_eq!(rack_zero, rack_pitch);
+
+        let pinion_zero = instance_pose(&design, "pitch_drive_left_front_1", 0.0, 0.0);
+        let pinion_pitch = instance_pose(&design, "pitch_drive_left_front_1", 20.0, 0.0);
+        assert_ne!(pinion_zero.translation, pinion_pitch.translation);
+        let radius_zero = pinion_zero.translation[0].hypot(pinion_zero.translation[2]);
+        let radius_pitch = pinion_pitch.translation[0].hypot(pinion_pitch.translation[2]);
+        assert!((radius_zero - radius_pitch).abs() < 1.0e-8);
+
+        let floor_zero = instance_pose(&design, "installation_floor_reference", 0.0, 0.0);
+        let floor_pitch = instance_pose(&design, "installation_floor_reference", 20.0, 0.0);
+        assert_eq!(floor_zero, floor_pitch);
+    }
+
+    #[test]
+    fn pitch_drive_and_roll_mechanism_travel_as_one_moving_body() {
+        let design = load_design();
+        let moving_names = [
+            "pitch_gearbox_left_front_side_plate_1",
+            "roll_gearbox_front_side_plate_1",
+            "roll_shaft",
+            "cockpit_body",
+        ];
+        for name in moving_names {
+            let zero = instance_pose(&design, name, 0.0, 0.0);
+            let pitched = instance_pose(&design, name, 20.0, 0.0);
+            assert_ne!(zero, pitched, "{name} must follow pitch");
+        }
+
+        let rack_zero = instance_pose(&design, "pitch_sector_left_front", 0.0, 0.0);
+        let rack_pitched = instance_pose(&design, "pitch_sector_left_front", 20.0, 0.0);
+        assert_eq!(rack_zero, rack_pitched, "the ground rack must remain fixed");
+
+        let roll_shaft_zero = instance_pose(&design, "roll_shaft", 0.0, 0.0);
+        let roll_shaft_pitched = instance_pose(&design, "roll_shaft", 20.0, 0.0);
+        let roll_gearbox_zero = instance_pose(&design, "roll_gearbox_front_side_plate_1", 0.0, 0.0);
+        let roll_gearbox_pitched =
+            instance_pose(&design, "roll_gearbox_front_side_plate_1", 20.0, 0.0);
+        assert!(
+            (distance(roll_shaft_zero, roll_gearbox_zero)
+                - distance(roll_shaft_pitched, roll_gearbox_pitched))
+            .abs()
+                < 1.0e-8
+        );
+    }
+
+    #[test]
+    fn cockpit_is_suspended_and_gravity_has_a_restoring_direction() {
+        let design = load_design();
+        let shaft = instance_pose(&design, "roll_shaft", 0.0, 0.0);
+        let cockpit_zero = instance_pose(&design, "cockpit_body", 0.0, 0.0);
+        let cockpit_rolled = instance_pose(&design, "cockpit_body", 0.0, 35.0);
+        assert!(cockpit_zero.translation[2] < shaft.translation[2]);
+        assert!(cockpit_zero.translation[2] < cockpit_rolled.translation[2]);
+    }
+
+    #[test]
+    fn pitch_pinion_spin_includes_orbit_about_the_fixed_rack() {
+        let design = load_design();
+        let pitch = 1.0_f64;
+        let drive = instance_pose(&design, "pitch_drive_left_front_1", pitch, 0.0);
+        let encoder = instance_pose(&design, "pitch_retention_left_front", pitch, 0.0);
+        let drive_angle = quaternion_y_degrees(drive.rotation);
+        let encoder_angle = quaternion_y_degrees(encoder.rotation);
+        let expected_drive = pitch * (1.0 - design.pitch_drive_pair.ratio());
+        let expected_encoder = pitch * (1.0 + design.pitch_encoder_pair.ratio());
+        assert!((drive_angle - expected_drive).abs() < 1.0e-6);
+        assert!((encoder_angle - expected_encoder).abs() < 1.0e-6);
+    }
+
+    fn quaternion_y_degrees(rotation: [f64; 4]) -> f64 {
+        2.0 * rotation[1].atan2(rotation[3]) * 180.0 / core::f64::consts::PI
+    }
+
+    fn distance(a: RigidTransform, b: RigidTransform) -> f64 {
+        let dx = a.translation[0] - b.translation[0];
+        let dy = a.translation[1] - b.translation[1];
+        let dz = a.translation[2] - b.translation[2];
+        dx.hypot(dy).hypot(dz)
+    }
+}
