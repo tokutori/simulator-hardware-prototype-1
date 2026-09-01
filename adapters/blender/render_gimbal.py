@@ -30,6 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--video-width", type=int, default=720)
     parser.add_argument("--video-height", type=int, default=540)
     parser.add_argument("--skip-animation", action="store_true")
+    parser.add_argument("--skip-full-animation", action="store_true")
     return parser.parse_args(arguments)
 
 
@@ -48,6 +49,16 @@ def mesh_bounds(objects: list[bpy.types.Object]) -> tuple[Vector, Vector]:
         Vector(tuple(min(point[axis] for point in corners) for axis in range(3))),
         Vector(tuple(max(point[axis] for point in corners) for axis in range(3))),
     )
+
+
+def set_visible_meshes(
+    meshes: list[bpy.types.Object], selected: list[bpy.types.Object]
+) -> None:
+    selected_names = {obj.name for obj in selected}
+    for obj in meshes:
+        hidden = obj.name not in selected_names
+        obj.hide_render = hidden
+        obj.hide_viewport = hidden
 
 
 def look_at(camera: bpy.types.Object, target: Vector, image_up: Vector = Vector((0.0, 0.0, 1.0))) -> None:
@@ -173,12 +184,16 @@ def render_animation(
     height: int,
     frame_count: int,
     fps: int,
+    frames_name: str,
+    follow_objects: list[bpy.types.Object] | None = None,
+    follow_direction: Vector | None = None,
+    follow_span: float | None = None,
 ) -> None:
     scene = bpy.context.scene
     scene.render.resolution_x = width
     scene.render.resolution_y = height
     scene.render.resolution_percentage = 100
-    frames_directory = output.parent / "frames"
+    frames_directory = output.parent / frames_name
     frames_directory.mkdir(parents=True, exist_ok=True)
     for old_frame in frames_directory.glob("frame_*.png"):
         old_frame.unlink()
@@ -188,6 +203,15 @@ def render_animation(
         alpha = output_index / max(frame_count - 1, 1)
         imported_frame = round(imported_start + alpha * (imported_end - imported_start))
         scene.frame_set(imported_frame)
+        if follow_objects is not None:
+            bpy.context.view_layer.update()
+            follow_lower, follow_upper = mesh_bounds(follow_objects)
+            center = (follow_lower + follow_upper) * 0.5
+            span = follow_span if follow_span is not None else max(follow_upper - follow_lower)
+            direction = follow_direction or Vector((1.0, -1.35, 0.75))
+            scene.camera.location = center + direction.normalized() * span * 2.4
+            look_at(scene.camera, center)
+            scene.camera.data.ortho_scale = span * 1.60
         scene.render.filepath = str(frames_directory / f"frame_{output_index:04d}.png")
         scene.render.image_settings.file_format = "PNG"
         bpy.ops.render.render(write_still=True)
@@ -215,6 +239,45 @@ def render_animation(
         check=True,
     )
     print(f"rendered {output}")
+
+
+def select_named(
+    meshes: list[bpy.types.Object], prefixes: tuple[str, ...]
+) -> list[bpy.types.Object]:
+    selected = [obj for obj in meshes if obj.name.startswith(prefixes)]
+    if not selected:
+        raise RuntimeError(f"no mesh objects matched {prefixes!r}")
+    return selected
+
+
+def frame_camera(
+    camera: bpy.types.Object,
+    lower: Vector,
+    upper: Vector,
+    direction: Vector,
+    image_up: Vector = Vector((0.0, 0.0, 1.0)),
+    padding: float = 1.60,
+) -> None:
+    center = (lower + upper) * 0.5
+    span = max(upper - lower)
+    camera.location = center + direction.normalized() * span * 2.4
+    look_at(camera, center, image_up)
+    camera.data.ortho_scale = span * padding
+
+
+def animated_follow_span(
+    objects: list[bpy.types.Object], scene: bpy.types.Scene, samples: int = 13
+) -> float:
+    original_frame = scene.frame_current
+    span = 0.0
+    for index in range(samples):
+        alpha = index / max(samples - 1, 1)
+        scene.frame_set(round(scene.frame_start + alpha * (scene.frame_end - scene.frame_start)))
+        bpy.context.view_layer.update()
+        lower, upper = mesh_bounds(objects)
+        span = max(span, max(upper - lower))
+    scene.frame_set(original_frame)
+    return span
 
 
 def main() -> None:
@@ -277,18 +340,75 @@ def main() -> None:
             args.still_height,
         )
 
+    pitch_gearbox = select_named(
+        meshes,
+        (
+            "pitch_gearbox_right_front_",
+            "pitch_drive_right_front_",
+            "pitch_retention_right_front",
+            "pitch_contact_right_front_",
+            "pitch_moving_crossbar_front",
+        ),
+    )
+    roll_gearbox = select_named(
+        meshes,
+        (
+            "roll_gearbox_front_",
+            "roll_output_pinion_front",
+            "roll_driven_gear_front",
+            "pitch_moving_crossbar_front",
+        ),
+    )
+    detail_direction = Vector((1.0, -1.35, 0.75))
+    for objects, filename in (
+        (pitch_gearbox, "pitch-gearbox-detail.png"),
+        (roll_gearbox, "roll-gearbox-detail.png"),
+    ):
+        set_visible_meshes(meshes, objects)
+        scene.frame_set(scene.frame_start)
+        bpy.context.view_layer.update()
+        detail_lower, detail_upper = mesh_bounds(objects)
+        frame_camera(camera, detail_lower, detail_upper, detail_direction)
+        scene.render.resolution_x = args.still_width
+        scene.render.resolution_y = args.still_height
+        scene.render.filepath = str(preview / filename)
+        bpy.ops.render.render(write_still=True)
+        print(f"rendered {preview / filename}")
+
+    if not args.skip_animation:
+        for objects, filename, frames_name in (
+            (pitch_gearbox, "pitch-gearbox-motion.mp4", "pitch-gearbox-frames"),
+            (roll_gearbox, "roll-gearbox-motion.mp4", "roll-gearbox-frames"),
+        ):
+            set_visible_meshes(meshes, objects)
+            follow_span = animated_follow_span(objects, scene)
+            render_animation(
+                preview / filename,
+                args.video_width,
+                args.video_height,
+                max(args.animation_frames, 2),
+                max(args.animation_fps, 1),
+                frames_name,
+                objects,
+                detail_direction,
+                follow_span,
+            )
+
     # The animation uses the inspection view and the motion already embedded in glTF.
+    set_visible_meshes(meshes, meshes)
+    scene.frame_set(scene.frame_start)
     camera.location = center + Vector((-1.25, -1.60, 1.05)).normalized() * span * 2.2
     look_at(camera, center)
     camera.data.ortho_scale = span * 1.16
     bpy.ops.wm.save_as_mainfile(filepath=str(model / "gimbal-prototype.blend"), compress=True)
-    if not args.skip_animation:
+    if not args.skip_animation and not args.skip_full_animation:
         render_animation(
             preview / "gimbal-motion.mp4",
             args.video_width,
             args.video_height,
             max(args.animation_frames, 2),
             max(args.animation_fps, 1),
+            "frames",
         )
 
 

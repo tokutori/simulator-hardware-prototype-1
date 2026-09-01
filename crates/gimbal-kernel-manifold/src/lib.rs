@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 
 use gimbal_core::{
-    BooleanOperation, FeatureGraph, Primitive3, RegionNode, Rotation3, SolidId, SolidNode,
-    TriangleMesh,
+    BooleanOperation, FeatureGraph, Primitive3, RegionNode, RigidTransform, Rotation3, SolidId,
+    SolidNode, TriangleMesh,
 };
-use manifold_rust::linalg::{Vec2, Vec3};
+use manifold_rust::linalg::{Mat3x4, Vec2, Vec3};
 use manifold_rust::manifold::Manifold;
 use manifold_rust::types::{BooleanEngine, Error as ManifoldStatus};
 use thiserror::Error;
@@ -117,6 +117,22 @@ impl<'a> Evaluator<'a> {
         Ok(intersection.volume())
     }
 
+    pub fn intersection_volume_transformed(
+        &mut self,
+        lhs: SolidId,
+        lhs_pose: RigidTransform,
+        rhs: SolidId,
+        rhs_pose: RigidTransform,
+    ) -> Result<f64, KernelError> {
+        let lhs = transform(self.evaluate(lhs)?, lhs_pose);
+        let rhs = transform(self.evaluate(rhs)?, rhs_pose);
+        let intersection = lhs.intersection(&rhs);
+        if intersection.status() != ManifoldStatus::NoError {
+            return Err(KernelError::Manifold(intersection.status()));
+        }
+        Ok(intersection.volume())
+    }
+
     fn primitive(&self, primitive: Primitive3) -> Manifold {
         match primitive {
             Primitive3::Box { x, y, z, centered } => {
@@ -136,6 +152,30 @@ impl<'a> Evaluator<'a> {
             ),
         }
     }
+}
+
+fn transform(solid: Manifold, pose: RigidTransform) -> Manifold {
+    let [x, y, z, w] = pose.rotation;
+    let xx = x * x;
+    let yy = y * y;
+    let zz = z * z;
+    let xy = x * y;
+    let xz = x * z;
+    let yz = y * z;
+    let wx = w * x;
+    let wy = w * y;
+    let wz = w * z;
+    let matrix = Mat3x4::from_cols(
+        Vec3::new(1.0 - 2.0 * (yy + zz), 2.0 * (xy + wz), 2.0 * (xz - wy)),
+        Vec3::new(2.0 * (xy - wz), 1.0 - 2.0 * (xx + zz), 2.0 * (yz + wx)),
+        Vec3::new(2.0 * (xz + wy), 2.0 * (yz - wx), 1.0 - 2.0 * (xx + yy)),
+        Vec3::new(
+            pose.translation[0],
+            pose.translation[1],
+            pose.translation[2],
+        ),
+    );
+    solid.transform(&matrix)
 }
 
 pub fn mesh_from_manifold(solid: &Manifold) -> TriangleMesh {

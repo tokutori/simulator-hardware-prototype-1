@@ -87,7 +87,7 @@ struct ComponentInstance {
 
 ```text
 World
-├─ fixed floor / support / rails / gear sectors
+├─ fixed floor / directly grounded rails / gear sectors
 └─ PitchFrame (Y revolute)
    ├─ orbiting pitch contact units and gearboxes
    ├─ front/rear roll gearboxes

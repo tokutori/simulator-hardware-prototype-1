@@ -32,7 +32,7 @@ flowchart TD
     ROLL --> COCKPIT
 ```
 
-固定物は床、床支持柱、上下レール、前後接続材および大型gear sectorである。pitchで動くのは接触pinion、pitch gearbox、前後roll gearbox、roll shaftおよびコクピである。
+固定物は床、上下レール、前後接続材および大型gear sectorである。pitchで動くのは接触pinion、pitch gearbox、前後roll gearbox、roll shaftおよびコクピである。
 
 ## 3. 固定pitch track
 
@@ -51,7 +51,7 @@ Y=±50 mmに2枚の平行な固定carrierを置く。各carrierは一周のring�
 
 reference teethは仮想full circleのpitch geometryを定義する値であり、物理sectorの歯数ではない。sector中央はroll軸延長線と一致し、中央を欠損させない。端部は歯面接触域の外に8度以上のmarginを持つ。
 
-上下レールはZ=±105 mmへ置き、sector端とは短いlinkで接続する。これは内側可動体との間隔を確保するためである。固定frameは4本の柱で床へ支持する。
+上下レールはZ=±118 mmへ置き、sector端とは短いlinkで接続する。これは内側可動体との間隔を確保するためである。下レールの下面を床上面Z=-122 mmへ直接接地させ、細い追加脚は設けない。下側の前後接続材も同じ床面へ接する。
 
 ## 4. pitch走行unit
 
@@ -64,7 +64,7 @@ reference teethは仮想full circleのpitch geometryを定義する値であり�
 - 2本へのdistribution gear
 - input shaftと将来encoder interface shaft
 - encoder bearing blockと平行leaf spring 2枚
-- side plate、shaft、moving crossbarおよびmount
+- 軸受bossをribで結んだside plate、shaft、moving crossbarおよびmount
 
 接触pinionは18 teeth、module 0.8、外径約16 mmである。prototype全体ではdrive pinion 8個、retention pinion 4個、接触歯車合計12個となる。
 
@@ -92,15 +92,15 @@ roll shaftはX方向へ前から後ろまで切らずに通す。
 
 コクピは2個のhangerでshaft下へ吊るす。重心をroll軸より下に置くため、駆動が無トルクになった場合はroll=0付近へ戻す方向の重力モーメントを持つ。ただし、減速機の固着、歯欠けによる噛み込み、摩擦または配線拘束がある故障では復元しない。安全保持機能として扱ってはならない。
 
-shaft前後に同じ36T driven gearを固定し、各端を18T output pinionで駆動する。各端にはmodule 0.6、18/54T×2段の9:1 gearbox、3本のshaft、穴付きside plateおよびpitch移動体へのmountを置く。roll最終段2:1を含む入力対コクピ比は18:1である。
+shaft前後に同じ36T driven gearを固定し、各端を18T output pinionで駆動する。各端にはroll軸の下側にmodule 0.6、18/54T×2段の9:1 gearbox、3本のshaft、軸受bossとribから成るside plateおよびpitch移動体へのmountを置く。roll最終段2:1を含む入力対コクピ比は18:1である。
 
 前後2入力を同時駆動する場合は機械同期またはtorque-sharingが必要である。本試作は両端のmechanical interfaceを示すだけで、2 motor制御の成立を保証しない。
 
 ## 6. 床と設置高さ
 
-床上面はpitch/roll交点から180 mm下に置く。固定下レールは軸から105 mm下である。
+床上面はpitch/roll交点から122 mm下に置く。固定下レール中心は軸から118 mm下であり、レール下面が床へ直接接する。
 
-検証では、固定frame下端、gear sector、retention pinionとflangeの公転包絡および吊下げコクピ角部を考慮した保守的な機構包絡を用い、床まで最低10 mmの余裕を要求する。床位置は描画専用値ではなくvalidated parameterである。
+検証ではpitch/roll limitの組合せについて、吊下げコクピ、可動crossmember、roll gearbox plateおよびmount armと床とのsolid intersectionがないことを確認する。core側の包絡検査では5 mm以上の設計余裕も要求する。床位置は描画専用値ではなくvalidated parameterである。
 
 ## 7. 製法
 
@@ -108,7 +108,7 @@ shaft前後に同じ36T driven gearを固定し、各端を18T output pinionで�
 | --- | --- | --- |
 | FDM | gear、sector、flange、gearbox plate、mount、コクピ | 部品定義別3MF |
 | laser | carrier rail、sector link、bearing pedestal | 部品定義別DXF |
-| purchased | shaft、crossmember、床支持、leaf spring | assembly内の参照形状 |
+| purchased | shaft、crossmember、床、leaf spring | assembly内の参照形状 |
 
 DXFはnominal profileを出力し、kerfを加えない。3MFはmm unitを明記する。STLはunitless compatibility outputだけに用いる。
 
@@ -123,7 +123,8 @@ DXFはnominal profileを出力し、kerfを加えない。3MFはmm unitを明記
 - roll shaftが連続し、コクピ中心が軸下にあること
 - 前後roll gearboxの部品数とgear ratio
 - pitch/roll limit
-- 床との保守的な最低余裕
+- 固定下レールと下側接続材が床へ直接接すること
+- 可動範囲全体で床およびgearbox内部にsolid interferenceがないこと
 - positive-volume manifold mesh
 - glTFのZ-up coreからY-upへの正しい変換
 - DXFのmm、CUT layer、closed contour再読込
@@ -140,7 +141,7 @@ output/
 ├─ fabrication/
 │  ├─ fdm/                # definition別3MF
 │  └─ laser/              # definition別DXF
-├─ preview/               # 方向別PNG、連番、MP4
+├─ preview/               # 方向別PNG、全体/gearbox別の連番とMP4
 └─ manifest.json
 ```
 

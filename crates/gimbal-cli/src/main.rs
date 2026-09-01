@@ -207,7 +207,11 @@ fn generate(workspace: &Path, loaded: &LoadedConfig) -> Result<(), Box<dyn Error
         output.join("preview/left-side-minus-y.png"),
         output.join("preview/front-plus-x.png"),
         output.join("preview/drive-unit-detail.png"),
+        output.join("preview/pitch-gearbox-detail.png"),
+        output.join("preview/roll-gearbox-detail.png"),
         output.join("preview/gimbal-motion.mp4"),
+        output.join("preview/pitch-gearbox-motion.mp4"),
+        output.join("preview/roll-gearbox-motion.mp4"),
     ] {
         if optional.is_file() {
             artifact_paths.push(optional);
@@ -246,12 +250,15 @@ fn generate(workspace: &Path, loaded: &LoadedConfig) -> Result<(), Box<dyn Error
             "retention_encoder_pinion_count": 4,
             "pitch_gearbox_count": 4,
             "roll_gearbox_count": 2,
+            "roll_gearboxes_below_roll_axis": true,
             "roll_mechanism_moves_with_pitch": true,
+            "pitch_unit_to_roll_frame_arm_count": 4,
             "cockpit_length_mm": loaded.parameters.cockpit.length.mm(),
             "cockpit_suspension_drop_mm": loaded.parameters.cockpit.suspension_drop.mm(),
             "continuous_roll_shaft": true,
             "carrier_rail_offset_mm": loaded.parameters.frame.carrier_rail_offset.mm(),
             "floor_top_below_axis_mm": loaded.parameters.frame.floor_top_below_axis.mm(),
+            "fixed_lower_frame_bears_directly_on_floor": true,
             "motor_bodies_included": false,
             "encoder_bodies_included": false
         },
@@ -366,6 +373,21 @@ mod tests {
             .compose(instance.local_pose)
     }
 
+    fn instance_solid(design: &PrototypeDesign, name: &str) -> gimbal_core::SolidId {
+        let instance = design
+            .assembly
+            .instances()
+            .iter()
+            .find(|instance| instance.name == name)
+            .unwrap_or_else(|| panic!("missing instance {name}"));
+        design
+            .assembly
+            .definition(instance.definition)
+            .expect("instance definition exists")
+            .body
+            .assembly_solid()
+    }
+
     fn count_prefix(design: &PrototypeDesign, prefix: &str) -> usize {
         design
             .assembly
@@ -410,7 +432,7 @@ mod tests {
     fn pitch_drive_and_roll_mechanism_travel_as_one_moving_body() {
         let design = load_design();
         let moving_names = [
-            "pitch_gearbox_left_front_side_plate_1",
+            "pitch_gearbox_left_front_contact_carriage_plate",
             "roll_gearbox_front_side_plate_1",
             "roll_shaft",
             "cockpit_body",
@@ -439,6 +461,48 @@ mod tests {
     }
 
     #[test]
+    fn retention_supports_are_not_fixed_to_the_outer_frame() {
+        let design = load_design();
+        assert_eq!(count_prefix(&design, "fixed_frame_floor_support_"), 0);
+        for name in [
+            "pitch_retention_left_front_bearing_block",
+            "pitch_retention_right_rear_leaf_spring_1",
+        ] {
+            let zero = instance_pose(&design, name, 0.0, 0.0);
+            let pitched = instance_pose(&design, name, 20.0, 0.0);
+            assert_ne!(zero, pitched, "{name} must travel with the pitch unit");
+        }
+    }
+
+    #[test]
+    fn base_frame_contacts_floor_and_roll_gearboxes_are_below_axis() {
+        let design = load_design();
+        let floor = instance_pose(&design, "installation_floor_reference", 0.0, 0.0);
+        let lower_rail = instance_pose(&design, "pitch_carrier_left_lower_rail", 0.0, 0.0);
+        let floor_top = floor.translation[2] + 5.0;
+        let rail_bottom = lower_rail.translation[2] - 4.0;
+        assert!((floor_top - rail_bottom).abs() < 1.0e-8);
+
+        for end in ["front", "rear"] {
+            let driven = instance_pose(&design, &format!("roll_driven_gear_{end}"), 0.0, 0.0);
+            let input = instance_pose(
+                &design,
+                &format!("roll_gearbox_{end}_input_pinion"),
+                0.0,
+                0.0,
+            );
+            let plate = instance_pose(
+                &design,
+                &format!("roll_gearbox_{end}_side_plate_1"),
+                0.0,
+                0.0,
+            );
+            assert!(input.translation[2] < driven.translation[2]);
+            assert!(plate.translation[2] < driven.translation[2]);
+        }
+    }
+
+    #[test]
     fn cockpit_is_suspended_and_gravity_has_a_restoring_direction() {
         let design = load_design();
         let shaft = instance_pose(&design, "roll_shaft", 0.0, 0.0);
@@ -460,6 +524,124 @@ mod tests {
         let expected_encoder = pitch * (1.0 + design.pitch_encoder_pair.ratio());
         assert!((drive_angle - expected_drive).abs() < 1.0e-6);
         assert!((encoder_angle - expected_encoder).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn moving_assembly_clears_the_floor_over_the_command_envelope() {
+        let design = load_design();
+        let floor_name = "installation_floor_reference";
+        let floor_solid = instance_solid(&design, floor_name);
+        let floor_pose = instance_pose(&design, floor_name, 0.0, 0.0);
+        let watched = [
+            "cockpit_body",
+            "pitch_moving_crossbar_front",
+            "pitch_moving_crossbar_rear",
+            "roll_gearbox_front_side_plate_1",
+            "roll_gearbox_front_side_plate_2",
+            "roll_gearbox_rear_side_plate_1",
+            "roll_gearbox_rear_side_plate_2",
+            "roll_gearbox_front_mount_arm_1",
+            "roll_gearbox_front_mount_arm_2",
+            "roll_gearbox_rear_mount_arm_1",
+            "roll_gearbox_rear_mount_arm_2",
+            "pitch_contact_left_front_roll_frame_arm",
+            "pitch_contact_right_front_roll_frame_arm",
+            "pitch_contact_left_rear_roll_frame_arm",
+            "pitch_contact_right_rear_roll_frame_arm",
+        ];
+        let mut evaluator = Evaluator::new(&design.graph);
+        for pitch in [-20.0, 0.0, 20.0] {
+            for roll in [-35.0, 0.0, 35.0] {
+                for name in watched {
+                    let volume = evaluator
+                        .intersection_volume_transformed(
+                            floor_solid,
+                            floor_pose,
+                            instance_solid(&design, name),
+                            instance_pose(&design, name, pitch, roll),
+                        )
+                        .expect("floor interference query succeeds");
+                    assert!(
+                        volume <= 1.0e-7,
+                        "{name} intersects the floor by {volume} mm^3 at pitch={pitch}, roll={roll}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn gearbox_plates_clear_their_gears_and_shafts() {
+        let design = load_design();
+        let mut evaluator = Evaluator::new(&design.graph);
+        let groups: &[(&str, &[&str])] = &[
+            (
+                "pitch_gearbox_right_front_contact_carriage_plate",
+                &[
+                    "pitch_drive_right_front_1",
+                    "pitch_drive_right_front_2",
+                    "pitch_drive_right_front_1_distribution_branch",
+                    "pitch_drive_right_front_2_distribution_branch",
+                    "pitch_gearbox_right_front_distributor",
+                    "pitch_gearbox_right_front_stage2_driven",
+                    "pitch_gearbox_right_front_stage2_pinion",
+                    "pitch_gearbox_right_front_stage1_driven",
+                    "pitch_gearbox_right_front_input_pinion",
+                ],
+            ),
+            (
+                "pitch_contact_right_front_inboard_plate",
+                &[
+                    "pitch_drive_right_front_1",
+                    "pitch_drive_right_front_2",
+                    "pitch_retention_right_front",
+                    "pitch_drive_right_front_1_shaft",
+                    "pitch_drive_right_front_2_shaft",
+                    "pitch_retention_right_front_interface_shaft",
+                ],
+            ),
+            (
+                "pitch_gearbox_right_front_far_plate",
+                &[
+                    "pitch_gearbox_right_front_stage2_driven",
+                    "pitch_gearbox_right_front_stage2_pinion",
+                    "pitch_gearbox_right_front_stage1_driven",
+                    "pitch_gearbox_right_front_input_pinion",
+                    "pitch_gearbox_right_front_distributor_shaft",
+                    "pitch_gearbox_right_front_compound_shaft",
+                    "pitch_gearbox_right_front_input_shaft",
+                ],
+            ),
+            (
+                "roll_gearbox_front_side_plate_1",
+                &[
+                    "roll_output_pinion_front",
+                    "roll_gearbox_front_stage2_driven",
+                    "roll_gearbox_front_stage2_pinion",
+                    "roll_gearbox_front_stage1_driven",
+                    "roll_gearbox_front_input_pinion",
+                    "roll_gearbox_front_output_shaft",
+                    "roll_gearbox_front_compound_shaft",
+                    "roll_gearbox_front_input_shaft",
+                ],
+            ),
+        ];
+        for (plate, parts) in groups {
+            for part in *parts {
+                let volume = evaluator
+                    .intersection_volume_transformed(
+                        instance_solid(&design, plate),
+                        instance_pose(&design, plate, 0.0, 0.0),
+                        instance_solid(&design, part),
+                        instance_pose(&design, part, 0.0, 0.0),
+                    )
+                    .expect("gearbox interference query succeeds");
+                assert!(
+                    volume <= 1.0e-7,
+                    "{plate} intersects {part} by {volume} mm^3"
+                );
+            }
+        }
     }
 
     fn quaternion_y_degrees(rotation: [f64; 4]) -> f64 {

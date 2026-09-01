@@ -110,7 +110,8 @@ pub enum PrototypeError {
     InvalidCockpitEnvelope,
     InvalidCockpitSuspension,
     InvalidGearboxGeometry,
-    FloorClearanceTooSmall,
+    FrameBaseNotOnFloor,
+    MovingEnvelopeHitsFloor,
     CarrierRailTooClose,
 }
 
@@ -244,32 +245,53 @@ fn validate(parameters: &PrototypeParameters) -> Result<(), PrototypeError> {
     if parameters.frame.carrier_rail_offset.mm() <= 80.0 {
         return Err(PrototypeError::CarrierRailTooClose);
     }
-    let rail_swept_radius = libm::sqrt(
-        122.0 * 122.0
-            + (parameters.frame.carrier_rail_offset.mm() + 4.0)
-                * (parameters.frame.carrier_rail_offset.mm() + 4.0),
-    );
-    let cockpit_half_length = parameters.cockpit.length.mm() * 0.5;
-    let cockpit_half_width = parameters.cockpit.width.mm() * 0.5;
-    let cockpit_bottom_radius =
-        parameters.cockpit.suspension_drop.mm() + parameters.cockpit.height.mm() * 0.5;
-    let cockpit_corner_radius = libm::sqrt(
-        cockpit_half_length * cockpit_half_length
-            + cockpit_half_width * cockpit_half_width
-            + cockpit_bottom_radius * cockpit_bottom_radius,
-    );
-    let retention_center_radius =
-        external.pitch_radius() + parameters.contact_unit.encoder_pinion.pitch_radius();
-    let retention_swept_radius =
-        retention_center_radius + parameters.contact_unit.encoder_pinion.tip_radius() + 2.5;
-    let mechanism_envelope_radius = rail_swept_radius
-        .max(cockpit_corner_radius)
-        .max(external.tip_radius())
-        .max(retention_swept_radius);
-    if parameters.frame.floor_top_below_axis.mm() < mechanism_envelope_radius + 10.0 {
-        return Err(PrototypeError::FloorClearanceTooSmall);
+    let intended_floor_depth = parameters.frame.carrier_rail_offset.mm() + 4.0;
+    if (parameters.frame.floor_top_below_axis.mm() - intended_floor_depth).abs() > 1.0e-6 {
+        return Err(PrototypeError::FrameBaseNotOnFloor);
+    }
+    let floor_z = -parameters.frame.floor_top_below_axis.mm();
+    if minimum_moving_z(parameters) < floor_z + 5.0 {
+        return Err(PrototypeError::MovingEnvelopeHitsFloor);
     }
     Ok(())
+}
+
+fn minimum_moving_z(p: &PrototypeParameters) -> f64 {
+    let pitch_limit = p.motion.pitch_limit.as_radians();
+    let roll_limit = p.motion.roll_limit.as_radians();
+    let mut minimum = f64::INFINITY;
+    for pitch in [-pitch_limit, 0.0, pitch_limit] {
+        let pitch_pose = RigidTransform::rotated(Axis3::Y, pitch);
+        for roll in [-roll_limit, 0.0, roll_limit] {
+            let pose = pitch_pose.compose(RigidTransform::rotated(Axis3::X, roll));
+            for x in [-p.cockpit.length.mm() * 0.5, p.cockpit.length.mm() * 0.5] {
+                for y in [-p.cockpit.width.mm() * 0.5, p.cockpit.width.mm() * 0.5] {
+                    for z in [
+                        -p.cockpit.suspension_drop.mm() - p.cockpit.height.mm() * 0.5,
+                        -p.cockpit.suspension_drop.mm() + p.cockpit.height.mm() * 0.5,
+                    ] {
+                        minimum = minimum.min(pose.transform_point([x, y, z])[2]);
+                    }
+                }
+            }
+        }
+        // Conservative corners of the lowest pitch-frame-mounted structures.
+        for (center_x, center_z, half_x, half_z) in [
+            (107.75, -74.0, 17.0, 4.0),
+            (-107.75, -74.0, 17.0, 4.0),
+            (95.0, -64.0, 4.0, 10.0),
+            (-95.0, -64.0, 4.0, 10.0),
+            (137.0, -37.8, 1.5, 30.0),
+            (-137.0, -37.8, 1.5, 30.0),
+        ] {
+            for x in [center_x - half_x, center_x + half_x] {
+                for z in [center_z - half_z, center_z + half_z] {
+                    minimum = minimum.min(pitch_pose.transform_point([x, 0.0, z])[2]);
+                }
+            }
+        }
+    }
+    minimum
 }
 
 #[derive(Clone, Copy)]
@@ -278,7 +300,6 @@ struct Definitions {
     carrier_rail: ComponentDefinitionId,
     carrier_link: ComponentDefinitionId,
     crossmember: ComponentDefinitionId,
-    floor_support_post: ComponentDefinitionId,
     floor: ComponentDefinitionId,
     drive_pinion: ComponentDefinitionId,
     encoder_pinion: ComponentDefinitionId,
@@ -288,7 +309,11 @@ struct Definitions {
     encoder_shaft: ComponentDefinitionId,
     gearbox_small: ComponentDefinitionId,
     gearbox_large: ComponentDefinitionId,
-    gearbox_plate: ComponentDefinitionId,
+    pitch_contact_inboard_plate: ComponentDefinitionId,
+    contact_carriage_plate: ComponentDefinitionId,
+    pitch_gearbox_far_plate: ComponentDefinitionId,
+    pitch_gearbox_shaft: ComponentDefinitionId,
+    pitch_unit_frame_arm: ComponentDefinitionId,
     leaf_spring: ComponentDefinitionId,
     bearing_block: ComponentDefinitionId,
     cockpit: ComponentDefinitionId,
@@ -350,14 +375,6 @@ fn build_definitions(
         )?,
         Manufacturing::Purchased,
         [0.66, 0.69, 0.72, 1.0],
-    );
-    let floor_support_height = p.frame.floor_top_below_axis.mm() - p.frame.carrier_rail_offset.mm();
-    let floor_support_post = add_solid_definition(
-        assembly,
-        "fixed_frame_floor_support_post",
-        centered_box(builder, [14.0, 14.0, floor_support_height]),
-        Manufacturing::Purchased,
-        [0.30, 0.32, 0.35, 1.0],
     );
     let floor = add_solid_definition(
         assembly,
@@ -438,27 +455,57 @@ fn build_definitions(
         p.pitch_gearbox.shaft_radius,
         [0.80, 0.28, 0.70, 1.0],
     )?;
-    let gearbox_plate = add_solid_definition(
+    let pitch_contact_inboard_plate = add_solid_definition(
         assembly,
-        "pitch_gearbox_side_plate",
-        centered_box(
-            builder,
-            [52.0, p.pitch_gearbox.side_plate_thickness.mm(), 54.0],
-        ),
+        "pitch_contact_inboard_plate",
+        pitch_contact_inboard_plate_solid(builder, p)?,
         fdm,
         [0.20, 0.22, 0.27, 1.0],
+    );
+    let contact_carriage_plate = add_solid_definition(
+        assembly,
+        "pitch_contact_carriage_plate",
+        pitch_contact_carriage_plate_solid(builder, p)?,
+        fdm,
+        [0.20, 0.22, 0.27, 1.0],
+    );
+    let pitch_gearbox_far_plate = add_solid_definition(
+        assembly,
+        "pitch_gearbox_far_plate",
+        pitch_gearbox_far_plate_solid(builder, p)?,
+        fdm,
+        [0.20, 0.22, 0.27, 1.0],
+    );
+    let pitch_gearbox_shaft = add_solid_definition(
+        assembly,
+        "pitch_gearbox_shaft",
+        cylinder_y(builder, p.pitch_gearbox.shaft_radius.mm() - 0.15, 22.0)?,
+        Manufacturing::Purchased,
+        [0.62, 0.66, 0.70, 1.0],
+    );
+    let layout = pitch_unit_layout(p)?;
+    let arm_dx = layout.branch_midpoint[0] - 95.0;
+    let pitch_unit_frame_arm = add_solid_definition(
+        assembly,
+        "pitch_unit_to_roll_frame_arm",
+        centered_box(
+            builder,
+            [libm::sqrt(arm_dx * arm_dx + 74.0 * 74.0) + 8.0, 8.0, 8.0],
+        ),
+        fdm,
+        [0.26, 0.28, 0.33, 1.0],
     );
     let leaf_spring = add_solid_definition(
         assembly,
         "encoder_leaf_spring",
-        centered_box(builder, [26.0, 0.7, 5.0]),
+        centered_box(builder, [22.0, 0.8, 4.0]),
         Manufacturing::Purchased,
         [0.74, 0.76, 0.78, 1.0],
     );
     let bearing_block = add_solid_definition(
         assembly,
         "encoder_bearing_block",
-        centered_box(builder, [16.0, 12.0, 18.0]),
+        encoder_bearing_block_solid(builder, p)?,
         fdm,
         [0.16, 0.52, 0.26, 1.0],
     );
@@ -534,7 +581,7 @@ fn build_definitions(
     let roll_gearbox_shaft = add_solid_definition(
         assembly,
         "roll_gearbox_shaft",
-        cylinder_x(builder, p.pitch_gearbox.shaft_radius.mm() - 0.15, 24.0)?,
+        cylinder_x(builder, p.pitch_gearbox.shaft_radius.mm() - 0.15, 25.0)?,
         Manufacturing::Purchased,
         [0.62, 0.66, 0.70, 1.0],
     );
@@ -555,14 +602,14 @@ fn build_definitions(
     let roll_gearbox_mount = add_solid_definition(
         assembly,
         "roll_gearbox_carrier_mount",
-        centered_box(builder, [8.0, 8.0, 42.0]),
+        centered_box(builder, [8.0, 8.0, 20.0]),
         fdm,
         [0.34, 0.24, 0.16, 1.0],
     );
     let moving_drive_mount_arm = add_solid_definition(
         assembly,
         "moving_drive_mount_arm",
-        centered_box(builder, [34.0, 8.0, 8.0]),
+        centered_box(builder, [34.0, 8.0, 12.0]),
         fdm,
         [0.34, 0.24, 0.16, 1.0],
     );
@@ -571,7 +618,6 @@ fn build_definitions(
         carrier_rail,
         carrier_link,
         crossmember,
-        floor_support_post,
         floor,
         drive_pinion,
         encoder_pinion,
@@ -581,7 +627,11 @@ fn build_definitions(
         encoder_shaft,
         gearbox_small,
         gearbox_large,
-        gearbox_plate,
+        pitch_contact_inboard_plate,
+        contact_carriage_plate,
+        pitch_gearbox_far_plate,
+        pitch_gearbox_shaft,
+        pitch_unit_frame_arm,
         leaf_spring,
         bearing_block,
         cockpit,
@@ -661,12 +711,17 @@ fn build_crossmembers(
     .into_iter()
     .enumerate()
     {
+        let crossmember_z = if z.is_sign_negative() {
+            z - (4.0 - p.frame.crossmember_radius.mm())
+        } else {
+            z
+        };
         add_instance(
             assembly,
             &format!("pitch_crossmember_{}", index + 1),
             definitions.crossmember,
             world,
-            RigidTransform::translated(x, 0.0, z),
+            RigidTransform::translated(x, 0.0, crossmember_z),
         );
     }
     add_instance(
@@ -680,26 +735,6 @@ fn build_crossmembers(
             -p.frame.floor_top_below_axis.mm() - p.frame.floor_thickness.mm() * 0.5,
         ),
     );
-    let support_height = p.frame.floor_top_below_axis.mm() - p.frame.carrier_rail_offset.mm();
-    let support_center_z = -p.frame.carrier_rail_offset.mm() - support_height * 0.5;
-    let half_spacing = p.pitch_sector.carrier_spacing.mm() * 0.5;
-    for (index, (x, y)) in [
-        (-112.0, -half_spacing),
-        (-112.0, half_spacing),
-        (112.0, -half_spacing),
-        (112.0, half_spacing),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        add_instance(
-            assembly,
-            &format!("fixed_frame_floor_support_{}", index + 1),
-            definitions.floor_support_post,
-            world,
-            RigidTransform::translated(x, y, support_center_z),
-        );
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -757,7 +792,11 @@ fn build_contact_unit(
     let drive_radius = internal.pitch_radius() - p.contact_unit.drive_pinion.pitch_radius();
     let offset = p.contact_unit.branch_angle_offset.as_radians();
     let mut branch_centers = [[0.0; 2]; 2];
-    let outer_layer_y = y + side_sign * (p.pitch_sector.face_width.mm() * 0.5 + 5.0);
+    // The reduction train sits entirely on the outboard side of the sector.
+    // Keep an explicit gap between the sector flanges, the bearing plate, and
+    // each gear layer so the model does not rely on coincident/intersecting
+    // solids to look assembled.
+    let outer_layer_y = y + side_sign * 10.5;
 
     for (branch, branch_offset) in [-offset, offset].into_iter().enumerate() {
         let angle = end_angle + branch_offset;
@@ -852,16 +891,14 @@ fn build_contact_unit(
 
     let radial = [libm::cos(end_angle), libm::sin(end_angle)];
     let tangent = [-radial[1], radial[0]];
-    let block_center = [
-        encoder_center[0] + radial[0] * 8.0,
-        encoder_center[1] + radial[1] * 8.0,
-    ];
+    let block_center = encoder_center;
+    let bearing_plane_y = y + side_sign * 6.5;
     add_instance(
         assembly,
         &format!("{encoder_stem}_bearing_block"),
         d.bearing_block,
         pitch_frame,
-        RigidTransform::translated(block_center[0], y, block_center[1])
+        RigidTransform::translated(block_center[0], bearing_plane_y, block_center[1])
             .compose(RigidTransform::rotated(Axis3::Y, -end_angle)),
     );
     for (index, tangent_offset) in [-7.0, 7.0].into_iter().enumerate() {
@@ -871,9 +908,9 @@ fn build_contact_unit(
             d.leaf_spring,
             pitch_frame,
             RigidTransform::translated(
-                block_center[0] + radial[0] * 18.0 + tangent[0] * tangent_offset,
-                y + side_sign * 7.0,
-                block_center[1] + radial[1] * 18.0 + tangent[1] * tangent_offset,
+                block_center[0] - radial[0] * 7.0 + tangent[0] * tangent_offset,
+                bearing_plane_y,
+                block_center[1] - radial[1] * 7.0 + tangent[1] * tangent_offset,
             )
             .compose(RigidTransform::rotated(Axis3::Y, -end_angle)),
         );
@@ -966,17 +1003,60 @@ fn build_contact_unit(
         (central[0] + input_center[0]) * 0.5,
         (central[1] + input_center[1]) * 0.5,
     ];
-    for (index, plate_y) in [outer_layer_y - side_sign * 3.0, outer_layer_y + layer * 3.0]
-        .into_iter()
-        .enumerate()
-    {
+    let inboard_plane_y = y - side_sign * 6.5;
+    add_instance(
+        assembly,
+        &format!("pitch_contact_{side}_{end}_inboard_plate"),
+        d.pitch_contact_inboard_plate,
+        pitch_frame,
+        RigidTransform::translated(midpoint[0], inboard_plane_y, midpoint[1])
+            .compose(RigidTransform::rotated(Axis3::Y, -end_angle)),
+    );
+    let arm_target = [radial[0] * 95.0, -74.0];
+    let arm_dx = arm_target[0] - midpoint[0];
+    let arm_dz = arm_target[1] - midpoint[1];
+    add_instance(
+        assembly,
+        &format!("pitch_contact_{side}_{end}_roll_frame_arm"),
+        d.pitch_unit_frame_arm,
+        pitch_frame,
+        RigidTransform::translated(
+            (midpoint[0] + arm_target[0]) * 0.5,
+            inboard_plane_y,
+            (midpoint[1] + arm_target[1]) * 0.5,
+        )
+        .compose(RigidTransform::rotated(
+            Axis3::Y,
+            -libm::atan2(arm_dz, arm_dx),
+        )),
+    );
+    add_instance(
+        assembly,
+        &format!("pitch_gearbox_{side}_{end}_contact_carriage_plate"),
+        d.contact_carriage_plate,
+        pitch_frame,
+        RigidTransform::translated(plate_center[0], bearing_plane_y, plate_center[1])
+            .compose(RigidTransform::rotated(Axis3::Y, -end_angle)),
+    );
+    add_instance(
+        assembly,
+        &format!("pitch_gearbox_{side}_{end}_far_plate"),
+        d.pitch_gearbox_far_plate,
+        pitch_frame,
+        RigidTransform::translated(plate_center[0], y + side_sign * 24.0, plate_center[1])
+            .compose(RigidTransform::rotated(Axis3::Y, -end_angle)),
+    );
+    for (shaft, frame) in [
+        ("distributor", distributor_frame),
+        ("compound", compound_a_frame),
+        ("input", input_frame),
+    ] {
         add_instance(
             assembly,
-            &format!("pitch_gearbox_{side}_{end}_side_plate_{}", index + 1),
-            d.gearbox_plate,
-            pitch_frame,
-            RigidTransform::translated(plate_center[0], plate_y, plate_center[1])
-                .compose(RigidTransform::rotated(Axis3::Y, -end_angle)),
+            &format!("pitch_gearbox_{side}_{end}_{shaft}_shaft"),
+            d.pitch_gearbox_shaft,
+            frame,
+            RigidTransform::translated(0.0, side_sign * 15.25, 0.0),
         );
     }
     Ok(())
@@ -1022,11 +1102,10 @@ fn build_roll_assembly(
     }
     for (end, outward) in [("front", 1.0), ("rear", -1.0)] {
         let gear_x = outward * (p.cockpit.length.mm() * 0.5 + 8.0);
-        // This crossbar belongs to the moving pitch body.  Keep it radially
-        // inside the fixed upper rail so its swept envelope remains clear at
-        // both pitch limits.
+        // The complete roll drive is suspended below the roll axis. This also
+        // keeps the top of the cockpit visually and mechanically unobstructed.
         let moving_crossbar_x = outward * 95.0;
-        let moving_crossbar_z = 58.0;
+        let moving_crossbar_z = -74.0;
         add_instance(
             assembly,
             &format!("pitch_moving_crossbar_{end}"),
@@ -1041,12 +1120,13 @@ fn build_roll_assembly(
             roll_frame,
             RigidTransform::translated(gear_x, 0.0, 0.0),
         );
-        let output_z = p.roll_axis.driven_gear.pitch_radius() + p.roll_axis.pinion.pitch_radius();
+        let output_z =
+            -(p.roll_axis.driven_gear.pitch_radius() + p.roll_axis.pinion.pitch_radius());
         let output_center = [gear_x, 0.0, output_z];
         let stage_distance =
             p.pitch_gearbox.small_gear.pitch_radius() + p.pitch_gearbox.large_gear.pitch_radius();
         let compound_center = [gear_x, stage_distance, output_z];
-        let input_center = [gear_x, stage_distance, output_z + stage_distance];
+        let input_center = [gear_x, stage_distance, output_z - stage_distance];
         let output_frame = revolute_frame(
             frames,
             pitch_frame,
@@ -1115,10 +1195,10 @@ fn build_roll_assembly(
                 &format!("roll_gearbox_{end}_{shaft}_shaft"),
                 d.roll_gearbox_shaft,
                 frame,
-                RigidTransform::translated(outward * 5.0, 0.0, 0.0),
+                RigidTransform::translated(outward * 5.5, 0.0, 0.0),
             );
         }
-        for (index, plate_offset) in [-4.0, 17.0].into_iter().enumerate() {
+        for (index, plate_offset) in [-5.5, 16.5].into_iter().enumerate() {
             add_instance(
                 assembly,
                 &format!("roll_gearbox_{end}_side_plate_{}", index + 1),
@@ -1127,7 +1207,7 @@ fn build_roll_assembly(
                 RigidTransform::translated(
                     gear_x + outward * plate_offset,
                     stage_distance * 0.5,
-                    output_z + stage_distance * 0.5,
+                    output_z - stage_distance * 0.5,
                 ),
             );
         }
@@ -1137,7 +1217,7 @@ fn build_roll_assembly(
                 &format!("roll_gearbox_{end}_carrier_mount_{}", index + 1),
                 d.roll_gearbox_mount,
                 pitch_frame,
-                RigidTransform::translated(moving_crossbar_x, y, 37.0),
+                RigidTransform::translated(moving_crossbar_x, y, -64.0),
             );
             add_instance(
                 assembly,
@@ -1173,18 +1253,402 @@ fn roll_gearbox_plate_solid(
 ) -> Result<SolidId, PrototypeError> {
     let stage_distance =
         p.pitch_gearbox.small_gear.pitch_radius() + p.pitch_gearbox.large_gear.pitch_radius();
-    let mut plate = centered_box(builder, [3.0, 60.0, 60.0]);
-    let bore_radius = p.pitch_gearbox.shaft_radius.mm() + 0.35;
-    for (y, z) in [
-        (-stage_distance * 0.5, -stage_distance * 0.5),
-        (stage_distance * 0.5, -stage_distance * 0.5),
-        (stage_distance * 0.5, stage_distance * 0.5),
+    let centers = [
+        [-stage_distance * 0.5, stage_distance * 0.5],
+        [stage_distance * 0.5, stage_distance * 0.5],
+        [stage_distance * 0.5, -stage_distance * 0.5],
+    ];
+    let supports = [[-28.8, -36.2], [29.2, -36.2]];
+    let mut plate = cylinder_x(builder, 5.5, 3.0)?;
+    plate = builder.translate(
+        plate,
+        Translation3 {
+            x: 0.0,
+            y: centers[0][0],
+            z: centers[0][1],
+        },
+    )?;
+    for center in centers.into_iter().skip(1) {
+        let boss = cylinder_x(builder, 5.5, 3.0)?;
+        let boss = builder.translate(
+            boss,
+            Translation3 {
+                x: 0.0,
+                y: center[0],
+                z: center[1],
+            },
+        )?;
+        plate = builder.boolean(BooleanOperation::Union, plate, boss)?;
+    }
+    for (a, b) in [
+        (centers[0], centers[1]),
+        (centers[1], centers[2]),
+        (centers[0], supports[0]),
+        (centers[2], supports[1]),
+        (supports[0], supports[1]),
     ] {
+        let rib = beam_yz(builder, a, b, 3.0, 5.0)?;
+        plate = builder.boolean(BooleanOperation::Union, plate, rib)?;
+    }
+    for support in supports {
+        let tab = centered_box(builder, [3.0, 12.0, 6.0]);
+        let tab = builder.translate(
+            tab,
+            Translation3 {
+                x: 0.0,
+                y: support[0],
+                z: support[1],
+            },
+        )?;
+        plate = builder.boolean(BooleanOperation::Union, plate, tab)?;
+    }
+    let bore_radius = p.pitch_gearbox.shaft_radius.mm() + 0.35;
+    for [y, z] in centers {
         let bore = cylinder_x(builder, bore_radius, 5.0)?;
         let bore = builder.translate(bore, Translation3 { x: 0.0, y, z })?;
         plate = builder.boolean(BooleanOperation::Difference, plate, bore)?;
     }
     Ok(plate)
+}
+
+#[derive(Clone, Copy)]
+struct PitchUnitLayout {
+    branches: [[f64; 2]; 2],
+    branch_midpoint: [f64; 2],
+    distributor: [f64; 2],
+    compound: [f64; 2],
+    input: [f64; 2],
+    plate_center: [f64; 2],
+}
+
+fn pitch_unit_layout(p: &PrototypeParameters) -> Result<PitchUnitLayout, PrototypeError> {
+    let internal = p.pitch_sector.sector.internal_reference();
+    let drive_radius = internal.pitch_radius() - p.contact_unit.drive_pinion.pitch_radius();
+    let offset = p.contact_unit.branch_angle_offset.as_radians();
+    let branches = [
+        [
+            drive_radius * libm::cos(offset),
+            -drive_radius * libm::sin(offset),
+        ],
+        [
+            drive_radius * libm::cos(offset),
+            drive_radius * libm::sin(offset),
+        ],
+    ];
+    let branch_distance = p.pitch_gearbox.distribution_gear.pitch_radius()
+        + p.pitch_gearbox.small_gear.pitch_radius();
+    let midpoint = [
+        (branches[0][0] + branches[1][0]) * 0.5,
+        (branches[0][1] + branches[1][1]) * 0.5,
+    ];
+    let half_chord = distance2(branches[0], branches[1]) * 0.5;
+    if half_chord >= branch_distance {
+        return Err(PrototypeError::InvalidGearboxGeometry);
+    }
+    let distributor = [
+        midpoint[0] - libm::sqrt(branch_distance * branch_distance - half_chord * half_chord),
+        midpoint[1],
+    ];
+    let stage_distance =
+        p.pitch_gearbox.small_gear.pitch_radius() + p.pitch_gearbox.large_gear.pitch_radius();
+    let compound = [distributor[0], distributor[1] + stage_distance];
+    let input = [compound[0] + stage_distance, compound[1]];
+    let plate_center = [
+        (distributor[0] + input[0]) * 0.5,
+        (distributor[1] + input[1]) * 0.5,
+    ];
+    Ok(PitchUnitLayout {
+        branches,
+        branch_midpoint: midpoint,
+        distributor,
+        compound,
+        input,
+        plate_center,
+    })
+}
+
+fn pitch_contact_carriage_plate_solid(
+    builder: &mut FeatureBuilder,
+    p: &PrototypeParameters,
+) -> Result<SolidId, PrototypeError> {
+    let layout = pitch_unit_layout(p)?;
+    let thickness = p.pitch_gearbox.side_plate_thickness.mm();
+    let centers = [
+        layout.branches[0],
+        layout.branches[1],
+        layout.distributor,
+        layout.compound,
+        layout.input,
+    ]
+    .map(|center| {
+        [
+            center[0] - layout.plate_center[0],
+            center[1] - layout.plate_center[1],
+        ]
+    });
+    let mut plate = cylinder_y(builder, 5.5, thickness)?;
+    plate = builder.translate(
+        plate,
+        Translation3 {
+            x: centers[0][0],
+            y: 0.0,
+            z: centers[0][1],
+        },
+    )?;
+    for center in centers.into_iter().skip(1) {
+        let boss = cylinder_y(builder, 5.5, thickness)?;
+        let boss = builder.translate(
+            boss,
+            Translation3 {
+                x: center[0],
+                y: 0.0,
+                z: center[1],
+            },
+        )?;
+        plate = builder.boolean(BooleanOperation::Union, plate, boss)?;
+    }
+    for (a, b) in [
+        (centers[0], centers[1]),
+        (centers[0], centers[2]),
+        (centers[1], centers[2]),
+        (centers[2], centers[3]),
+        (centers[3], centers[4]),
+    ] {
+        let rib = beam_xz(builder, a, b, thickness, 5.0)?;
+        plate = builder.boolean(BooleanOperation::Union, plate, rib)?;
+    }
+    let bore_radius = p.pitch_gearbox.shaft_radius.mm() + 0.35;
+    for center in centers {
+        plate = subtract_y_bore(
+            builder,
+            plate,
+            bore_radius,
+            thickness + 2.0,
+            center[0],
+            center[1],
+        )?;
+    }
+    Ok(plate)
+}
+
+fn pitch_contact_inboard_plate_solid(
+    builder: &mut FeatureBuilder,
+    p: &PrototypeParameters,
+) -> Result<SolidId, PrototypeError> {
+    let layout = pitch_unit_layout(p)?;
+    let thickness = p.pitch_gearbox.side_plate_thickness.mm();
+    let encoder = [
+        p.pitch_sector.sector.external_reference().pitch_radius()
+            + p.contact_unit.encoder_pinion.pitch_radius(),
+        0.0,
+    ];
+    let centers = [
+        [
+            layout.branches[0][0] - layout.branch_midpoint[0],
+            layout.branches[0][1] - layout.branch_midpoint[1],
+        ],
+        [
+            layout.branches[1][0] - layout.branch_midpoint[0],
+            layout.branches[1][1] - layout.branch_midpoint[1],
+        ],
+        [
+            encoder[0] - layout.branch_midpoint[0],
+            encoder[1] - layout.branch_midpoint[1],
+        ],
+        [0.0, 0.0],
+    ];
+    let mut plate = cylinder_y(builder, 5.5, thickness)?;
+    plate = builder.translate(
+        plate,
+        Translation3 {
+            x: centers[0][0],
+            y: 0.0,
+            z: centers[0][1],
+        },
+    )?;
+    for center in centers.into_iter().skip(1) {
+        let boss = cylinder_y(builder, 5.5, thickness)?;
+        let boss = builder.translate(
+            boss,
+            Translation3 {
+                x: center[0],
+                y: 0.0,
+                z: center[1],
+            },
+        )?;
+        plate = builder.boolean(BooleanOperation::Union, plate, boss)?;
+    }
+    for (a, b) in [
+        (centers[0], centers[3]),
+        (centers[1], centers[3]),
+        (centers[2], centers[3]),
+    ] {
+        let rib = beam_xz(builder, a, b, thickness, 5.0)?;
+        plate = builder.boolean(BooleanOperation::Union, plate, rib)?;
+    }
+    for center in centers.into_iter().take(3) {
+        let radius = if center == centers[2] {
+            p.contact_unit.encoder_shaft_radius.mm() + 0.35
+        } else {
+            p.contact_unit.drive_shaft_radius.mm() + 0.35
+        };
+        plate = subtract_y_bore(
+            builder,
+            plate,
+            radius,
+            thickness + 2.0,
+            center[0],
+            center[1],
+        )?;
+    }
+    subtract_y_bore(builder, plate, 1.7, thickness + 2.0, 0.0, 0.0)
+}
+
+fn pitch_gearbox_far_plate_solid(
+    builder: &mut FeatureBuilder,
+    p: &PrototypeParameters,
+) -> Result<SolidId, PrototypeError> {
+    let layout = pitch_unit_layout(p)?;
+    let thickness = p.pitch_gearbox.side_plate_thickness.mm();
+    let centers = [layout.distributor, layout.compound, layout.input].map(|center| {
+        [
+            center[0] - layout.plate_center[0],
+            center[1] - layout.plate_center[1],
+        ]
+    });
+    let mut plate = cylinder_y(builder, 5.5, thickness)?;
+    plate = builder.translate(
+        plate,
+        Translation3 {
+            x: centers[0][0],
+            y: 0.0,
+            z: centers[0][1],
+        },
+    )?;
+    for center in centers.into_iter().skip(1) {
+        let boss = cylinder_y(builder, 5.5, thickness)?;
+        let boss = builder.translate(
+            boss,
+            Translation3 {
+                x: center[0],
+                y: 0.0,
+                z: center[1],
+            },
+        )?;
+        plate = builder.boolean(BooleanOperation::Union, plate, boss)?;
+    }
+    for (a, b) in [(centers[0], centers[1]), (centers[1], centers[2])] {
+        let rib = beam_xz(builder, a, b, thickness, 5.0)?;
+        plate = builder.boolean(BooleanOperation::Union, plate, rib)?;
+    }
+    let bore_radius = p.pitch_gearbox.shaft_radius.mm() + 0.35;
+    for center in centers {
+        plate = subtract_y_bore(
+            builder,
+            plate,
+            bore_radius,
+            thickness + 2.0,
+            center[0],
+            center[1],
+        )?;
+    }
+    Ok(plate)
+}
+
+fn encoder_bearing_block_solid(
+    builder: &mut FeatureBuilder,
+    p: &PrototypeParameters,
+) -> Result<SolidId, PrototypeError> {
+    let block = centered_box(builder, [16.0, 3.0, 18.0]);
+    subtract_y_bore(
+        builder,
+        block,
+        p.contact_unit.encoder_shaft_radius.mm() + 0.35,
+        5.0,
+        0.0,
+        0.0,
+    )
+}
+
+fn subtract_y_bore(
+    builder: &mut FeatureBuilder,
+    solid: SolidId,
+    radius: f64,
+    length: f64,
+    x: f64,
+    z: f64,
+) -> Result<SolidId, PrototypeError> {
+    let bore = cylinder_y(builder, radius, length)?;
+    let bore = builder.translate(bore, Translation3 { x, y: 0.0, z })?;
+    builder
+        .boolean(BooleanOperation::Difference, solid, bore)
+        .map_err(PrototypeError::Feature)
+}
+
+fn beam_xz(
+    builder: &mut FeatureBuilder,
+    a: [f64; 2],
+    b: [f64; 2],
+    thickness_y: f64,
+    width: f64,
+) -> Result<SolidId, PrototypeError> {
+    let dx = b[0] - a[0];
+    let dz = b[1] - a[1];
+    let beam = centered_box(
+        builder,
+        [libm::sqrt(dx * dx + dz * dz) + width, thickness_y, width],
+    );
+    let beam = builder.rotate(
+        beam,
+        Rotation3 {
+            x: angle(0.0),
+            y: Angle::radians(-libm::atan2(dz, dx)).expect("derived rib angle is finite"),
+            z: angle(0.0),
+        },
+    )?;
+    builder
+        .translate(
+            beam,
+            Translation3 {
+                x: (a[0] + b[0]) * 0.5,
+                y: 0.0,
+                z: (a[1] + b[1]) * 0.5,
+            },
+        )
+        .map_err(PrototypeError::Feature)
+}
+
+fn beam_yz(
+    builder: &mut FeatureBuilder,
+    a: [f64; 2],
+    b: [f64; 2],
+    thickness_x: f64,
+    width: f64,
+) -> Result<SolidId, PrototypeError> {
+    let dy = b[0] - a[0];
+    let dz = b[1] - a[1];
+    let beam = centered_box(
+        builder,
+        [thickness_x, libm::sqrt(dy * dy + dz * dz) + width, width],
+    );
+    let beam = builder.rotate(
+        beam,
+        Rotation3 {
+            x: Angle::radians(libm::atan2(dz, dy)).expect("derived rib angle is finite"),
+            y: angle(0.0),
+            z: angle(0.0),
+        },
+    )?;
+    builder
+        .translate(
+            beam,
+            Translation3 {
+                x: 0.0,
+                y: (a[0] + b[0]) * 0.5,
+                z: (a[1] + b[1]) * 0.5,
+            },
+        )
+        .map_err(PrototypeError::Feature)
 }
 
 fn dual_sector_solid(

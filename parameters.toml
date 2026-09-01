@@ -55,8 +55,8 @@ suspension_drop_mm = 42.0
 crossmember_diameter_mm = 6.0
 bearing_pedestal_thickness_mm = 8.0
 sheet_thickness_mm = 6.0
-carrier_rail_offset_mm = 105.0
-floor_top_below_axis_mm = 180.0
+carrier_rail_offset_mm = 118.0
+floor_top_below_axis_mm = 122.0
 floor_thickness_mm = 10.0
 
 [motion]
