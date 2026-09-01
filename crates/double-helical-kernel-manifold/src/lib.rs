@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-use double_helical_core::{
-    DoubleHelicalGear, DoubleHelicalRack, GearPose, Prototype, SpurGear, TriangleMesh,
-};
+use double_helical_core::{DoubleHelicalGear, GearPose, Prototype, SpurGear, TriangleMesh};
 use manifold_rust::cross_section::CrossSection;
 use manifold_rust::linalg::{Mat3x4, Vec2, Vec3};
 use manifold_rust::manifold::Manifold;
@@ -12,6 +10,7 @@ use thiserror::Error;
 #[derive(Clone, Debug, PartialEq)]
 pub struct PrototypeMeshes {
     pub handle_spur: TriangleMesh,
+    pub handle_shaft: TriangleMesh,
     pub handle_crank: TriangleMesh,
     pub handle_knob: TriangleMesh,
     pub reduction_compound: TriangleMesh,
@@ -29,6 +28,9 @@ pub struct PrototypeMeshes {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PrototypeInterference {
+    pub handle_spur_to_shaft_mm3: f64,
+    pub handle_shaft_to_bottom_plate_mm3: f64,
+    pub handle_shaft_to_top_plate_mm3: f64,
     pub handle_to_reduction_large_mm3: f64,
     pub reduction_small_to_b_mm3: f64,
     pub reduction_small_to_c_mm3: f64,
@@ -46,7 +48,8 @@ pub enum KernelError {
 }
 
 pub fn build_prototype(prototype: &Prototype) -> Result<PrototypeMeshes, KernelError> {
-    let handle_spur = handle_shaft_spur_solid(prototype)?;
+    let handle_spur = handle_spur_solid(prototype)?;
+    let handle_shaft = handle_shaft_solid(prototype)?;
     let handle_crank = handle_crank_solid(prototype)?;
     let handle_knob = tube(
         prototype.rack().face_width().mm() + 5.0,
@@ -59,7 +62,7 @@ pub fn build_prototype(prototype: &Prototype) -> Result<PrototypeMeshes, KernelE
     let driven_c_compound =
         driven_compound_solid(prototype, prototype.driven_c_internal_pinion_rotation_deg())?;
     let idler = double_helical_gear_solid(prototype.idler_pinion())?;
-    let rack = rack_solid(prototype.rack())?;
+    let rack = rack_solid(prototype)?;
     let top_plate = frame_plate(prototype, PlateSide::Top)?;
     let bottom_plate = frame_plate(prototype, PlateSide::Bottom)?;
     let thrust_outer = prototype.thrust_spacer_outer_diameter().mm();
@@ -86,6 +89,7 @@ pub fn build_prototype(prototype: &Prototype) -> Result<PrototypeMeshes, KernelE
     )?;
     Ok(PrototypeMeshes {
         handle_spur: mesh_from_manifold(&handle_spur),
+        handle_shaft: mesh_from_manifold(&handle_shaft),
         handle_crank: mesh_from_manifold(&handle_crank),
         handle_knob: mesh_from_manifold(&handle_knob),
         reduction_compound: mesh_from_manifold(&reduction_compound),
@@ -103,14 +107,7 @@ pub fn build_prototype(prototype: &Prototype) -> Result<PrototypeMeshes, KernelE
 }
 
 pub fn prototype_interference(prototype: &Prototype) -> Result<PrototypeInterference, KernelError> {
-    let handle = transform(
-        spur_solid(
-            prototype.handle_spur(),
-            prototype.spur_face_width().mm(),
-            prototype.driven_pinion().bore_diameter().mm(),
-        )?,
-        prototype.handle_spur_pose(),
-    );
+    let handle = transform(handle_spur_solid(prototype)?, prototype.handle_spur_pose());
     let reduction_large = transform(
         spur_solid(
             prototype.reduction_large_spur(),
@@ -122,7 +119,7 @@ pub fn prototype_interference(prototype: &Prototype) -> Result<PrototypeInterfer
     let reduction_small = transform(
         spur_solid(
             prototype.reduction_small_spur(),
-            prototype.spur_face_width().mm(),
+            prototype.reduction_small_extended_face_width(),
             prototype.driven_pinion().bore_diameter().mm(),
         )?,
         prototype.reduction_small_spur_pose(),
@@ -155,8 +152,22 @@ pub fn prototype_interference(prototype: &Prototype) -> Result<PrototypeInterfer
         double_helical_gear_solid(prototype.idler_pinion())?,
         prototype.idler_pose(),
     );
-    let rack = rack_solid(prototype.rack())?;
+    let rack = rack_solid(prototype)?;
+    let handle_shaft = transform(handle_shaft_solid(prototype)?, prototype.handle_spur_pose());
+    let bottom_plate = frame_plate(prototype, PlateSide::Bottom)?.translate(Vec3::new(
+        0.0,
+        0.0,
+        prototype.bottom_plate_center_z(),
+    ));
+    let top_plate = frame_plate(prototype, PlateSide::Top)?.translate(Vec3::new(
+        0.0,
+        0.0,
+        prototype.top_plate_center_z(),
+    ));
     Ok(PrototypeInterference {
+        handle_spur_to_shaft_mm3: intersection_volume(&handle, &handle_shaft)?,
+        handle_shaft_to_bottom_plate_mm3: intersection_volume(&handle_shaft, &bottom_plate)?,
+        handle_shaft_to_top_plate_mm3: intersection_volume(&handle_shaft, &top_plate)?,
         handle_to_reduction_large_mm3: intersection_volume(&handle, &reduction_large)?,
         reduction_small_to_b_mm3: intersection_volume(&reduction_small, &output_b)?,
         reduction_small_to_c_mm3: intersection_volume(&reduction_small, &output_c)?,
@@ -211,50 +222,101 @@ fn spur_solid(
     Ok(result)
 }
 
-fn handle_shaft_spur_solid(prototype: &Prototype) -> Result<Manifold, KernelError> {
+fn handle_spur_solid(prototype: &Prototype) -> Result<Manifold, KernelError> {
     let gear = spur_solid(
         prototype.handle_spur(),
-        prototype.spur_face_width().mm(),
+        prototype.handle_spur_extended_face_width(),
         0.10,
     )?;
+    let socket_size = prototype.handle_gear_square_socket_size();
+    let socket = Manifold::cube(
+        Vec3::new(
+            socket_size,
+            socket_size,
+            prototype.handle_spur_extended_face_width() + 0.20,
+        ),
+        true,
+    );
+    let result = gear.difference_with_engine(&socket, BooleanEngine::Exact);
+    validate_solid(&result)?;
+    Ok(result)
+}
+
+fn handle_shaft_solid(prototype: &Prototype) -> Result<Manifold, KernelError> {
     let gear_center_z = prototype.handle_spur_pose().translation_mm[2];
     let shaft_bottom =
         prototype.bottom_plate_center_z() - prototype.plate_thickness().mm() * 0.5 - gear_center_z;
     let shaft_top =
         prototype.top_plate_center_z() + prototype.plate_thickness().mm() * 0.5 - gear_center_z;
-    let shaft_radius = prototype.journal_outer_diameter().mm() * 0.5;
-    let shaft = Manifold::cylinder(
-        shaft_top - shaft_bottom,
-        shaft_radius,
-        shaft_radius,
-        circular_segments(shaft_radius),
-    )
-    .translate(Vec3::new(0.0, 0.0, shaft_bottom));
+    let bottom_inner = prototype.frame_inner_bottom_z() - gear_center_z;
+    let top_inner = prototype.frame_inner_top_z() - gear_center_z;
+    let gear_bottom = -prototype.handle_spur_extended_face_width() * 0.5;
+    let gear_top = prototype.handle_spur_extended_face_width() * 0.5;
     let overlap = 0.10;
-    let taper_height = prototype.handle_support_taper_height();
-    let taper = Manifold::cylinder(
-        taper_height + overlap,
-        shaft_radius,
-        prototype.handle_spur().root_radius(),
-        circular_segments(prototype.handle_spur().root_radius()),
+
+    let bottom_lower_radius = prototype.handle_bottom_taper_lower_diameter() * 0.5;
+    let bottom_upper_radius = prototype.handle_bottom_taper_upper_diameter() * 0.5;
+    let lower_taper = Manifold::cylinder(
+        bottom_inner - shaft_bottom + overlap,
+        bottom_lower_radius,
+        bottom_upper_radius,
+        circular_segments(bottom_upper_radius),
     )
     .translate(Vec3::new(0.0, 0.0, shaft_bottom));
-    let drive_height =
-        prototype.nut_thickness().mm() * 2.0 + prototype.axial_clearance().mm() + 1.0;
-    let drive_size = prototype.journal_outer_diameter().mm();
-    let square_drive = Manifold::cube(
-        Vec3::new(drive_size, drive_size, drive_height + overlap),
+    let gear_support = Manifold::cylinder(
+        gear_bottom - bottom_inner + overlap,
+        bottom_upper_radius,
+        bottom_upper_radius,
+        circular_segments(bottom_upper_radius),
+    )
+    .translate(Vec3::new(0.0, 0.0, bottom_inner - overlap));
+
+    let gear_square_size = prototype.handle_gear_square_shaft_size();
+    let gear_square = Manifold::cube(
+        Vec3::new(
+            gear_square_size,
+            gear_square_size,
+            gear_top - gear_bottom + overlap * 2.0,
+        ),
         true,
     )
-    .translate(Vec3::new(
-        0.0,
-        0.0,
-        shaft_top + drive_height * 0.5 - overlap * 0.5,
-    ));
-    let result = gear
-        .union_with_engine(&shaft, BooleanEngine::Exact)
-        .union_with_engine(&taper, BooleanEngine::Exact)
-        .union_with_engine(&square_drive, BooleanEngine::Exact);
+    .translate(Vec3::new(0.0, 0.0, 0.0));
+
+    let top_lower_radius = prototype.handle_top_taper_lower_diameter() * 0.5;
+    let round_journal = Manifold::cylinder(
+        top_inner - gear_top + overlap * 2.0,
+        top_lower_radius,
+        top_lower_radius,
+        circular_segments(top_lower_radius),
+    )
+    .translate(Vec3::new(0.0, 0.0, gear_top - overlap));
+    let top_upper_radius = prototype.handle_top_taper_upper_diameter() * 0.5;
+    let top_taper = Manifold::cylinder(
+        shaft_top - top_inner + overlap * 2.0,
+        top_lower_radius,
+        top_upper_radius,
+        circular_segments(top_lower_radius),
+    )
+    .translate(Vec3::new(0.0, 0.0, top_inner - overlap));
+
+    let drive_height =
+        prototype.nut_thickness().mm() * 2.0 + prototype.axial_clearance().mm() + 1.0;
+    let crank_square_size = prototype.handle_crank_square_shaft_size();
+    let crank_square = Manifold::cube(
+        Vec3::new(
+            crank_square_size,
+            crank_square_size,
+            drive_height + overlap * 2.0,
+        ),
+        true,
+    )
+    .translate(Vec3::new(0.0, 0.0, shaft_top + drive_height * 0.5));
+    let result = lower_taper
+        .union_with_engine(&gear_support, BooleanEngine::Exact)
+        .union_with_engine(&gear_square, BooleanEngine::Exact)
+        .union_with_engine(&round_journal, BooleanEngine::Exact)
+        .union_with_engine(&top_taper, BooleanEngine::Exact)
+        .union_with_engine(&crank_square, BooleanEngine::Exact);
     validate_solid(&result)?;
     Ok(result)
 }
@@ -284,7 +346,7 @@ fn handle_crank_solid(prototype: &Prototype) -> Result<Manifold, KernelError> {
         circular_segments(end_radius),
     )
     .translate(Vec3::new(radius, 0.0, -thickness * 0.5));
-    let socket_size = prototype.journal_outer_diameter().mm() + 0.30;
+    let socket_size = prototype.handle_crank_square_socket_size();
     let socket = Manifold::cube(Vec3::new(socket_size, socket_size, thickness + 0.20), true);
     let knob_radius = prototype.bolt_clearance_diameter().mm() * 0.5;
     let knob_hole = Manifold::cylinder(
@@ -303,7 +365,8 @@ fn handle_crank_solid(prototype: &Prototype) -> Result<Manifold, KernelError> {
     Ok(result)
 }
 
-fn rack_solid(rack: &DoubleHelicalRack) -> Result<Manifold, KernelError> {
+fn rack_solid(prototype: &Prototype) -> Result<Manifold, KernelError> {
+    let rack = prototype.rack();
     let polygon = rack
         .profile()
         .points
@@ -343,9 +406,22 @@ fn rack_solid(rack: &DoubleHelicalRack) -> Result<Manifold, KernelError> {
         ),
         true,
     );
-    let result = lower
+    let toothed_rack = lower
         .union_with_engine(&upper, BooleanEngine::Exact)
         .union_with_engine(&bridge, BooleanEngine::Exact);
+    let pusher_overlap = 0.10;
+    let pusher_start_x = rack.length() * 0.5 - rack.half_shift_mm() - pusher_overlap;
+    let pusher_end_x = rack.length() * 0.5 + prototype.rack_pusher_length();
+    let pusher = Manifold::cube(
+        Vec3::new(
+            pusher_end_x - pusher_start_x,
+            prototype.rack_pusher_width(),
+            rack.face_width().mm(),
+        ),
+        true,
+    )
+    .translate(Vec3::new((pusher_start_x + pusher_end_x) * 0.5, 0.0, 0.0));
+    let result = toothed_rack.union_with_engine(&pusher, BooleanEngine::Exact);
     validate_solid(&result)?;
     Ok(result)
 }
@@ -417,13 +493,13 @@ fn reduction_compound_solid(prototype: &Prototype) -> Result<Manifold, KernelErr
     let bore = prototype.driven_pinion().bore_diameter().mm();
     let small = spur_solid(
         prototype.reduction_small_spur(),
-        prototype.spur_face_width().mm(),
+        prototype.reduction_small_extended_face_width(),
         bore,
     )?
     .translate(Vec3::new(
         0.0,
         0.0,
-        prototype.secondary_spur_layer_center_z(),
+        prototype.reduction_small_extended_center_z(),
     ));
     let large = spur_solid(
         prototype.reduction_large_spur(),
@@ -477,17 +553,6 @@ fn frame_plate(prototype: &Prototype, side: PlateSide) -> Result<Manifold, Kerne
     let corners = prototype.corner_positions();
     let mut bolt_positions = fixed_axles.clone();
     bolt_positions.extend(corners.iter().copied());
-    if side == PlateSide::Top {
-        let handle_hole = CrossSection::circle(
-            prototype.driven_pinion().bore_diameter().mm() * 0.5,
-            circular_segments(prototype.driven_pinion().bore_diameter().mm() * 0.5),
-        )
-        .translate(Vec2::new(
-            handle.translation_mm[0],
-            handle.translation_mm[1],
-        ));
-        section = section.difference(&handle_hole);
-    }
     for [x, y] in &bolt_positions {
         let hole = CrossSection::circle(
             prototype.bolt_clearance_diameter().mm() * 0.5,
@@ -504,27 +569,30 @@ fn frame_plate(prototype: &Prototype, side: PlateSide) -> Result<Manifold, Kerne
         Vec2::new(1.0, 1.0),
     )
     .translate(Vec3::new(0.0, 0.0, -prototype.plate_thickness().mm() * 0.5));
+    let taper_clearance = prototype.handle_taper_hole_diameter_clearance();
+    let (handle_hole_lower_diameter, handle_hole_upper_diameter) = match side {
+        PlateSide::Bottom => (
+            prototype.handle_bottom_taper_lower_diameter() + taper_clearance,
+            prototype.handle_bottom_taper_upper_diameter() + taper_clearance,
+        ),
+        PlateSide::Top => (
+            prototype.handle_top_taper_lower_diameter() + taper_clearance,
+            prototype.handle_top_taper_upper_diameter() + taper_clearance,
+        ),
+    };
+    let handle_hole = Manifold::cylinder(
+        prototype.plate_thickness().mm() + 0.10,
+        handle_hole_lower_diameter * 0.5,
+        handle_hole_upper_diameter * 0.5,
+        circular_segments(handle_hole_lower_diameter.max(handle_hole_upper_diameter) * 0.5),
+    )
+    .translate(Vec3::new(
+        handle.translation_mm[0],
+        handle.translation_mm[1],
+        -prototype.plate_thickness().mm() * 0.5 - 0.05,
+    ));
+    result = result.difference_with_engine(&handle_hole, BooleanEngine::Exact);
     if side == PlateSide::Bottom {
-        let shaft_radius = prototype.journal_outer_diameter().mm() * 0.5;
-        let taper_top_radius = prototype.handle_spur().root_radius();
-        let taper_height = prototype.handle_support_taper_height();
-        let radial_clearance = prototype.top_socket_diameter_clearance().mm() * 0.5;
-        let plate_thickness = prototype.plate_thickness().mm();
-        let clearance_top_radius = shaft_radius
-            + (taper_top_radius - shaft_radius) * plate_thickness / taper_height
-            + radial_clearance;
-        let handle_clearance = Manifold::cylinder(
-            plate_thickness + 0.10,
-            shaft_radius + radial_clearance,
-            clearance_top_radius,
-            circular_segments(clearance_top_radius),
-        )
-        .translate(Vec3::new(
-            handle.translation_mm[0],
-            handle.translation_mm[1],
-            -plate_thickness * 0.5 - 0.05,
-        ));
-        result = result.difference_with_engine(&handle_clearance, BooleanEngine::Exact);
         let pocket_depth = prototype.nut_pocket_depth().mm();
         let pocket_radius = prototype.nut_across_flats().mm() / 3.0_f64.sqrt();
         let pocket_section = CrossSection::circle(pocket_radius, 6);

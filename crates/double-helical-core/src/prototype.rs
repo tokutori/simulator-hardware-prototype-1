@@ -52,7 +52,7 @@ pub enum PrototypeError {
     PlateTooSmall,
     InvalidPlateCenter,
     InvalidTopSocket,
-    HandleTaperHasNoRoom,
+    InvalidHandleSquareDrive,
 }
 
 impl Prototype {
@@ -190,8 +190,19 @@ impl Prototype {
         {
             return Err(PrototypeError::ThrustSpacerHasNoRoom);
         }
-        if prototype.handle_support_taper_height() <= 0.0 {
-            return Err(PrototypeError::HandleTaperHasNoRoom);
+        let gear_socket_diagonal = prototype.handle_gear_square_socket_size() * libm::sqrt(2.0);
+        let crank_square_diagonal = prototype.handle_crank_square_shaft_size() * libm::sqrt(2.0);
+        if prototype.handle_gear_square_socket_size() <= prototype.handle_gear_square_shaft_size()
+            || prototype.handle_top_taper_lower_diameter()
+                >= prototype.handle_gear_square_socket_size()
+            || prototype.handle_bottom_taper_upper_diameter()
+                <= prototype.handle_gear_square_socket_size()
+            || gear_socket_diagonal >= prototype.handle_spur.root_radius() * 2.0
+            || prototype.handle_crank_square_socket_size()
+                <= prototype.handle_crank_square_shaft_size()
+            || crank_square_diagonal >= prototype.handle_top_taper_upper_diameter()
+        {
+            return Err(PrototypeError::InvalidHandleSquareDrive);
         }
         Ok(prototype)
     }
@@ -410,7 +421,7 @@ impl Prototype {
             translation_mm: [
                 reduction.translation_mm[0],
                 reduction.translation_mm[1],
-                self.secondary_spur_layer_center_z(),
+                self.reduction_small_extended_center_z(),
             ],
             rotation_z_deg: reduction.rotation_z_deg,
         }
@@ -445,7 +456,7 @@ impl Prototype {
             translation_mm: [
                 0.0,
                 self.driven_y() - self.primary_spur_center_distance(),
-                self.primary_spur_layer_center_z(),
+                self.handle_spur_extended_center_z(),
             ],
             rotation_z_deg: handle_rotation,
         }
@@ -455,6 +466,29 @@ impl Prototype {
         -self.rack.face_width().mm() * 0.5
             - self.pinion_lower_extension.mm()
             - self.spur_face_width.mm() * 0.5
+    }
+
+    pub fn reduction_small_extended_face_width(&self) -> f64 {
+        self.spur_face_width.mm() + self.pinion_lower_extension.mm()
+    }
+
+    pub fn reduction_small_extended_center_z(&self) -> f64 {
+        self.secondary_spur_layer_center_z() + self.pinion_lower_extension.mm() * 0.5
+    }
+
+    pub fn handle_spur_extended_face_width(&self) -> f64 {
+        self.spur_face_width.mm() + self.pinion_lower_extension.mm()
+    }
+
+    pub fn handle_spur_extended_center_z(&self) -> f64 {
+        self.primary_spur_layer_center_z() + self.pinion_lower_extension.mm() * 0.5
+    }
+
+    pub fn output_spur_to_rack_axial_gap(&self) -> f64 {
+        let output_spur_top =
+            self.secondary_spur_layer_center_z() + self.spur_face_width.mm() * 0.5;
+        let rack_face_bottom = -self.driven_pinion.face_width().mm() * 0.5;
+        rack_face_bottom - output_spur_top
     }
 
     pub fn primary_spur_layer_center_z(&self) -> f64 {
@@ -475,10 +509,6 @@ impl Prototype {
         self.frame_inner_bottom_z() - self.plate_thickness.mm() * 0.5
     }
 
-    pub fn bottom_plate_outer_z(&self) -> f64 {
-        self.bottom_plate_center_z() - self.plate_thickness.mm() * 0.5
-    }
-
     pub fn top_plate_center_z(&self) -> f64 {
         self.frame_inner_top_z() + self.plate_thickness.mm() * 0.5
     }
@@ -492,18 +522,63 @@ impl Prototype {
             - self.top_socket_axial_clearance.mm()
     }
 
-    pub fn handle_support_taper_height(&self) -> f64 {
-        let gear_bottom = self.primary_spur_layer_center_z() - self.spur_face_width.mm() * 0.5;
-        gear_bottom - self.bottom_plate_outer_z()
+    pub fn handle_gear_square_shaft_size(&self) -> f64 {
+        9.0
+    }
+
+    pub fn handle_gear_square_socket_size(&self) -> f64 {
+        self.handle_gear_square_shaft_size() + 0.30
+    }
+
+    pub fn handle_crank_square_shaft_size(&self) -> f64 {
+        6.0
+    }
+
+    pub fn handle_crank_square_socket_size(&self) -> f64 {
+        self.handle_crank_square_shaft_size() + 0.30
+    }
+
+    pub fn handle_bottom_taper_lower_diameter(&self) -> f64 {
+        9.0
+    }
+
+    pub fn handle_bottom_taper_upper_diameter(&self) -> f64 {
+        11.0
+    }
+
+    pub fn handle_top_taper_lower_diameter(&self) -> f64 {
+        9.0
+    }
+
+    pub fn handle_top_taper_upper_diameter(&self) -> f64 {
+        8.6
+    }
+
+    pub fn handle_taper_hole_diameter_clearance(&self) -> f64 {
+        0.4
+    }
+
+    pub const fn rack_pusher_length(&self) -> f64 {
+        8.0
+    }
+
+    pub const fn rack_pusher_width(&self) -> f64 {
+        30.0
+    }
+
+    pub fn rack_overall_length(&self) -> f64 {
+        self.rack.length() + self.rack.half_shift_mm() + self.rack_pusher_length()
     }
 
     pub fn handle_upper_thrust_spacer_length(&self) -> f64 {
-        let gear_top = self.primary_spur_layer_center_z() + self.spur_face_width.mm() * 0.5;
+        let gear_top =
+            self.handle_spur_extended_center_z() + self.handle_spur_extended_face_width() * 0.5;
         self.frame_inner_top_z() - gear_top - self.axial_clearance.mm()
     }
 
     pub fn reduction_upper_thrust_spacer_length(&self) -> f64 {
-        let gear_top = self.secondary_spur_layer_center_z() + self.spur_face_width.mm() * 0.5;
+        let gear_top = self.reduction_small_extended_center_z()
+            + self.reduction_small_extended_face_width() * 0.5;
         self.frame_inner_top_z() - gear_top - self.axial_clearance.mm()
     }
 
@@ -581,9 +656,9 @@ impl fmt::Display for PrototypeError {
             Self::InvalidTopSocket => formatter.write_str(
                 "top socket depth must fit inside the plate and exceed its axial clearance",
             ),
-            Self::HandleTaperHasNoRoom => {
-                formatter.write_str("handle shaft has no positive-height room for its print taper")
-            }
+            Self::InvalidHandleSquareDrive => formatter.write_str(
+                "handle shaft tapers and square drives must remain insertable and leave material in the spur",
+            ),
         }
     }
 }

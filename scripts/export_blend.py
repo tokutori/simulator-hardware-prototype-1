@@ -195,20 +195,29 @@ def main() -> None:
         bpy.ops.render.render(write_still=True)
 
     if handle_path is not None:
-        handles = [obj for obj in imported_meshes if obj.name == "handle-shaft-spur"]
-        if len(handles) != 1:
+        handle_names = {"handle-spur", "handle-shaft"}
+        handles = [obj for obj in imported_meshes if obj.name in handle_names]
+        if {obj.name for obj in handles} != handle_names:
             found = ", ".join(sorted(obj.name for obj in handles))
-            raise SystemExit(f"expected handle-shaft-spur, found: {found}")
-        handle = handles[0]
+            raise SystemExit(f"expected handle-spur and handle-shaft, found: {found}")
         for obj in imported_meshes:
-            obj.hide_render = obj is not handle
-        corners = [handle.matrix_world @ Vector(corner) for corner in handle.bound_box]
+            obj.hide_render = obj not in handles
+        handle_spur = next(obj for obj in handles if obj.name == "handle-spur")
+        handle_shaft = next(obj for obj in handles if obj.name == "handle-shaft")
+        handle_spur.location.x -= 20.0
+        handle_shaft.location.x += 20.0
+        bpy.context.view_layer.update()
+        corners = [
+            obj.matrix_world @ Vector(corner)
+            for obj in handles
+            for corner in obj.bound_box
+        ]
         lower = Vector(tuple(min(point[index] for point in corners) for index in range(3)))
         upper = Vector(tuple(max(point[index] for point in corners) for index in range(3)))
         center = (lower + upper) * 0.5
         camera.data.type = "ORTHO"
-        camera.data.ortho_scale = max((upper.x - lower.x) * 1.4, (upper.z - lower.z) * 1.2)
-        camera.location = (center.x, center.y - 200.0, center.z)
+        camera.data.ortho_scale = max((upper.x - lower.x) * 1.25, (upper.z - lower.z) * 1.25)
+        camera.location = (center.x - 100.0, center.y - 180.0, center.z + 100.0)
         aim_at(camera, tuple(center))
         scene.render.resolution_x = 1000
         scene.render.resolution_y = 1000

@@ -142,7 +142,10 @@ fn run() -> Result<(), AppError> {
     fs::create_dir_all(&options.output_dir)?;
     write_outputs(&options.output_dir, &prototype, &meshes)?;
     let report = report(&prototype, &meshes, interference);
-    fs::write(options.output_dir.join("report.txt"), report.as_bytes())?;
+    fs::write(
+        options.output_dir.join("assembly").join("report.txt"),
+        report.as_bytes(),
+    )?;
     print!("{report}");
     Ok(())
 }
@@ -367,6 +370,18 @@ fn angle(field: &'static str, value: f64) -> Result<Angle, AppError> {
 fn require_clear_meshes(interference: PrototypeInterference) -> Result<(), AppError> {
     let checks = [
         (
+            "handle spur/shaft fit",
+            interference.handle_spur_to_shaft_mm3,
+        ),
+        (
+            "handle shaft/bottom plate fit",
+            interference.handle_shaft_to_bottom_plate_mm3,
+        ),
+        (
+            "handle shaft/top plate fit",
+            interference.handle_shaft_to_top_plate_mm3,
+        ),
+        (
             "handle/D-large spur mesh",
             interference.handle_to_reduction_large_mm3,
         ),
@@ -403,12 +418,52 @@ fn write_outputs(
     meshes: &PrototypeMeshes,
 ) -> Result<(), AppError> {
     let identity = pose(0.0, 0.0, 0.0, 0.0);
+    let print_dir = output_dir.join("print-parts");
+    let assembly_dir = output_dir.join("assembly");
+    fs::create_dir_all(&print_dir)?;
+    fs::create_dir_all(&assembly_dir)?;
+    for obsolete_name in [
+        "handle-shaft-spur.stl",
+        "handle-spur.stl",
+        "handle-shaft.stl",
+        "handle-crank.stl",
+        "handle-knob.stl",
+        "reduction-d-compound.stl",
+        "driven-b-compound.stl",
+        "driven-c-compound.stl",
+        "idler-pinion.stl",
+        "double-helical-rack.stl",
+        "top-frame-plate.stl",
+        "bottom-frame-plate.stl",
+        "handle-upper-thrust-spacer.stl",
+        "reduction-d-upper-thrust-spacer.stl",
+        "driven-lower-thrust-spacer.stl",
+        "idler-lower-thrust-spacer.stl",
+        "prototype-assembly.stl",
+        "prototype-assembly.3mf",
+        "prototype-assembly.obj",
+        "prototype-assembly.mtl",
+        "prototype-assembly.blend",
+        "prototype-preview.scad",
+        "prototype-preview.png",
+        "prototype-blender.png",
+        "prototype-compounds.png",
+        "prototype-case-fit.png",
+        "prototype-handle.png",
+        "report.txt",
+    ] {
+        let obsolete_path = output_dir.join(obsolete_name);
+        if obsolete_path.exists() {
+            fs::remove_file(obsolete_path)?;
+        }
+    }
+    let obsolete_handle = print_dir.join("handle-shaft-spur.stl");
+    if obsolete_handle.exists() {
+        fs::remove_file(obsolete_handle)?;
+    }
     let individual = [
-        (
-            "handle-shaft-spur.stl",
-            "handle-shaft-spur",
-            &meshes.handle_spur,
-        ),
+        ("handle-spur.stl", "handle-spur", &meshes.handle_spur),
+        ("handle-shaft.stl", "handle-shaft", &meshes.handle_shaft),
         ("handle-crank.stl", "handle-crank", &meshes.handle_crank),
         ("handle-knob.stl", "handle-knob", &meshes.handle_knob),
         (
@@ -467,16 +522,22 @@ fn write_outputs(
                 pose: identity,
                 color_rgb: [0.75, 0.75, 0.75],
             }],
-            &output_dir.join(filename),
+            &print_dir.join(filename),
         )?;
     }
 
     let mut assembly = vec![
         part(
-            "handle-shaft-spur",
+            "handle-spur",
             &meshes.handle_spur,
             prototype.handle_spur_pose(),
             [0.95, 0.55, 0.20],
+        ),
+        part(
+            "handle-shaft",
+            &meshes.handle_shaft,
+            prototype.handle_spur_pose(),
+            [0.20, 0.24, 0.32],
         ),
         part(
             "reduction-d-large-plus-small",
@@ -524,6 +585,11 @@ fn write_outputs(
         + prototype.nut_thickness().mm() * 0.5;
     let knob_height = prototype.rack().face_width().mm() + 5.0;
     let knob_center_z = crank_center_z + prototype.nut_thickness().mm() * 0.5 + knob_height * 0.5;
+    let crank_angle = handle_pose.rotation_z_deg.to_radians();
+    let crank_end_x =
+        handle_pose.translation_mm[0] + prototype.handle_crank_radius().mm() * crank_angle.cos();
+    let crank_end_y =
+        handle_pose.translation_mm[1] + prototype.handle_crank_radius().mm() * crank_angle.sin();
     assembly.push(part(
         "handle-crank",
         &meshes.handle_crank,
@@ -531,62 +597,67 @@ fn write_outputs(
             handle_pose.translation_mm[0],
             handle_pose.translation_mm[1],
             crank_center_z,
-            0.0,
+            handle_pose.rotation_z_deg,
         ),
-        [0.95, 0.45, 0.12],
+        [0.95, 0.30, 0.08],
     ));
     assembly.push(part(
         "handle-knob",
         &meshes.handle_knob,
         pose(
-            handle_pose.translation_mm[0] + prototype.handle_crank_radius().mm(),
-            handle_pose.translation_mm[1],
+            crank_end_x,
+            crank_end_y,
             knob_center_z,
-            0.0,
+            handle_pose.rotation_z_deg,
         ),
-        [0.18, 0.18, 0.20],
+        [0.10, 0.10, 0.12],
     ));
-    let handle_thrust_z = prototype.primary_spur_layer_center_z()
-        + prototype.spur_face_width().mm() * 0.5
+    let handle_thrust_z = prototype.handle_spur_extended_center_z()
+        + prototype.handle_spur_extended_face_width() * 0.5
         + prototype.handle_upper_thrust_spacer_length() * 0.5;
-    let reduction_thrust_z = prototype.secondary_spur_layer_center_z()
-        + prototype.spur_face_width().mm() * 0.5
+    let reduction_thrust_z = prototype.reduction_small_extended_center_z()
+        + prototype.reduction_small_extended_face_width() * 0.5
         + prototype.reduction_upper_thrust_spacer_length() * 0.5;
     let driven_thrust_z = prototype.secondary_spur_layer_center_z()
         - prototype.spur_face_width().mm() * 0.5
         - prototype.driven_lower_thrust_spacer_length() * 0.5;
     let idler_thrust_z = -prototype.idler_pinion().face_width().mm() * 0.5
         - prototype.idler_lower_thrust_spacer_length() * 0.5;
-    for (name, mesh, gear_pose, z) in [
+    for (name, mesh, gear_pose, z, color) in [
         (
             "handle-upper-thrust-spacer",
             &meshes.handle_upper_thrust_spacer,
             prototype.handle_spur_pose(),
             handle_thrust_z,
+            [0.95, 0.42, 0.38],
         ),
         (
             "reduction-d-upper-thrust-spacer",
             &meshes.reduction_upper_thrust_spacer,
             prototype.reduction_pose(),
             reduction_thrust_z,
+            [0.85, 0.32, 0.72],
         ),
         (
             "driven-b-lower-thrust-spacer",
             &meshes.driven_lower_thrust_spacer,
             prototype.driven_b_pose(),
             driven_thrust_z,
+            [0.12, 0.72, 0.78],
         ),
         (
             "driven-c-lower-thrust-spacer",
             &meshes.driven_lower_thrust_spacer,
             prototype.driven_c_pose(),
             driven_thrust_z,
+            [0.12, 0.72, 0.78],
         ),
         (
             "idler-lower-thrust-spacer",
             &meshes.idler_lower_thrust_spacer,
             prototype.idler_pose(),
             idler_thrust_z,
+            [0.38, 0.78, 0.32],
         ),
     ] {
         assembly.push(part(
@@ -598,18 +669,18 @@ fn write_outputs(
                 z,
                 0.0,
             ),
-            [0.92, 0.34, 0.20],
+            color,
         ));
     }
-    write_binary_stl(&assembly, &output_dir.join("prototype-assembly.stl"))?;
-    write_3mf(&assembly, &output_dir.join("prototype-assembly.3mf"))?;
+    write_binary_stl(&assembly, &assembly_dir.join("prototype-assembly.stl"))?;
+    write_3mf(&assembly, &assembly_dir.join("prototype-assembly.3mf"))?;
     write_obj(
         &assembly,
-        &output_dir.join("prototype-assembly.obj"),
-        &output_dir.join("prototype-assembly.mtl"),
+        &assembly_dir.join("prototype-assembly.obj"),
+        &assembly_dir.join("prototype-assembly.mtl"),
     )?;
     fs::write(
-        output_dir.join("prototype-preview.scad"),
+        assembly_dir.join("prototype-preview.scad"),
         openscad_preview_scene(prototype),
     )?;
     Ok(())
@@ -625,7 +696,7 @@ fn openscad_preview_scene(prototype: &Prototype) -> String {
         String::from("// Generated by double-helical-cli. Units: millimetres.\n$fn = 72;\n\n");
     writeln!(
         scene,
-        "color([0.95,0.55,0.20]) translate([{:.9},{:.9},{:.9}]) rotate([0,0,{:.9}]) import(\"handle-shaft-spur.stl\", convexity=10);",
+        "color([0.95,0.55,0.20]) translate([{:.9},{:.9},{:.9}]) rotate([0,0,{:.9}]) import(\"../print-parts/handle-spur.stl\", convexity=10);",
         handle.translation_mm[0],
         handle.translation_mm[1],
         handle.translation_mm[2],
@@ -634,7 +705,16 @@ fn openscad_preview_scene(prototype: &Prototype) -> String {
     .unwrap();
     writeln!(
         scene,
-        "color([0.72,0.38,0.82]) translate([{:.9},{:.9},{:.9}]) rotate([0,0,{:.9}]) import(\"reduction-d-compound.stl\", convexity=10);",
+        "color([0.20,0.24,0.32]) translate([{:.9},{:.9},{:.9}]) rotate([0,0,{:.9}]) import(\"../print-parts/handle-shaft.stl\", convexity=10);",
+        handle.translation_mm[0],
+        handle.translation_mm[1],
+        handle.translation_mm[2],
+        handle.rotation_z_deg
+    )
+    .unwrap();
+    writeln!(
+        scene,
+        "color([0.72,0.38,0.82]) translate([{:.9},{:.9},{:.9}]) rotate([0,0,{:.9}]) import(\"../print-parts/reduction-d-compound.stl\", convexity=10);",
         reduction.translation_mm[0],
         reduction.translation_mm[1],
         reduction.translation_mm[2],
@@ -643,7 +723,7 @@ fn openscad_preview_scene(prototype: &Prototype) -> String {
     .unwrap();
     writeln!(
         scene,
-        "color([0.20,0.55,0.95]) translate([{:.9},{:.9},{:.9}]) rotate([0,0,{:.9}]) import(\"driven-b-compound.stl\", convexity=10);",
+        "color([0.20,0.55,0.95]) translate([{:.9},{:.9},{:.9}]) rotate([0,0,{:.9}]) import(\"../print-parts/driven-b-compound.stl\", convexity=10);",
         driven_b.translation_mm[0],
         driven_b.translation_mm[1],
         driven_b.translation_mm[2],
@@ -652,7 +732,7 @@ fn openscad_preview_scene(prototype: &Prototype) -> String {
     .unwrap();
     writeln!(
         scene,
-        "color([0.20,0.65,0.90]) translate([{:.9},{:.9},{:.9}]) rotate([0,0,{:.9}]) import(\"driven-c-compound.stl\", convexity=10);",
+        "color([0.20,0.65,0.90]) translate([{:.9},{:.9},{:.9}]) rotate([0,0,{:.9}]) import(\"../print-parts/driven-c-compound.stl\", convexity=10);",
         driven_c.translation_mm[0],
         driven_c.translation_mm[1],
         driven_c.translation_mm[2],
@@ -661,23 +741,23 @@ fn openscad_preview_scene(prototype: &Prototype) -> String {
     .unwrap();
     writeln!(
         scene,
-        "color([0.40,0.80,0.45]) translate([{:.9},{:.9},{:.9}]) rotate([0,0,{:.9}]) import(\"idler-pinion.stl\", convexity=10);",
+        "color([0.40,0.80,0.45]) translate([{:.9},{:.9},{:.9}]) rotate([0,0,{:.9}]) import(\"../print-parts/idler-pinion.stl\", convexity=10);",
         idler.translation_mm[0],
         idler.translation_mm[1],
         idler.translation_mm[2],
         idler.rotation_z_deg
     )
     .unwrap();
-    scene.push_str("color([0.90,0.80,0.25]) import(\"double-helical-rack.stl\", convexity=10);\n");
+    scene.push_str("color([0.90,0.80,0.25]) import(\"../print-parts/double-helical-rack.stl\", convexity=10);\n");
     writeln!(
         scene,
-        "color([0.70,0.72,0.78,0.35]) translate([0,0,{:.9}]) import(\"top-frame-plate.stl\", convexity=10);",
+        "color([0.70,0.72,0.78,0.35]) translate([0,0,{:.9}]) import(\"../print-parts/top-frame-plate.stl\", convexity=10);",
         prototype.top_plate_center_z()
     )
     .unwrap();
     writeln!(
         scene,
-        "color([0.55,0.58,0.65,0.65]) translate([0,0,{:.9}]) import(\"bottom-frame-plate.stl\", convexity=10);",
+        "color([0.55,0.58,0.65,0.65]) translate([0,0,{:.9}]) import(\"../print-parts/bottom-frame-plate.stl\", convexity=10);",
         prototype.bottom_plate_center_z()
     )
     .unwrap();
@@ -688,45 +768,71 @@ fn openscad_preview_scene(prototype: &Prototype) -> String {
         + prototype.nut_thickness().mm() * 0.5;
     let knob_height = prototype.rack().face_width().mm() + 5.0;
     let knob_center_z = crank_center_z + prototype.nut_thickness().mm() * 0.5 + knob_height * 0.5;
+    let crank_angle = handle.rotation_z_deg.to_radians();
+    let crank_end_x =
+        handle.translation_mm[0] + prototype.handle_crank_radius().mm() * crank_angle.cos();
+    let crank_end_y =
+        handle.translation_mm[1] + prototype.handle_crank_radius().mm() * crank_angle.sin();
     writeln!(
         scene,
-        "color([0.95,0.45,0.12]) translate([{:.9},{:.9},{crank_center_z:.9}]) import(\"handle-crank.stl\", convexity=10);",
-        handle.translation_mm[0], handle.translation_mm[1]
+        "color([0.95,0.30,0.08]) translate([{:.9},{:.9},{crank_center_z:.9}]) rotate([0,0,{:.9}]) import(\"../print-parts/handle-crank.stl\", convexity=10);",
+        handle.translation_mm[0], handle.translation_mm[1], handle.rotation_z_deg
     )
     .unwrap();
     writeln!(
         scene,
-        "color([0.18,0.18,0.20]) translate([{:.9},{:.9},{knob_center_z:.9}]) import(\"handle-knob.stl\", convexity=10);",
-        handle.translation_mm[0] + prototype.handle_crank_radius().mm(),
-        handle.translation_mm[1]
+        "color([0.10,0.10,0.12]) translate([{:.9},{:.9},{knob_center_z:.9}]) import(\"../print-parts/handle-knob.stl\", convexity=10);",
+        crank_end_x,
+        crank_end_y
     )
     .unwrap();
-    let handle_thrust_z = prototype.primary_spur_layer_center_z()
-        + prototype.spur_face_width().mm() * 0.5
+    let handle_thrust_z = prototype.handle_spur_extended_center_z()
+        + prototype.handle_spur_extended_face_width() * 0.5
         + prototype.handle_upper_thrust_spacer_length() * 0.5;
-    let reduction_thrust_z = prototype.secondary_spur_layer_center_z()
-        + prototype.spur_face_width().mm() * 0.5
+    let reduction_thrust_z = prototype.reduction_small_extended_center_z()
+        + prototype.reduction_small_extended_face_width() * 0.5
         + prototype.reduction_upper_thrust_spacer_length() * 0.5;
     let driven_thrust_z = prototype.secondary_spur_layer_center_z()
         - prototype.spur_face_width().mm() * 0.5
         - prototype.driven_lower_thrust_spacer_length() * 0.5;
     let idler_thrust_z = -prototype.idler_pinion().face_width().mm() * 0.5
         - prototype.idler_lower_thrust_spacer_length() * 0.5;
-    for (filename, gear_pose, z) in [
-        ("handle-upper-thrust-spacer.stl", handle, handle_thrust_z),
+    for (filename, gear_pose, z, color) in [
+        (
+            "handle-upper-thrust-spacer.stl",
+            handle,
+            handle_thrust_z,
+            [0.95, 0.42, 0.38],
+        ),
         (
             "reduction-d-upper-thrust-spacer.stl",
             reduction,
             reduction_thrust_z,
+            [0.85, 0.32, 0.72],
         ),
-        ("driven-lower-thrust-spacer.stl", driven_b, driven_thrust_z),
-        ("driven-lower-thrust-spacer.stl", driven_c, driven_thrust_z),
-        ("idler-lower-thrust-spacer.stl", idler, idler_thrust_z),
+        (
+            "driven-lower-thrust-spacer.stl",
+            driven_b,
+            driven_thrust_z,
+            [0.12, 0.72, 0.78],
+        ),
+        (
+            "driven-lower-thrust-spacer.stl",
+            driven_c,
+            driven_thrust_z,
+            [0.12, 0.72, 0.78],
+        ),
+        (
+            "idler-lower-thrust-spacer.stl",
+            idler,
+            idler_thrust_z,
+            [0.38, 0.78, 0.32],
+        ),
     ] {
         writeln!(
             scene,
-            "color([0.92,0.34,0.20]) translate([{:.9},{:.9},{z:.9}]) import(\"{filename}\", convexity=10);",
-            gear_pose.translation_mm[0], gear_pose.translation_mm[1]
+            "color([{:.2},{:.2},{:.2}]) translate([{:.9},{:.9},{z:.9}]) import(\"../print-parts/{filename}\", convexity=10);",
+            color[0], color[1], color[2], gear_pose.translation_mm[0], gear_pose.translation_mm[1]
         )
         .unwrap();
     }
@@ -817,6 +923,16 @@ fn report(
     .unwrap();
     writeln!(
         output,
+        "spur face widths: handle-small {:.6}/D-large {:.6} mm, D-small {:.6}/B/C-large {:.6} mm; B/C-large to rack axial gap {:.6} mm",
+        prototype.handle_spur_extended_face_width(),
+        prototype.spur_face_width().mm(),
+        prototype.reduction_small_extended_face_width(),
+        prototype.spur_face_width().mm(),
+        prototype.output_spur_to_rack_axial_gap()
+    )
+    .unwrap();
+    writeln!(
+        output,
         "final pinion: {}T, pitch diameter {:.6} mm, OD {:.6} mm",
         prototype.driven_pinion().spur().teeth(),
         prototype.driven_pinion().spur().pitch_radius() * 2.0,
@@ -825,9 +941,10 @@ fn report(
     .unwrap();
     writeln!(
         output,
-        "rack: {} teeth, length {:.6} mm, double-sided three-point support",
+        "rack: {} teeth, toothed length {:.6} mm, overall length {:.6} mm, 30 x 20 mm flat pusher face",
         prototype.rack().teeth(),
-        prototype.rack().length()
+        prototype.rack().length(),
+        prototype.rack_overall_length()
     )
     .unwrap();
     writeln!(
@@ -870,15 +987,24 @@ fn report(
     .unwrap();
     writeln!(
         output,
-        "handle: printed rotating shaft, {:.6} mm lower print taper, square drive, crank radius {:.6} mm, M6 knob bore",
-        prototype.handle_support_taper_height(),
+        "handle: {:.6} mm-wide separate spur with {:.6} mm gear socket/{:.6} mm square drive, bottom round taper {:.6}->{:.6} mm, top round taper {:.6}->{:.6} mm, crank {:.6}/{:.6} mm square drive/socket, radius {:.6} mm, M6 knob bore",
+        prototype.handle_spur_extended_face_width(),
+        prototype.handle_gear_square_socket_size(),
+        prototype.handle_gear_square_shaft_size(),
+        prototype.handle_bottom_taper_lower_diameter(),
+        prototype.handle_bottom_taper_upper_diameter(),
+        prototype.handle_top_taper_lower_diameter(),
+        prototype.handle_top_taper_upper_diameter(),
+        prototype.handle_crank_square_shaft_size(),
+        prototype.handle_crank_square_socket_size(),
         prototype.handle_crank_radius().mm()
     )
     .unwrap();
     writeln!(
         output,
-        "triangles: handle {}, compound D {}, compound B {}, compound C {}, idler {}, rack {}",
+        "triangles: handle spur {}, handle shaft {}, compound D {}, compound B {}, compound C {}, idler {}, rack {}",
         meshes.handle_spur.triangles.len(),
+        meshes.handle_shaft.triangles.len(),
         meshes.reduction_compound.triangles.len(),
         meshes.driven_b_compound.triangles.len(),
         meshes.driven_c_compound.triangles.len(),
@@ -888,7 +1014,10 @@ fn report(
     .unwrap();
     writeln!(
         output,
-        "interference mm^3: handle/D-large {:.9}, D-small/B {:.9}, D-small/C {:.9}, B/rack {:.9}, C/rack {:.9}, A/rack {:.9}",
+        "interference mm^3: handle-spur/shaft {:.9}, shaft/bottom-plate {:.9}, shaft/top-plate {:.9}, handle/D-large {:.9}, D-small/B {:.9}, D-small/C {:.9}, B/rack {:.9}, C/rack {:.9}, A/rack {:.9}",
+        interference.handle_spur_to_shaft_mm3,
+        interference.handle_shaft_to_bottom_plate_mm3,
+        interference.handle_shaft_to_top_plate_mm3,
         interference.handle_to_reduction_large_mm3,
         interference.reduction_small_to_b_mm3,
         interference.reduction_small_to_c_mm3,
@@ -937,6 +1066,9 @@ mod tests {
         );
         assert_eq!(prototype.rack().teeth(), 24);
         assert!((155.0..157.0).contains(&prototype.rack().length()));
+        assert_eq!(prototype.rack_pusher_length(), 8.0);
+        assert_eq!(prototype.rack_pusher_width(), 30.0);
+        assert!((166.0..167.0).contains(&prototype.rack_overall_length()));
         assert!((prototype.frame_spacer_length() - 30.0).abs() < 1.0e-12);
         assert!((prototype.frame_outer_thickness_mm() - 38.0).abs() < 1.0e-12);
         assert!((prototype.bolt_thread_engagement_mm() - 5.0).abs() < 1.0e-12);
@@ -944,8 +1076,8 @@ mod tests {
         assert_eq!(prototype.plate_length().mm(), 130.0);
         assert_eq!(prototype.plate_width().mm(), 130.0);
         assert_eq!(prototype.thrust_spacer_outer_diameter().mm(), 15.0);
-        assert!((prototype.handle_upper_thrust_spacer_length() - 25.5).abs() < 1.0e-12);
-        assert!((prototype.reduction_upper_thrust_spacer_length() - 22.0).abs() < 1.0e-12);
+        assert!((prototype.handle_upper_thrust_spacer_length() - 23.5).abs() < 1.0e-12);
+        assert!((prototype.reduction_upper_thrust_spacer_length() - 20.0).abs() < 1.0e-12);
         assert!((prototype.driven_lower_thrust_spacer_length() - 3.5).abs() < 1.0e-12);
         assert!((prototype.idler_lower_thrust_spacer_length() - 9.0).abs() < 1.0e-12);
         assert!((prototype.fixed_post_length() - 31.5).abs() < 1.0e-12);
@@ -953,10 +1085,27 @@ mod tests {
         assert_eq!(prototype.top_socket_axial_clearance().mm(), 0.5);
         assert_eq!(prototype.top_socket_diameter_clearance().mm(), 0.5);
         assert_eq!(prototype.handle_crank_radius().mm(), 40.0);
-        assert!((prototype.handle_support_taper_height() - 4.5).abs() < 1.0e-12);
-        let handle_taper_expansion =
-            prototype.handle_spur().root_radius() - prototype.journal_outer_diameter().mm() * 0.5;
-        assert!(handle_taper_expansion < prototype.handle_support_taper_height() + 0.25);
+        assert_eq!(prototype.handle_gear_square_shaft_size(), 9.0);
+        assert_eq!(prototype.handle_gear_square_socket_size(), 9.3);
+        assert_eq!(prototype.handle_crank_square_shaft_size(), 6.0);
+        assert_eq!(prototype.handle_crank_square_socket_size(), 6.3);
+        assert_eq!(prototype.handle_bottom_taper_lower_diameter(), 9.0);
+        assert_eq!(prototype.handle_bottom_taper_upper_diameter(), 11.0);
+        assert_eq!(prototype.handle_top_taper_lower_diameter(), 9.0);
+        assert_eq!(prototype.handle_top_taper_upper_diameter(), 8.6);
+        assert!(
+            prototype.handle_top_taper_lower_diameter()
+                < prototype.handle_gear_square_socket_size()
+        );
+        assert!(
+            prototype.handle_bottom_taper_upper_diameter()
+                > prototype.handle_gear_square_socket_size()
+        );
+        assert!(
+            prototype.handle_crank_square_shaft_size() * 2.0_f64.sqrt()
+                < prototype.handle_top_taper_upper_diameter()
+                    + prototype.handle_taper_hole_diameter_clearance()
+        );
         let lateral_margin = prototype.plate_length().mm() * 0.5
             - (prototype.secondary_spur_center_distance() + prototype.output_spur().tip_radius());
         assert!((lateral_margin - 2.0).abs() < 1.0e-12);
@@ -975,13 +1124,27 @@ mod tests {
             prototype.secondary_spur_layer_center_z() - prototype.spur_face_width().mm() * 0.5;
         assert!((d_large_top - d_small_bottom).abs() < 1.0e-12);
 
+        assert_eq!(prototype.spur_face_width().mm(), 3.5);
+        assert_eq!(prototype.handle_spur_extended_face_width(), 5.5);
+        assert_eq!(prototype.reduction_small_extended_face_width(), 5.5);
+        let handle_small_bottom = prototype.handle_spur_extended_center_z()
+            - prototype.handle_spur_extended_face_width() * 0.5;
+        let d_large_bottom =
+            prototype.primary_spur_layer_center_z() - prototype.spur_face_width().mm() * 0.5;
+        assert!((handle_small_bottom - d_large_bottom).abs() < 1.0e-12);
+        let d_small_bottom = prototype.reduction_small_extended_center_z()
+            - prototype.reduction_small_extended_face_width() * 0.5;
+        let output_large_bottom =
+            prototype.secondary_spur_layer_center_z() - prototype.spur_face_width().mm() * 0.5;
+        assert!((d_small_bottom - output_large_bottom).abs() < 1.0e-12);
         let output_spur_top =
             prototype.secondary_spur_layer_center_z() + prototype.spur_face_width().mm() * 0.5;
+        let reduction_small_top = prototype.reduction_small_extended_center_z()
+            + prototype.reduction_small_extended_face_width() * 0.5;
         let pinion_bottom = -prototype.driven_pinion().face_width().mm() * 0.5;
-        assert!(
-            (output_spur_top + prototype.pinion_lower_extension().mm() - pinion_bottom).abs()
-                < 1.0e-12
-        );
+        assert!((prototype.output_spur_to_rack_axial_gap() - 2.0).abs() < 1.0e-12);
+        assert!((pinion_bottom - output_spur_top - 2.0).abs() < 1.0e-12);
+        assert!((reduction_small_top - pinion_bottom).abs() < 1.0e-12);
         assert!(
             prototype.output_spur().root_radius() >= prototype.driven_pinion().spur().tip_radius()
         );
