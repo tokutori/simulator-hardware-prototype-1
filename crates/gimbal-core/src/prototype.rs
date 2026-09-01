@@ -320,10 +320,8 @@ fn minimum_moving_z(p: &PrototypeParameters) -> f64 {
 #[derive(Clone, Copy)]
 struct Definitions {
     sector: ComponentDefinitionId,
-    sector_end_clamp: ComponentDefinitionId,
     carrier_rail: ComponentDefinitionId,
     carrier_link: ComponentDefinitionId,
-    lower_joint_gusset: ComponentDefinitionId,
     crossmember: ComponentDefinitionId,
     moving_crossbar: ComponentDefinitionId,
     moving_crossbar_clamp: ComponentDefinitionId,
@@ -383,13 +381,6 @@ fn build_definitions(
         fdm,
         [0.94, 0.52, 0.08, 1.0],
     );
-    let sector_end_clamp = add_solid_definition(
-        assembly,
-        "pitch_sector_end_clamp",
-        centered_box(builder, [24.0, 20.0, 16.0]),
-        fdm,
-        [0.72, 0.43, 0.18, 1.0],
-    );
     let carrier_rail = sheet_definition(
         builder,
         assembly,
@@ -408,19 +399,6 @@ fn build_definitions(
         link_height,
         p.frame.sheet_thickness,
         [0.58, 0.35, 0.16, 1.0],
-    )?;
-    let lower_joint_gusset = polygon_sheet_definition(
-        builder,
-        assembly,
-        "pitch_lower_joint_gusset",
-        vec![
-            Point2 { x: -36.0, y: 0.0 },
-            Point2 { x: 6.0, y: 0.0 },
-            Point2 { x: 6.0, y: 32.0 },
-            Point2 { x: -8.0, y: 32.0 },
-        ],
-        p.frame.sheet_thickness,
-        [0.68, 0.42, 0.20, 1.0],
     )?;
     let crossmember = add_solid_definition(
         assembly,
@@ -785,10 +763,8 @@ fn build_definitions(
     );
     Ok(Definitions {
         sector,
-        sector_end_clamp,
         carrier_rail,
         carrier_link,
-        lower_joint_gusset,
         crossmember,
         moving_crossbar,
         moving_crossbar_clamp,
@@ -845,7 +821,6 @@ fn build_pitch_carrier(
         * 0.5;
     let sector_half_angle = p.pitch_sector.sector.half_angle().as_radians();
     let sector_end_x = sector_reference_radius * libm::cos(sector_half_angle);
-    let sector_end_z = sector_reference_radius * libm::sin(sector_half_angle);
     for (side, y) in [("left", -half_spacing), ("right", half_spacing)] {
         for (end, rotation) in [("front", 0.0), ("rear", PI)] {
             add_instance(
@@ -872,12 +847,6 @@ fn build_pitch_carrier(
         }
         let link_center_z = -(74.0 + p.frame.lower_rail_depth.mm()) * 0.5;
         for (end, x) in [("front", sector_end_x), ("rear", -sector_end_x)] {
-            let gusset_orientation = if end == "front" {
-                RigidTransform::rotated(Axis3::X, FRAC_PI_2)
-            } else {
-                RigidTransform::rotated(Axis3::Z, PI)
-                    .compose(RigidTransform::rotated(Axis3::X, FRAC_PI_2))
-            };
             add_instance(
                 assembly,
                 &format!("pitch_carrier_{side}_{end}_lower_link"),
@@ -886,64 +855,8 @@ fn build_pitch_carrier(
                 RigidTransform::translated(x, y, link_center_z)
                     .compose(RigidTransform::rotated(Axis3::X, FRAC_PI_2)),
             );
-            add_instance(
-                assembly,
-                &format!("pitch_carrier_{side}_{end}_lower_gusset"),
-                definitions.lower_joint_gusset,
-                fixed_frame,
-                RigidTransform::translated(x, y, -p.frame.lower_rail_depth.mm() - 2.0)
-                    .compose(gusset_orientation),
-            );
-            for (vertical_end, z) in [("upper", sector_end_z), ("lower", -sector_end_z)] {
-                add_instance(
-                    assembly,
-                    &format!("pitch_sector_{side}_{end}_{vertical_end}_end_clamp"),
-                    definitions.sector_end_clamp,
-                    fixed_frame,
-                    RigidTransform::translated(x, y, z),
-                );
-                for (bolt, bolt_z) in [
-                    (
-                        "sector",
-                        vertical_end_sign(vertical_end) * (sector_end_z - 3.0),
-                    ),
-                    (
-                        "frame",
-                        vertical_end_sign(vertical_end) * (sector_end_z + 5.0),
-                    ),
-                ] {
-                    add_instance(
-                        assembly,
-                        &format!("pitch_sector_{side}_{end}_{vertical_end}_{bolt}_m3"),
-                        definitions.m3_structural_fastener,
-                        fixed_frame,
-                        RigidTransform::translated(x, y, bolt_z),
-                    );
-                }
-            }
-            let inward_x = if end == "front" { -1.0 } else { 1.0 };
-            for (index, (bolt_x, bolt_z)) in [
-                (x, -96.0),
-                (x + inward_x * 14.0, -p.frame.lower_rail_depth.mm()),
-                (x + inward_x * 27.0, -p.frame.lower_rail_depth.mm()),
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                add_instance(
-                    assembly,
-                    &format!("pitch_carrier_{side}_{end}_lower_joint_m3_{}", index + 1),
-                    definitions.m3_structural_fastener,
-                    fixed_frame,
-                    RigidTransform::translated(bolt_x, y, bolt_z),
-                );
-            }
         }
     }
-}
-
-fn vertical_end_sign(vertical_end: &str) -> f64 {
-    if vertical_end == "upper" { 1.0 } else { -1.0 }
 }
 
 fn build_crossmembers(
@@ -2175,59 +2088,7 @@ fn dual_sector_solid(
             z: angle(0.0),
         },
     )?;
-    let backbone = annular_sector_solid_y(
-        builder,
-        internal.root_radius() + 1.0,
-        external.root_radius() - 1.0,
-        half,
-        p.pitch_sector.face_width.mm() + 8.0,
-    )?;
-    builder
-        .boolean(BooleanOperation::Union, toothed_sector, backbone)
-        .map_err(PrototypeError::Feature)
-}
-
-fn annular_sector_solid_y(
-    builder: &mut FeatureBuilder,
-    inner_radius: f64,
-    outer_radius: f64,
-    half_angle: f64,
-    width: f64,
-) -> Result<SolidId, PrototypeError> {
-    let outer = builder.primitive(Primitive3::Cylinder {
-        height: length(width),
-        radius: length(outer_radius),
-        segments: 192,
-        centered: true,
-    });
-    let inner = builder.primitive(Primitive3::Cylinder {
-        height: length(width + 2.0),
-        radius: length(inner_radius),
-        segments: 192,
-        centered: true,
-    });
-    let annulus = builder.boolean(BooleanOperation::Difference, outer, inner)?;
-    let wedge = builder.polygon(sector_wedge_points(outer_radius + 1.0, half_angle))?;
-    let wedge = builder.extrude(wedge, length(width + 2.0))?;
-    let wedge = builder.translate(
-        wedge,
-        Translation3 {
-            x: 0.0,
-            y: 0.0,
-            z: -(width + 2.0) * 0.5,
-        },
-    )?;
-    let sector = builder.boolean(BooleanOperation::Intersection, annulus, wedge)?;
-    builder
-        .rotate(
-            sector,
-            Rotation3 {
-                x: angle(90.0),
-                y: angle(0.0),
-                z: angle(0.0),
-            },
-        )
-        .map_err(PrototypeError::Feature)
+    Ok(toothed_sector)
 }
 
 fn sector_wedge_points(tip_radius: f64, half_angle: f64) -> Vec<Point2> {

@@ -418,7 +418,8 @@ mod tests {
                 "missing fixed pitch sector {name}"
             );
         }
-        assert_eq!(count_prefix(&design, "pitch_sector_left_front_"), 6);
+        assert_eq!(count_prefix(&design, "pitch_sector_left_front_"), 0);
+        assert_eq!(count_prefix(&design, "pitch_crossmember_"), 4);
         assert_eq!(count_prefix(&design, "pitch_drive_") / 5, 8);
         assert_eq!(count_prefix(&design, "pitch_retention_") / 7, 4);
         assert_eq!(count_prefix(&design, "roll_driven_gear_"), 2);
@@ -597,13 +598,12 @@ mod tests {
     }
 
     #[test]
-    fn pitch_sector_backbone_and_end_joints_form_a_continuous_load_path() {
+    fn obsolete_overlapping_sector_reinforcement_is_absent() {
         let design = load_design();
         let mut evaluator = Evaluator::new(&design.graph);
-        let representative_sector = instance_solid(&design, "pitch_sector_left_front");
         let sector_mesh = evaluator
-            .mesh(representative_sector)
-            .expect("reinforced sector evaluates to a manifold mesh");
+            .mesh(instance_solid(&design, "pitch_sector_left_front"))
+            .expect("unreinforced sector evaluates to a manifold mesh");
         let minimum_y = sector_mesh
             .vertices
             .iter()
@@ -615,50 +615,21 @@ mod tests {
             .map(|vertex| vertex[1])
             .fold(f64::NEG_INFINITY, f64::max);
         assert!(
-            maximum_y - minimum_y >= 15.9,
-            "sector backbone must retain its 16 mm axial depth"
+            maximum_y - minimum_y <= 8.01,
+            "obsolete 16 mm sector backbone is still present"
         );
-        for side in ["left", "right"] {
-            for end in ["front", "rear"] {
-                let sector = format!("pitch_sector_{side}_{end}");
-                let upper_clamp = format!("{sector}_upper_end_clamp");
-                let lower_clamp = format!("{sector}_lower_end_clamp");
-                let upper_rail = format!("pitch_carrier_{side}_upper_rail");
-                let lower_link = format!("pitch_carrier_{side}_{end}_lower_link");
-                let lower_gusset = format!("pitch_carrier_{side}_{end}_lower_gusset");
-                let lower_rail = format!("pitch_carrier_{side}_lower_rail");
-
-                for (a, b) in [
-                    (&sector, &upper_clamp),
-                    (&upper_clamp, &upper_rail),
-                    (&sector, &lower_clamp),
-                    (&lower_clamp, &lower_link),
-                    (&lower_link, &lower_gusset),
-                    (&lower_gusset, &lower_rail),
-                ] {
-                    let volume = evaluator
-                        .intersection_volume_transformed(
-                            instance_solid(&design, a),
-                            instance_pose(&design, a, 0.0, 0.0),
-                            instance_solid(&design, b),
-                            instance_pose(&design, b, 0.0, 0.0),
-                        )
-                        .expect("structural connection query succeeds");
-                    assert!(
-                        volume > 0.1,
-                        "structural load path is disconnected between {a} and {b}"
-                    );
-                }
-            }
+        for obsolete_prefix in [
+            "pitch_sector_left_front_upper_end_clamp",
+            "pitch_sector_left_front_lower_end_clamp",
+            "pitch_carrier_left_front_lower_gusset",
+            "pitch_carrier_left_front_lower_joint_m3_",
+        ] {
+            assert_eq!(
+                count_prefix(&design, obsolete_prefix),
+                0,
+                "obsolete overlapping component remains: {obsolete_prefix}"
+            );
         }
-        assert_eq!(
-            count_prefix(&design, "pitch_carrier_left_front_upper_link"),
-            0
-        );
-        assert_eq!(
-            count_prefix(&design, "pitch_carrier_left_front_lower_joint_m3_"),
-            3
-        );
     }
 
     #[test]

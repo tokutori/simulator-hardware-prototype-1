@@ -1,5 +1,8 @@
 # 2軸コクピ試作 ソフトウェア構成
 
+> [!WARNING]
+> 現在のassembly・締結・嵌合・gear mesh検証は再設計中である。既知の問題とPhase計画は [Assembly・機械接続 再設計計画](assembly-remediation-plan.md) を参照すること。本書の記述だけをもって機械的成立性が検証済みとは扱わない。
+
 ## 1. 方針
 
 設計のauthorityは、validated parameterからFeature DAG、component definition、instanceおよびframe/joint graphを作るRustコードである。
