@@ -241,8 +241,8 @@ validatorは`#[cfg(test)]`内へ閉じ込めない。CLIとtestが同じ実装�
 | Phase | 内容 | 状態 | 主な依存 |
 | ---: | --- | --- | --- |
 | 0 | 誤った不変条件の撤去とbaseline固定 | 完了 | なし |
-| 1 | typed identityとAssemblyRelation | 進行中 | Phase 0 |
-| 2 | 共通AssemblyValidator | 未着手 | Phase 1 |
+| 1 | typed identityとAssemblyRelation | 完了 | Phase 0 |
+| 2 | 共通AssemblyValidator | 進行中 | Phase 1 |
 | 3 | 固定pitch frameとsector荷重経路 | 未着手 | Phase 2 |
 | 4 | M3締結とlaser sheet hole | 未着手 | Phase 2, 3 |
 | 5 | roll/pitchの軸、軸受、clamp、hub、key | 未着手 | Phase 2, 4 |
@@ -539,8 +539,11 @@ Exit criteria:
 - 実形状が未成立なjointへ先にrelationを付けることはしない。prototypeへのdatum/relation付与はPhase 3–6で各jointの形状を成立させるのと同じcommit系列で行う。
 - `cargo fmt --all -- --check`、`cargo check --workspace`、warning-as-errorのClippyおよび`cargo test --workspace`が成功した。workspace testは35件成功、失敗0件だった。
 - `gimbal-core`のnativeおよび`wasm32-unknown-unknown`の`no_std` checkが成功した。
+- integration testからinstance名、prefixおよび`starts_with`による機械的対象選択を撤去し、`ComponentRole + ComponentLocation`による一意なselectorへ移行した。
+- structured selectorへ移行後も、可動域、床clearanceおよびgearbox plate干渉を含むworkspace test 35件が成功し、失敗0件だった。
+- Phase 1のexit criteriaを満たしたためPhase 1を完了し、Phase 2を進行中へ変更した。
 
-Phase 1は引き続き進行中である。次は残存する表示名依存のsemantic testをstructured identityへ移行し、Phase 2で使用するrelation/identity traversalをfixtureで固める。実joint relationの登録は未成立形状を正当化しないよう、Phase 3–6の再設計と同時に行う。
+次の作業はPhase 2の共通`AssemblyValidator`とstructured `ValidationReport`である。実joint relationの登録は未成立形状を正当化しないよう、Phase 3–6の再設計と同時に行う。
 
 ## 9. 完成の定義
 

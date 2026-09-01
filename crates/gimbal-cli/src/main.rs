@@ -345,7 +345,10 @@ fn manufacturing_name(manufacturing: Manufacturing) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gimbal_core::{ComponentRole, LongitudinalEnd, PrototypeDesign, RigidTransform, Side};
+    use gimbal_core::{
+        ComponentIdentity, ComponentInstance, ComponentLocation, ComponentRole, LongitudinalEnd,
+        PrototypeDesign, RigidTransform, Side, VerticalEnd,
+    };
 
     fn load_design() -> PrototypeDesign {
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -364,18 +367,42 @@ mod tests {
         }
     }
 
+    const fn singleton(role: ComponentRole) -> ComponentIdentity {
+        ComponentIdentity {
+            role,
+            location: ComponentLocation::new(),
+        }
+    }
+
+    const fn located(role: ComponentRole, location: ComponentLocation) -> ComponentIdentity {
+        ComponentIdentity { role, location }
+    }
+
+    fn selected_instance(
+        design: &PrototypeDesign,
+        identity: ComponentIdentity,
+    ) -> &ComponentInstance {
+        let mut matches = design
+            .assembly
+            .instances_with_role(identity.role)
+            .filter(|(_, instance)| instance.location == identity.location);
+        let (_, instance) = matches
+            .next()
+            .unwrap_or_else(|| panic!("missing component identity {identity:?}"));
+        assert!(
+            matches.next().is_none(),
+            "component identity is not unique: {identity:?}"
+        );
+        instance
+    }
+
     fn instance_pose(
         design: &PrototypeDesign,
-        name: &str,
+        identity: ComponentIdentity,
         pitch: f64,
         roll: f64,
     ) -> RigidTransform {
-        let instance = design
-            .assembly
-            .instances()
-            .iter()
-            .find(|instance| instance.name == name)
-            .unwrap_or_else(|| panic!("missing instance {name}"));
+        let instance = selected_instance(design, identity);
         design
             .kinematics
             .pose(command(pitch, roll))
@@ -385,28 +412,17 @@ mod tests {
             .compose(instance.local_pose)
     }
 
-    fn instance_solid(design: &PrototypeDesign, name: &str) -> gimbal_core::SolidId {
-        let instance = design
-            .assembly
-            .instances()
-            .iter()
-            .find(|instance| instance.name == name)
-            .unwrap_or_else(|| panic!("missing instance {name}"));
+    fn instance_solid(
+        design: &PrototypeDesign,
+        identity: ComponentIdentity,
+    ) -> gimbal_core::SolidId {
+        let instance = selected_instance(design, identity);
         design
             .assembly
             .definition(instance.definition)
             .expect("instance definition exists")
             .body
             .assembly_solid()
-    }
-
-    fn count_prefix(design: &PrototypeDesign, prefix: &str) -> usize {
-        design
-            .assembly
-            .instances()
-            .iter()
-            .filter(|instance| instance.name.starts_with(prefix))
-            .count()
     }
 
     fn count_role(design: &PrototypeDesign, role: ComponentRole) -> usize {
@@ -451,55 +467,99 @@ mod tests {
                 }
             }
         }
-        assert_eq!(count_prefix(&design, "pitch_sector_left_front_"), 0);
-        assert_eq!(count_prefix(&design, "pitch_crossmember_"), 4);
-        assert_eq!(count_prefix(&design, "roll_gearbox_front_input_pinion"), 1);
-        assert_eq!(count_prefix(&design, "roll_gearbox_rear_input_pinion"), 1);
+        assert_eq!(count_role(&design, ComponentRole::FixedCrossmember), 4);
+        for end in [LongitudinalEnd::Front, LongitudinalEnd::Rear] {
+            selected_instance(
+                &design,
+                located(
+                    ComponentRole::RollGearboxSmallGear,
+                    ComponentLocation::new()
+                        .with_longitudinal_end(end)
+                        .with_ordinal(2),
+                ),
+            );
+        }
     }
 
     #[test]
     fn fixed_rack_stays_still_while_pinion_unit_orbits() {
         let design = load_design();
-        let rack_zero = instance_pose(&design, "pitch_sector_left_front", 0.0, 0.0);
-        let rack_pitch = instance_pose(&design, "pitch_sector_left_front", 20.0, 0.0);
+        let rack = located(
+            ComponentRole::PitchSector,
+            ComponentLocation::new()
+                .with_side(Side::Left)
+                .with_longitudinal_end(LongitudinalEnd::Front),
+        );
+        let pinion = located(
+            ComponentRole::PitchDrivePinion,
+            ComponentLocation::new()
+                .with_side(Side::Left)
+                .with_longitudinal_end(LongitudinalEnd::Front)
+                .with_ordinal(1),
+        );
+        let floor = singleton(ComponentRole::InstallationFloor);
+        let rack_zero = instance_pose(&design, rack, 0.0, 0.0);
+        let rack_pitch = instance_pose(&design, rack, 20.0, 0.0);
         assert_eq!(rack_zero, rack_pitch);
 
-        let pinion_zero = instance_pose(&design, "pitch_drive_left_front_1", 0.0, 0.0);
-        let pinion_pitch = instance_pose(&design, "pitch_drive_left_front_1", 20.0, 0.0);
+        let pinion_zero = instance_pose(&design, pinion, 0.0, 0.0);
+        let pinion_pitch = instance_pose(&design, pinion, 20.0, 0.0);
         assert_ne!(pinion_zero.translation, pinion_pitch.translation);
         let radius_zero = pinion_zero.translation[0].hypot(pinion_zero.translation[2]);
         let radius_pitch = pinion_pitch.translation[0].hypot(pinion_pitch.translation[2]);
         assert!((radius_zero - radius_pitch).abs() < 1.0e-8);
 
-        let floor_zero = instance_pose(&design, "installation_floor_reference", 0.0, 0.0);
-        let floor_pitch = instance_pose(&design, "installation_floor_reference", 20.0, 0.0);
+        let floor_zero = instance_pose(&design, floor, 0.0, 0.0);
+        let floor_pitch = instance_pose(&design, floor, 20.0, 0.0);
         assert_eq!(floor_zero, floor_pitch);
     }
 
     #[test]
     fn pitch_drive_and_roll_mechanism_travel_as_one_moving_body() {
         let design = load_design();
-        let moving_names = [
-            "pitch_gearbox_left_front_contact_carriage_plate",
-            "roll_gearbox_front_side_plate_1",
-            "roll_shaft",
-            "cockpit_body",
+        let moving_components = [
+            located(
+                ComponentRole::PitchContactCarriagePlate,
+                ComponentLocation::new()
+                    .with_side(Side::Left)
+                    .with_longitudinal_end(LongitudinalEnd::Front),
+            ),
+            located(
+                ComponentRole::RollGearboxPlate,
+                ComponentLocation::new()
+                    .with_longitudinal_end(LongitudinalEnd::Front)
+                    .with_ordinal(1),
+            ),
+            singleton(ComponentRole::RollShaft),
+            singleton(ComponentRole::Cockpit),
         ];
-        for name in moving_names {
-            let zero = instance_pose(&design, name, 0.0, 0.0);
-            let pitched = instance_pose(&design, name, 20.0, 0.0);
-            assert_ne!(zero, pitched, "{name} must follow pitch");
+        for component in moving_components {
+            let zero = instance_pose(&design, component, 0.0, 0.0);
+            let pitched = instance_pose(&design, component, 20.0, 0.0);
+            assert_ne!(zero, pitched, "{component:?} must follow pitch");
         }
 
-        let rack_zero = instance_pose(&design, "pitch_sector_left_front", 0.0, 0.0);
-        let rack_pitched = instance_pose(&design, "pitch_sector_left_front", 20.0, 0.0);
+        let rack = located(
+            ComponentRole::PitchSector,
+            ComponentLocation::new()
+                .with_side(Side::Left)
+                .with_longitudinal_end(LongitudinalEnd::Front),
+        );
+        let rack_zero = instance_pose(&design, rack, 0.0, 0.0);
+        let rack_pitched = instance_pose(&design, rack, 20.0, 0.0);
         assert_eq!(rack_zero, rack_pitched, "the ground rack must remain fixed");
 
-        let roll_shaft_zero = instance_pose(&design, "roll_shaft", 0.0, 0.0);
-        let roll_shaft_pitched = instance_pose(&design, "roll_shaft", 20.0, 0.0);
-        let roll_gearbox_zero = instance_pose(&design, "roll_gearbox_front_side_plate_1", 0.0, 0.0);
-        let roll_gearbox_pitched =
-            instance_pose(&design, "roll_gearbox_front_side_plate_1", 20.0, 0.0);
+        let roll_shaft = singleton(ComponentRole::RollShaft);
+        let roll_gearbox_plate = located(
+            ComponentRole::RollGearboxPlate,
+            ComponentLocation::new()
+                .with_longitudinal_end(LongitudinalEnd::Front)
+                .with_ordinal(1),
+        );
+        let roll_shaft_zero = instance_pose(&design, roll_shaft, 0.0, 0.0);
+        let roll_shaft_pitched = instance_pose(&design, roll_shaft, 20.0, 0.0);
+        let roll_gearbox_zero = instance_pose(&design, roll_gearbox_plate, 0.0, 0.0);
+        let roll_gearbox_pitched = instance_pose(&design, roll_gearbox_plate, 20.0, 0.0);
         assert!(
             (distance(roll_shaft_zero, roll_gearbox_zero)
                 - distance(roll_shaft_pitched, roll_gearbox_pitched))
@@ -511,37 +571,74 @@ mod tests {
     #[test]
     fn retention_supports_are_not_fixed_to_the_outer_frame() {
         let design = load_design();
-        assert_eq!(count_prefix(&design, "fixed_frame_floor_support_"), 0);
-        for name in [
-            "pitch_retention_left_front_bearing_block",
-            "pitch_retention_right_rear_leaf_spring_1",
+        for component in [
+            located(
+                ComponentRole::RetentionBearingBlock,
+                ComponentLocation::new()
+                    .with_side(Side::Left)
+                    .with_longitudinal_end(LongitudinalEnd::Front),
+            ),
+            located(
+                ComponentRole::RetentionLeafSpring,
+                ComponentLocation::new()
+                    .with_side(Side::Right)
+                    .with_longitudinal_end(LongitudinalEnd::Rear)
+                    .with_ordinal(1),
+            ),
         ] {
-            let zero = instance_pose(&design, name, 0.0, 0.0);
-            let pitched = instance_pose(&design, name, 20.0, 0.0);
-            assert_ne!(zero, pitched, "{name} must travel with the pitch unit");
+            let zero = instance_pose(&design, component, 0.0, 0.0);
+            let pitched = instance_pose(&design, component, 20.0, 0.0);
+            assert_ne!(
+                zero, pitched,
+                "{component:?} must travel with the pitch unit"
+            );
         }
     }
 
     #[test]
     fn base_frame_contacts_floor_and_roll_gearboxes_are_below_axis() {
         let design = load_design();
-        let floor = instance_pose(&design, "installation_floor_reference", 0.0, 0.0);
-        let lower_rail = instance_pose(&design, "pitch_carrier_left_lower_rail", 0.0, 0.0);
+        let floor = instance_pose(
+            &design,
+            singleton(ComponentRole::InstallationFloor),
+            0.0,
+            0.0,
+        );
+        let lower_rail = instance_pose(
+            &design,
+            located(
+                ComponentRole::FixedCarrierRail,
+                ComponentLocation::new()
+                    .with_side(Side::Left)
+                    .with_vertical_end(VerticalEnd::Lower),
+            ),
+            0.0,
+            0.0,
+        );
         let floor_top = floor.translation[2] + 5.0;
         let rail_bottom = lower_rail.translation[2] - 4.0;
         assert!((floor_top - rail_bottom).abs() < 1.0e-8);
 
-        for end in ["front", "rear"] {
-            let driven = instance_pose(&design, &format!("roll_driven_gear_{end}"), 0.0, 0.0);
+        for end in [LongitudinalEnd::Front, LongitudinalEnd::Rear] {
+            let location = ComponentLocation::new().with_longitudinal_end(end);
+            let driven = instance_pose(
+                &design,
+                located(ComponentRole::RollDrivenGear, location),
+                0.0,
+                0.0,
+            );
             let input = instance_pose(
                 &design,
-                &format!("roll_gearbox_{end}_input_pinion"),
+                located(
+                    ComponentRole::RollGearboxSmallGear,
+                    location.with_ordinal(2),
+                ),
                 0.0,
                 0.0,
             );
             let plate = instance_pose(
                 &design,
-                &format!("roll_gearbox_{end}_side_plate_1"),
+                located(ComponentRole::RollGearboxPlate, location.with_ordinal(1)),
                 0.0,
                 0.0,
             );
@@ -553,9 +650,10 @@ mod tests {
     #[test]
     fn cockpit_is_suspended_and_gravity_has_a_restoring_direction() {
         let design = load_design();
-        let shaft = instance_pose(&design, "roll_shaft", 0.0, 0.0);
-        let cockpit_zero = instance_pose(&design, "cockpit_body", 0.0, 0.0);
-        let cockpit_rolled = instance_pose(&design, "cockpit_body", 0.0, 35.0);
+        let shaft = instance_pose(&design, singleton(ComponentRole::RollShaft), 0.0, 0.0);
+        let cockpit = singleton(ComponentRole::Cockpit);
+        let cockpit_zero = instance_pose(&design, cockpit, 0.0, 0.0);
+        let cockpit_rolled = instance_pose(&design, cockpit, 0.0, 35.0);
         assert!(cockpit_zero.translation[2] < shaft.translation[2]);
         assert!(cockpit_zero.translation[2] < cockpit_rolled.translation[2]);
     }
@@ -564,8 +662,29 @@ mod tests {
     fn pitch_pinion_spin_includes_orbit_about_the_fixed_rack() {
         let design = load_design();
         let pitch = 1.0_f64;
-        let drive = instance_pose(&design, "pitch_drive_left_front_1", pitch, 0.0);
-        let encoder = instance_pose(&design, "pitch_retention_left_front", pitch, 0.0);
+        let drive = instance_pose(
+            &design,
+            located(
+                ComponentRole::PitchDrivePinion,
+                ComponentLocation::new()
+                    .with_side(Side::Left)
+                    .with_longitudinal_end(LongitudinalEnd::Front)
+                    .with_ordinal(1),
+            ),
+            pitch,
+            0.0,
+        );
+        let encoder = instance_pose(
+            &design,
+            located(
+                ComponentRole::PitchRetentionPinion,
+                ComponentLocation::new()
+                    .with_side(Side::Left)
+                    .with_longitudinal_end(LongitudinalEnd::Front),
+            ),
+            pitch,
+            0.0,
+        );
         let drive_angle = quaternion_y_degrees(drive.rotation);
         let encoder_angle = quaternion_y_degrees(encoder.rotation);
         let expected_drive = pitch * (1.0 - design.pitch_drive_pair.ratio());
@@ -577,49 +696,155 @@ mod tests {
     #[test]
     fn moving_assembly_clears_the_floor_over_the_command_envelope() {
         let design = load_design();
-        let floor_name = "installation_floor_reference";
-        let floor_solid = instance_solid(&design, floor_name);
-        let floor_pose = instance_pose(&design, floor_name, 0.0, 0.0);
+        let floor = singleton(ComponentRole::InstallationFloor);
+        let floor_solid = instance_solid(&design, floor);
+        let floor_pose = instance_pose(&design, floor, 0.0, 0.0);
         let watched = [
-            "cockpit_body",
-            "pitch_moving_crossbar_front",
-            "pitch_moving_crossbar_rear",
-            "roll_gearbox_front_side_plate_1",
-            "roll_gearbox_front_side_plate_2",
-            "roll_gearbox_rear_side_plate_1",
-            "roll_gearbox_rear_side_plate_2",
-            "roll_gearbox_front_mount_arm_1",
-            "roll_gearbox_front_mount_arm_2",
-            "roll_gearbox_rear_mount_arm_1",
-            "roll_gearbox_rear_mount_arm_2",
-            "pitch_contact_left_front_lower_cradle_brace",
-            "pitch_contact_right_front_lower_cradle_brace",
-            "pitch_contact_left_rear_lower_cradle_brace",
-            "pitch_contact_right_rear_lower_cradle_brace",
-            "pitch_contact_left_front_upper_cradle_brace",
-            "pitch_contact_right_front_upper_cradle_brace",
-            "pitch_contact_left_rear_upper_cradle_brace",
-            "pitch_contact_right_rear_upper_cradle_brace",
-            "pitch_cradle_longitudinal_rail_1",
-            "pitch_cradle_longitudinal_rail_2",
-            "pitch_end_upper_tie_front",
-            "pitch_end_upper_tie_rear",
+            singleton(ComponentRole::Cockpit),
+            located(
+                ComponentRole::MovingCrossbar,
+                ComponentLocation::new().with_longitudinal_end(LongitudinalEnd::Front),
+            ),
+            located(
+                ComponentRole::MovingCrossbar,
+                ComponentLocation::new().with_longitudinal_end(LongitudinalEnd::Rear),
+            ),
+            located(
+                ComponentRole::RollGearboxPlate,
+                ComponentLocation::new()
+                    .with_longitudinal_end(LongitudinalEnd::Front)
+                    .with_ordinal(1),
+            ),
+            located(
+                ComponentRole::RollGearboxPlate,
+                ComponentLocation::new()
+                    .with_longitudinal_end(LongitudinalEnd::Front)
+                    .with_ordinal(2),
+            ),
+            located(
+                ComponentRole::RollGearboxPlate,
+                ComponentLocation::new()
+                    .with_longitudinal_end(LongitudinalEnd::Rear)
+                    .with_ordinal(1),
+            ),
+            located(
+                ComponentRole::RollGearboxPlate,
+                ComponentLocation::new()
+                    .with_longitudinal_end(LongitudinalEnd::Rear)
+                    .with_ordinal(2),
+            ),
+            located(
+                ComponentRole::MovingDriveMountArm,
+                ComponentLocation::new()
+                    .with_longitudinal_end(LongitudinalEnd::Front)
+                    .with_ordinal(1),
+            ),
+            located(
+                ComponentRole::MovingDriveMountArm,
+                ComponentLocation::new()
+                    .with_longitudinal_end(LongitudinalEnd::Front)
+                    .with_ordinal(2),
+            ),
+            located(
+                ComponentRole::MovingDriveMountArm,
+                ComponentLocation::new()
+                    .with_longitudinal_end(LongitudinalEnd::Rear)
+                    .with_ordinal(1),
+            ),
+            located(
+                ComponentRole::MovingDriveMountArm,
+                ComponentLocation::new()
+                    .with_longitudinal_end(LongitudinalEnd::Rear)
+                    .with_ordinal(2),
+            ),
+            located(
+                ComponentRole::PitchUnitLowerFrameArm,
+                ComponentLocation::new()
+                    .with_side(Side::Left)
+                    .with_longitudinal_end(LongitudinalEnd::Front)
+                    .with_vertical_end(VerticalEnd::Lower),
+            ),
+            located(
+                ComponentRole::PitchUnitLowerFrameArm,
+                ComponentLocation::new()
+                    .with_side(Side::Right)
+                    .with_longitudinal_end(LongitudinalEnd::Front)
+                    .with_vertical_end(VerticalEnd::Lower),
+            ),
+            located(
+                ComponentRole::PitchUnitLowerFrameArm,
+                ComponentLocation::new()
+                    .with_side(Side::Left)
+                    .with_longitudinal_end(LongitudinalEnd::Rear)
+                    .with_vertical_end(VerticalEnd::Lower),
+            ),
+            located(
+                ComponentRole::PitchUnitLowerFrameArm,
+                ComponentLocation::new()
+                    .with_side(Side::Right)
+                    .with_longitudinal_end(LongitudinalEnd::Rear)
+                    .with_vertical_end(VerticalEnd::Lower),
+            ),
+            located(
+                ComponentRole::PitchUnitUpperFrameArm,
+                ComponentLocation::new()
+                    .with_side(Side::Left)
+                    .with_longitudinal_end(LongitudinalEnd::Front)
+                    .with_vertical_end(VerticalEnd::Upper),
+            ),
+            located(
+                ComponentRole::PitchUnitUpperFrameArm,
+                ComponentLocation::new()
+                    .with_side(Side::Right)
+                    .with_longitudinal_end(LongitudinalEnd::Front)
+                    .with_vertical_end(VerticalEnd::Upper),
+            ),
+            located(
+                ComponentRole::PitchUnitUpperFrameArm,
+                ComponentLocation::new()
+                    .with_side(Side::Left)
+                    .with_longitudinal_end(LongitudinalEnd::Rear)
+                    .with_vertical_end(VerticalEnd::Upper),
+            ),
+            located(
+                ComponentRole::PitchUnitUpperFrameArm,
+                ComponentLocation::new()
+                    .with_side(Side::Right)
+                    .with_longitudinal_end(LongitudinalEnd::Rear)
+                    .with_vertical_end(VerticalEnd::Upper),
+            ),
+            located(
+                ComponentRole::PitchCradleLongitudinalRail,
+                ComponentLocation::new().with_ordinal(1),
+            ),
+            located(
+                ComponentRole::PitchCradleLongitudinalRail,
+                ComponentLocation::new().with_ordinal(2),
+            ),
+            located(
+                ComponentRole::PitchEndUpperTie,
+                ComponentLocation::new().with_longitudinal_end(LongitudinalEnd::Front),
+            ),
+            located(
+                ComponentRole::PitchEndUpperTie,
+                ComponentLocation::new().with_longitudinal_end(LongitudinalEnd::Rear),
+            ),
         ];
         let mut evaluator = Evaluator::new(&design.graph);
         for pitch in [-20.0, 0.0, 20.0] {
             for roll in [-35.0, 0.0, 35.0] {
-                for name in watched {
+                for component in watched {
                     let volume = evaluator
                         .intersection_volume_transformed(
                             floor_solid,
                             floor_pose,
-                            instance_solid(&design, name),
-                            instance_pose(&design, name, pitch, roll),
+                            instance_solid(&design, component),
+                            instance_pose(&design, component, pitch, roll),
                         )
                         .expect("floor interference query succeeds");
                     assert!(
                         volume <= 1.0e-7,
-                        "{name} intersects the floor by {volume} mm^3 at pitch={pitch}, roll={roll}"
+                        "{component:?} intersects the floor by {volume} mm^3 at pitch={pitch}, roll={roll}"
                     );
                 }
             }
@@ -630,8 +855,14 @@ mod tests {
     fn obsolete_overlapping_sector_reinforcement_is_absent() {
         let design = load_design();
         let mut evaluator = Evaluator::new(&design.graph);
+        let sector = located(
+            ComponentRole::PitchSector,
+            ComponentLocation::new()
+                .with_side(Side::Left)
+                .with_longitudinal_end(LongitudinalEnd::Front),
+        );
         let sector_mesh = evaluator
-            .mesh(instance_solid(&design, "pitch_sector_left_front"))
+            .mesh(instance_solid(&design, sector))
             .expect("unreinforced sector evaluates to a manifold mesh");
         let minimum_y = sector_mesh
             .vertices
@@ -647,42 +878,83 @@ mod tests {
             maximum_y - minimum_y <= 8.01,
             "obsolete 16 mm sector backbone is still present"
         );
-        for obsolete_prefix in [
-            "pitch_sector_left_front_upper_end_clamp",
-            "pitch_sector_left_front_lower_end_clamp",
-            "pitch_carrier_left_front_lower_gusset",
-            "pitch_carrier_left_front_lower_joint_m3_",
-        ] {
-            assert_eq!(
-                count_prefix(&design, obsolete_prefix),
-                0,
-                "obsolete overlapping component remains: {obsolete_prefix}"
-            );
-        }
     }
 
     #[test]
     fn shortened_cockpit_clears_pitch_frame_roll_supports() {
         let design = load_design();
-        let cockpit_solid = instance_solid(&design, "cockpit_body");
+        let cockpit = singleton(ComponentRole::Cockpit);
+        let cockpit_solid = instance_solid(&design, cockpit);
         let fixed_to_pitch_frame = [
-            "roll_bearing_pedestal_front",
-            "roll_bearing_pedestal_rear",
-            "roll_gearbox_front_carrier_mount_1",
-            "roll_gearbox_front_carrier_mount_2",
-            "roll_gearbox_rear_carrier_mount_1",
-            "roll_gearbox_rear_carrier_mount_2",
-            "roll_gearbox_front_mount_arm_1",
-            "roll_gearbox_front_mount_arm_2",
-            "roll_gearbox_rear_mount_arm_1",
-            "roll_gearbox_rear_mount_arm_2",
-            "pitch_end_upper_tie_front",
-            "pitch_end_upper_tie_rear",
+            located(
+                ComponentRole::RollBearingPedestal,
+                ComponentLocation::new().with_longitudinal_end(LongitudinalEnd::Front),
+            ),
+            located(
+                ComponentRole::RollBearingPedestal,
+                ComponentLocation::new().with_longitudinal_end(LongitudinalEnd::Rear),
+            ),
+            located(
+                ComponentRole::RollGearboxMount,
+                ComponentLocation::new()
+                    .with_longitudinal_end(LongitudinalEnd::Front)
+                    .with_ordinal(1),
+            ),
+            located(
+                ComponentRole::RollGearboxMount,
+                ComponentLocation::new()
+                    .with_longitudinal_end(LongitudinalEnd::Front)
+                    .with_ordinal(2),
+            ),
+            located(
+                ComponentRole::RollGearboxMount,
+                ComponentLocation::new()
+                    .with_longitudinal_end(LongitudinalEnd::Rear)
+                    .with_ordinal(1),
+            ),
+            located(
+                ComponentRole::RollGearboxMount,
+                ComponentLocation::new()
+                    .with_longitudinal_end(LongitudinalEnd::Rear)
+                    .with_ordinal(2),
+            ),
+            located(
+                ComponentRole::MovingDriveMountArm,
+                ComponentLocation::new()
+                    .with_longitudinal_end(LongitudinalEnd::Front)
+                    .with_ordinal(1),
+            ),
+            located(
+                ComponentRole::MovingDriveMountArm,
+                ComponentLocation::new()
+                    .with_longitudinal_end(LongitudinalEnd::Front)
+                    .with_ordinal(2),
+            ),
+            located(
+                ComponentRole::MovingDriveMountArm,
+                ComponentLocation::new()
+                    .with_longitudinal_end(LongitudinalEnd::Rear)
+                    .with_ordinal(1),
+            ),
+            located(
+                ComponentRole::MovingDriveMountArm,
+                ComponentLocation::new()
+                    .with_longitudinal_end(LongitudinalEnd::Rear)
+                    .with_ordinal(2),
+            ),
+            located(
+                ComponentRole::PitchEndUpperTie,
+                ComponentLocation::new().with_longitudinal_end(LongitudinalEnd::Front),
+            ),
+            located(
+                ComponentRole::PitchEndUpperTie,
+                ComponentLocation::new().with_longitudinal_end(LongitudinalEnd::Rear),
+            ),
         ];
         let mut evaluator = Evaluator::new(&design.graph);
         for pitch in [-20.0, 0.0, 20.0] {
             for roll in [-35.0, 0.0, 35.0] {
-                let cockpit_pose = instance_pose(&design, "cockpit_body", pitch, roll);
+                let cockpit_pose = instance_pose(&design, cockpit, pitch, roll);
                 for support in fixed_to_pitch_frame {
                     let volume = evaluator
                         .intersection_volume_transformed(
@@ -694,7 +966,7 @@ mod tests {
                         .expect("cockpit clearance query succeeds");
                     assert!(
                         volume <= 1.0e-7,
-                        "cockpit intersects {support} by {volume} mm^3 at pitch={pitch}, roll={roll}"
+                        "cockpit intersects {support:?} by {volume} mm^3 at pitch={pitch}, roll={roll}"
                     );
                 }
             }
@@ -705,55 +977,113 @@ mod tests {
     fn gearbox_plates_clear_their_gears_and_shafts() {
         let design = load_design();
         let mut evaluator = Evaluator::new(&design.graph);
-        let groups: &[(&str, &[&str])] = &[
+        let right_front = ComponentLocation::new()
+            .with_side(Side::Right)
+            .with_longitudinal_end(LongitudinalEnd::Front);
+        let roll_front = ComponentLocation::new().with_longitudinal_end(LongitudinalEnd::Front);
+        let groups: &[(ComponentIdentity, &[ComponentIdentity])] = &[
             (
-                "pitch_gearbox_right_front_contact_carriage_plate",
+                located(ComponentRole::PitchContactCarriagePlate, right_front),
                 &[
-                    "pitch_drive_right_front_1",
-                    "pitch_drive_right_front_2",
-                    "pitch_drive_right_front_1_distribution_branch",
-                    "pitch_drive_right_front_2_distribution_branch",
-                    "pitch_gearbox_right_front_distributor",
-                    "pitch_gearbox_right_front_stage2_driven",
-                    "pitch_gearbox_right_front_stage2_pinion",
-                    "pitch_gearbox_right_front_stage1_driven",
-                    "pitch_gearbox_right_front_input_pinion",
+                    located(ComponentRole::PitchDrivePinion, right_front.with_ordinal(1)),
+                    located(ComponentRole::PitchDrivePinion, right_front.with_ordinal(2)),
+                    located(
+                        ComponentRole::PitchGearboxSmallGear,
+                        right_front.with_ordinal(1),
+                    ),
+                    located(
+                        ComponentRole::PitchGearboxSmallGear,
+                        right_front.with_ordinal(2),
+                    ),
+                    located(
+                        ComponentRole::PitchGearboxSmallGear,
+                        right_front.with_ordinal(3),
+                    ),
+                    located(
+                        ComponentRole::PitchGearboxLargeGear,
+                        right_front.with_ordinal(1),
+                    ),
+                    located(
+                        ComponentRole::PitchGearboxSmallGear,
+                        right_front.with_ordinal(4),
+                    ),
+                    located(
+                        ComponentRole::PitchGearboxLargeGear,
+                        right_front.with_ordinal(2),
+                    ),
+                    located(
+                        ComponentRole::PitchGearboxSmallGear,
+                        right_front.with_ordinal(5),
+                    ),
                 ],
             ),
             (
-                "pitch_contact_right_front_inboard_plate",
+                located(ComponentRole::PitchContactInboardPlate, right_front),
                 &[
-                    "pitch_drive_right_front_1",
-                    "pitch_drive_right_front_2",
-                    "pitch_retention_right_front",
-                    "pitch_drive_right_front_1_shaft",
-                    "pitch_drive_right_front_2_shaft",
-                    "pitch_retention_right_front_interface_shaft",
+                    located(ComponentRole::PitchDrivePinion, right_front.with_ordinal(1)),
+                    located(ComponentRole::PitchDrivePinion, right_front.with_ordinal(2)),
+                    located(ComponentRole::PitchRetentionPinion, right_front),
+                    located(ComponentRole::PitchDriveShaft, right_front.with_ordinal(1)),
+                    located(ComponentRole::PitchDriveShaft, right_front.with_ordinal(2)),
+                    located(ComponentRole::PitchRetentionShaft, right_front),
                 ],
             ),
             (
-                "pitch_gearbox_right_front_far_plate",
+                located(ComponentRole::PitchGearboxFarPlate, right_front),
                 &[
-                    "pitch_gearbox_right_front_stage2_driven",
-                    "pitch_gearbox_right_front_stage2_pinion",
-                    "pitch_gearbox_right_front_stage1_driven",
-                    "pitch_gearbox_right_front_input_pinion",
-                    "pitch_gearbox_right_front_distributor_shaft",
-                    "pitch_gearbox_right_front_compound_shaft",
-                    "pitch_gearbox_right_front_input_shaft",
+                    located(
+                        ComponentRole::PitchGearboxLargeGear,
+                        right_front.with_ordinal(1),
+                    ),
+                    located(
+                        ComponentRole::PitchGearboxSmallGear,
+                        right_front.with_ordinal(4),
+                    ),
+                    located(
+                        ComponentRole::PitchGearboxLargeGear,
+                        right_front.with_ordinal(2),
+                    ),
+                    located(
+                        ComponentRole::PitchGearboxSmallGear,
+                        right_front.with_ordinal(5),
+                    ),
+                    located(
+                        ComponentRole::PitchGearboxShaft,
+                        right_front.with_ordinal(1),
+                    ),
+                    located(
+                        ComponentRole::PitchGearboxShaft,
+                        right_front.with_ordinal(2),
+                    ),
+                    located(
+                        ComponentRole::PitchGearboxShaft,
+                        right_front.with_ordinal(3),
+                    ),
                 ],
             ),
             (
-                "roll_gearbox_front_side_plate_1",
+                located(ComponentRole::RollGearboxPlate, roll_front.with_ordinal(1)),
                 &[
-                    "roll_output_pinion_front",
-                    "roll_gearbox_front_stage2_driven",
-                    "roll_gearbox_front_stage2_pinion",
-                    "roll_gearbox_front_stage1_driven",
-                    "roll_gearbox_front_input_pinion",
-                    "roll_gearbox_front_output_shaft",
-                    "roll_gearbox_front_compound_shaft",
-                    "roll_gearbox_front_input_shaft",
+                    located(ComponentRole::RollInputPinion, roll_front),
+                    located(
+                        ComponentRole::RollGearboxLargeGear,
+                        roll_front.with_ordinal(1),
+                    ),
+                    located(
+                        ComponentRole::RollGearboxSmallGear,
+                        roll_front.with_ordinal(1),
+                    ),
+                    located(
+                        ComponentRole::RollGearboxLargeGear,
+                        roll_front.with_ordinal(2),
+                    ),
+                    located(
+                        ComponentRole::RollGearboxSmallGear,
+                        roll_front.with_ordinal(2),
+                    ),
+                    located(ComponentRole::RollGearboxShaft, roll_front.with_ordinal(1)),
+                    located(ComponentRole::RollGearboxShaft, roll_front.with_ordinal(2)),
+                    located(ComponentRole::RollGearboxShaft, roll_front.with_ordinal(3)),
                 ],
             ),
         ];
@@ -761,15 +1091,15 @@ mod tests {
             for part in *parts {
                 let volume = evaluator
                     .intersection_volume_transformed(
-                        instance_solid(&design, plate),
-                        instance_pose(&design, plate, 0.0, 0.0),
-                        instance_solid(&design, part),
-                        instance_pose(&design, part, 0.0, 0.0),
+                        instance_solid(&design, *plate),
+                        instance_pose(&design, *plate, 0.0, 0.0),
+                        instance_solid(&design, *part),
+                        instance_pose(&design, *part, 0.0, 0.0),
                     )
                     .expect("gearbox interference query succeeds");
                 assert!(
                     volume <= 1.0e-7,
-                    "{plate} intersects {part} by {volume} mm^3"
+                    "{plate:?} intersects {part:?} by {volume} mm^3"
                 );
             }
         }
