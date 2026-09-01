@@ -908,11 +908,18 @@ mod tests {
     fn nominal_configuration_builds_requested_ratios() {
         let config: Config = toml::from_str(include_str!("../../../parameters.toml")).unwrap();
         let prototype = config.build().unwrap();
-        assert!((prototype.primary_reduction_ratio() - 2.0).abs() < 1.0e-12);
-        assert!((prototype.secondary_reduction_ratio() - 20.0 / 9.0).abs() < 1.0e-12);
-        assert!((prototype.reduction_ratio() - 40.0 / 9.0).abs() < 1.0e-12);
+        assert_eq!(prototype.handle_spur().module().mm(), 1.8);
+        assert_eq!(prototype.handle_spur().pressure_angle().as_degrees(), 25.0);
+        assert_eq!(prototype.handle_spur().teeth(), 12);
+        assert_eq!(prototype.reduction_large_spur().teeth(), 31);
+        assert_eq!(prototype.reduction_small_spur().teeth(), 12);
+        assert_eq!(prototype.output_spur().teeth(), 28);
+        assert!((prototype.primary_reduction_ratio() - 31.0 / 12.0).abs() < 1.0e-12);
+        assert!((prototype.secondary_reduction_ratio() - 28.0 / 12.0).abs() < 1.0e-12);
+        assert!((prototype.reduction_ratio() - 217.0 / 36.0).abs() < 1.0e-12);
         assert_eq!(prototype.reduction_pose().translation_mm[0], 0.0);
         assert_eq!(prototype.handle_spur_pose().translation_mm[0], 0.0);
+        assert!((prototype.handle_spur_pose().rotation_z_deg - 13.75).abs() < 1.0e-12);
         assert_eq!(
             prototype.driven_b_pose().translation_mm[0],
             -prototype.secondary_spur_center_distance()
@@ -952,7 +959,7 @@ mod tests {
         assert!(handle_taper_expansion < prototype.handle_support_taper_height() + 0.25);
         let lateral_margin = prototype.plate_length().mm() * 0.5
             - (prototype.secondary_spur_center_distance() + prototype.output_spur().tip_radius());
-        assert!((lateral_margin - 2.5).abs() < 1.0e-12);
+        assert!((lateral_margin - 2.0).abs() < 1.0e-12);
         let case_min_y = prototype.plate_center_y() - prototype.plate_width().mm() * 0.5;
         let handle_min_y =
             prototype.handle_spur_pose().translation_mm[1] - prototype.handle_spur().tip_radius();
@@ -960,7 +967,7 @@ mod tests {
         let case_max_y = prototype.plate_center_y() + prototype.plate_width().mm() * 0.5;
         let idler_max_y =
             prototype.idler_pose().translation_mm[1] + prototype.idler_pinion().spur().tip_radius();
-        assert!(case_max_y - idler_max_y > 6.0);
+        assert!(case_max_y - idler_max_y > 0.75);
 
         let d_large_top =
             prototype.primary_spur_layer_center_z() + prototype.spur_face_width().mm() * 0.5;

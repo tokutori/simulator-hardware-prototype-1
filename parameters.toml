@@ -1,13 +1,15 @@
 # Nominal test geometry. Dimensions are millimetres and angles are degrees.
 
 [spur_stage]
-module_mm = 1.25
-pressure_angle_deg = 20.0
-handle_teeth = 18
-reduction_large_teeth = 36
-reduction_small_teeth = 18
-output_teeth = 40
+module_mm = 1.8
+pressure_angle_deg = 25.0
+handle_teeth = 12
+reduction_large_teeth = 31
+reduction_small_teeth = 12
+output_teeth = 28
 face_width_mm = 3.5
+# Per-member tooth-thickness reduction. Two members at 0.10 mm give about
+# 0.20 mm nominal mesh backlash; tune this with an FDM coupon.
 tooth_backlash_mm = 0.10
 chord_tolerance_mm = 0.05
 
@@ -21,6 +23,7 @@ face_width_mm = 20.0
 center_gap_mm = 0.0
 pinion_lower_extension_mm = 2.0
 rack_body_thickness_mm = 8.0
+# Applied independently to the pinion and rack tooth thicknesses.
 tooth_backlash_mm = 0.10
 chord_tolerance_mm = 0.05
 slices_per_half = 12
@@ -42,7 +45,7 @@ nut_pocket_depth_mm = 3.0
 plate_thickness_mm = 4.0
 plate_length_mm = 130.0
 plate_width_mm = 130.0
-plate_center_y_mm = -9.0
+plate_center_y_mm = -14.3
 corner_bolt_inset_mm = 12.0
 axial_clearance_mm = 0.5
 top_socket_depth_mm = 2.0

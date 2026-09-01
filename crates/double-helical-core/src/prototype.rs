@@ -429,13 +429,25 @@ impl Prototype {
     }
 
     pub fn handle_spur_pose(&self) -> GearPose {
+        let reduction = self.reduction_pose();
+        let reduction_contact_turns = (-90.0 - reduction.rotation_z_deg)
+            * f64::from(self.reduction_large_spur.teeth())
+            / 360.0;
+        let reduction_contact_phase =
+            reduction_contact_turns - libm::floor(reduction_contact_turns);
+        let unwrapped_handle_gap_phase = 0.5 - reduction_contact_phase;
+        let handle_gap_phase = unwrapped_handle_gap_phase - libm::floor(unwrapped_handle_gap_phase);
+        let handle_pitch_angle = 360.0 / f64::from(self.handle_spur.teeth());
+        let unwrapped_handle_rotation = 90.0 - handle_gap_phase * handle_pitch_angle;
+        let handle_rotation = unwrapped_handle_rotation
+            - libm::floor(unwrapped_handle_rotation / handle_pitch_angle) * handle_pitch_angle;
         GearPose {
             translation_mm: [
                 0.0,
                 self.driven_y() - self.primary_spur_center_distance(),
                 self.primary_spur_layer_center_z(),
             ],
-            rotation_z_deg: 0.0,
+            rotation_z_deg: handle_rotation,
         }
     }
 
