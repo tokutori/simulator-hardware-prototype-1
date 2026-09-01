@@ -102,6 +102,7 @@ fn generate(workspace: &Path, loaded: &LoadedConfig) -> Result<(), Box<dyn Error
             .count();
         definition_manifest.push(json!({
             "name": definition.name,
+            "role": format!("{:?}", definition.role),
             "manufacturing": manufacturing_name(definition.manufacturing),
             "quantity": quantity,
             "vertices": metrics.vertices,
@@ -143,7 +144,7 @@ fn generate(workspace: &Path, loaded: &LoadedConfig) -> Result<(), Box<dyn Error
         .map_err(|error| format!("zero pose rejected: {error:?}"))?;
     let mut export_parts = Vec::with_capacity(design.assembly.instances().len());
     let mut instance_manifest = Vec::with_capacity(design.assembly.instances().len());
-    for instance in design.assembly.instances() {
+    for (instance_index, instance) in design.assembly.instances().iter().enumerate() {
         let definition = design
             .assembly
             .definition(instance.definition)
@@ -153,8 +154,16 @@ fn generate(workspace: &Path, loaded: &LoadedConfig) -> Result<(), Box<dyn Error
             .ok_or("assembly referenced an unknown frame")?;
         let static_pose = frame_pose.compose(instance.local_pose);
         instance_manifest.push(json!({
+            "id": instance_index,
             "name": instance.name,
             "definition": definition.name,
+            "role": format!("{:?}", definition.role),
+            "location": {
+                "side": instance.location.side.map(|value| value.as_str()),
+                "longitudinal_end": instance.location.longitudinal_end.map(|value| value.as_str()),
+                "vertical_end": instance.location.vertical_end.map(|value| value.as_str()),
+                "ordinal": instance.location.ordinal,
+            },
             "frame": instance.frame.index(),
             "static_translation_mm": static_pose.translation,
         }));
@@ -336,7 +345,7 @@ fn manufacturing_name(manufacturing: Manufacturing) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gimbal_core::{PrototypeDesign, RigidTransform};
+    use gimbal_core::{ComponentRole, LongitudinalEnd, PrototypeDesign, RigidTransform, Side};
 
     fn load_design() -> PrototypeDesign {
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -400,30 +409,50 @@ mod tests {
             .count()
     }
 
+    fn count_role(design: &PrototypeDesign, role: ComponentRole) -> usize {
+        design.assembly.instances_with_role(role).count()
+    }
+
     #[test]
     fn repository_design_has_the_required_reused_components() {
         let design = load_design();
-        for name in [
-            "pitch_sector_left_front",
-            "pitch_sector_left_rear",
-            "pitch_sector_right_front",
-            "pitch_sector_right_rear",
-        ] {
-            assert!(
-                design
-                    .assembly
-                    .instances()
-                    .iter()
-                    .any(|instance| instance.name == name),
-                "missing fixed pitch sector {name}"
-            );
+        let identity_collisions = design.assembly.component_identity_collisions();
+        assert!(
+            identity_collisions.is_empty(),
+            "component semantic identities must be unique: {identity_collisions:#?}"
+        );
+        assert_eq!(count_role(&design, ComponentRole::PitchSector), 4);
+        assert_eq!(count_role(&design, ComponentRole::PitchDrivePinion), 8);
+        assert_eq!(count_role(&design, ComponentRole::PitchRetentionPinion), 4);
+        assert_eq!(count_role(&design, ComponentRole::RollDrivenGear), 2);
+        assert_eq!(count_role(&design, ComponentRole::RollInputPinion), 2);
+        for side in [Side::Left, Side::Right] {
+            for end in [LongitudinalEnd::Front, LongitudinalEnd::Rear] {
+                assert!(
+                    design
+                        .assembly
+                        .instances_with_role(ComponentRole::PitchSector)
+                        .any(|(_, instance)| {
+                            instance.location.side == Some(side)
+                                && instance.location.longitudinal_end == Some(end)
+                        })
+                );
+                for ordinal in [1, 2] {
+                    assert!(
+                        design
+                            .assembly
+                            .instances_with_role(ComponentRole::PitchDrivePinion)
+                            .any(|(_, instance)| {
+                                instance.location.side == Some(side)
+                                    && instance.location.longitudinal_end == Some(end)
+                                    && instance.location.ordinal == Some(ordinal)
+                            })
+                    );
+                }
+            }
         }
         assert_eq!(count_prefix(&design, "pitch_sector_left_front_"), 0);
         assert_eq!(count_prefix(&design, "pitch_crossmember_"), 4);
-        assert_eq!(count_prefix(&design, "pitch_drive_") / 5, 8);
-        assert_eq!(count_prefix(&design, "pitch_retention_") / 7, 4);
-        assert_eq!(count_prefix(&design, "roll_driven_gear_"), 2);
-        assert_eq!(count_prefix(&design, "roll_output_pinion_"), 2);
         assert_eq!(count_prefix(&design, "roll_gearbox_front_input_pinion"), 1);
         assert_eq!(count_prefix(&design, "roll_gearbox_rear_input_pinion"), 1);
     }

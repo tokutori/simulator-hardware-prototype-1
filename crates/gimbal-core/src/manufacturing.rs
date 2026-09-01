@@ -16,13 +16,133 @@ pub enum Manufacturing {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum RingSide {
+pub enum Side {
     Left,
     Right,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum UnitPosition {
+pub enum LongitudinalEnd {
     Front,
     Rear,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum VerticalEnd {
+    Upper,
+    Lower,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ComponentRole {
+    PitchSector,
+    FixedCarrierRail,
+    SectorToRailLink,
+    FixedCrossmember,
+    MovingCrossbar,
+    MovingCrossbarClamp,
+    PitchCradleLongitudinalRail,
+    PitchEndUpperTie,
+    StructuralFastener,
+    InstallationFloor,
+    PitchDrivePinion,
+    PitchRetentionPinion,
+    PitchDriveFlange,
+    PitchRetentionFlange,
+    PitchDriveShaft,
+    PitchRetentionShaft,
+    PitchGearboxSmallGear,
+    PitchGearboxLargeGear,
+    PitchContactInboardPlate,
+    PitchContactCarriagePlate,
+    PitchGearboxFarPlate,
+    PitchGearboxShaft,
+    PitchGearboxTieRod,
+    PitchUnitLowerFrameArm,
+    PitchUnitUpperFrameArm,
+    RetentionLeafSpring,
+    RetentionBearingBlock,
+    Cockpit,
+    CockpitHanger,
+    CockpitShaftKey,
+    RollShaft,
+    RollDrivenGear,
+    RollDrivenHub,
+    RollDrivenKey,
+    RollInputPinion,
+    RollGearboxSmallGear,
+    RollGearboxLargeGear,
+    RollGearboxShaft,
+    RollBearingPedestal,
+    RollBearing,
+    RollPedestalSupport,
+    RollGearboxPlate,
+    RollGearboxMount,
+    MovingDriveMountArm,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct ComponentLocation {
+    pub side: Option<Side>,
+    pub longitudinal_end: Option<LongitudinalEnd>,
+    pub vertical_end: Option<VerticalEnd>,
+    pub ordinal: Option<u16>,
+}
+
+impl Side {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Right => "right",
+        }
+    }
+}
+
+impl LongitudinalEnd {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Front => "front",
+            Self::Rear => "rear",
+        }
+    }
+}
+
+impl VerticalEnd {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Upper => "upper",
+            Self::Lower => "lower",
+        }
+    }
+}
+
+impl ComponentLocation {
+    pub const fn new() -> Self {
+        Self {
+            side: None,
+            longitudinal_end: None,
+            vertical_end: None,
+            ordinal: None,
+        }
+    }
+
+    pub const fn with_side(mut self, side: Side) -> Self {
+        self.side = Some(side);
+        self
+    }
+
+    pub const fn with_longitudinal_end(mut self, end: LongitudinalEnd) -> Self {
+        self.longitudinal_end = Some(end);
+        self
+    }
+
+    pub const fn with_vertical_end(mut self, end: VerticalEnd) -> Self {
+        self.vertical_end = Some(end);
+        self
+    }
+
+    pub const fn with_ordinal(mut self, ordinal: u16) -> Self {
+        self.ordinal = Some(ordinal);
+        self
+    }
 }

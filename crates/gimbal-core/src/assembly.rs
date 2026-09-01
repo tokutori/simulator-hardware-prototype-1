@@ -4,10 +4,15 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::{Length, Manufacturing, RegionId, SolidId};
+use crate::datum::{DatumKind, DatumSet};
+use crate::relation::{AssemblyRelation, AssemblyRelationId, RelationEndpointRef};
+use crate::{ComponentLocation, ComponentRole, Length, Manufacturing, RegionId, SolidId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ComponentDefinitionId(u32);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ComponentInstanceId(u32);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct FrameId(u32);
@@ -37,9 +42,11 @@ impl Body {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ComponentDefinition {
     pub name: String,
+    pub role: ComponentRole,
     pub body: Body,
     pub manufacturing: Manufacturing,
     pub color_rgba: [f32; 4],
+    pub datums: DatumSet,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -48,6 +55,48 @@ pub struct ComponentInstance {
     pub definition: ComponentDefinitionId,
     pub frame: FrameId,
     pub local_pose: RigidTransform,
+    pub location: ComponentLocation,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ComponentIdentity {
+    pub role: ComponentRole,
+    pub location: ComponentLocation,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ComponentIdentityCollision {
+    pub first: ComponentInstanceId,
+    pub second: ComponentInstanceId,
+    pub identity: ComponentIdentity,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ComponentInstancePair {
+    pub first: ComponentInstanceId,
+    pub second: ComponentInstanceId,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AssemblyError {
+    InvalidInstance(ComponentInstanceId),
+    InvalidDatum {
+        instance: ComponentInstanceId,
+        datum_index: usize,
+    },
+    DatumKindMismatch {
+        instance: ComponentInstanceId,
+        datum_index: usize,
+        expected: DatumKind,
+        actual: DatumKind,
+    },
+    SelfRelation(ComponentInstanceId),
+    DuplicateRelation(AssemblyRelationId),
+    DuplicateComponentIdentity {
+        first: ComponentInstanceId,
+        second: ComponentInstanceId,
+        identity: ComponentIdentity,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -230,6 +279,12 @@ impl ComponentDefinitionId {
     }
 }
 
+impl ComponentInstanceId {
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
 impl FrameId {
     pub const fn index(self) -> usize {
         self.0 as usize
@@ -240,6 +295,7 @@ impl FrameId {
 pub struct Assembly {
     definitions: Vec<ComponentDefinition>,
     instances: Vec<ComponentInstance>,
+    relations: Vec<AssemblyRelation>,
 }
 
 impl Assembly {
@@ -253,12 +309,40 @@ impl Assembly {
         id
     }
 
-    pub fn add_instance(&mut self, instance: ComponentInstance) {
+    pub fn add_instance(&mut self, instance: ComponentInstance) -> ComponentInstanceId {
         assert!(
             instance.definition.index() < self.definitions.len(),
             "component definition must already exist"
         );
+        let id = ComponentInstanceId(self.instances.len() as u32);
         self.instances.push(instance);
+        id
+    }
+
+    pub fn add_relation(
+        &mut self,
+        relation: AssemblyRelation,
+    ) -> Result<AssemblyRelationId, AssemblyError> {
+        let [first, second] = relation.instance_pair();
+        if first == second {
+            return Err(AssemblyError::SelfRelation(first));
+        }
+        let endpoints = relation.endpoint_refs();
+        for endpoint in endpoints.into_iter().flatten() {
+            self.validate_endpoint(endpoint)?;
+        }
+        if let Some(index) = self
+            .relations
+            .iter()
+            .position(|existing| *existing == relation)
+        {
+            return Err(AssemblyError::DuplicateRelation(AssemblyRelationId::new(
+                index,
+            )));
+        }
+        let id = AssemblyRelationId::new(self.relations.len());
+        self.relations.push(relation);
+        Ok(id)
     }
 
     pub fn definitions(&self) -> &[ComponentDefinition] {
@@ -269,8 +353,123 @@ impl Assembly {
         &self.instances
     }
 
+    pub fn relations(&self) -> &[AssemblyRelation] {
+        &self.relations
+    }
+
+    pub fn instance_pairs(&self) -> impl Iterator<Item = ComponentInstancePair> + '_ {
+        (0..self.instances.len()).flat_map(move |first_index| {
+            (first_index + 1..self.instances.len()).map(move |second_index| ComponentInstancePair {
+                first: ComponentInstanceId(first_index as u32),
+                second: ComponentInstanceId(second_index as u32),
+            })
+        })
+    }
+
+    pub fn relations_between(
+        &self,
+        pair: ComponentInstancePair,
+    ) -> impl Iterator<Item = (AssemblyRelationId, &AssemblyRelation)> {
+        self.relations
+            .iter()
+            .enumerate()
+            .filter_map(move |(index, relation)| {
+                let [first, second] = relation.instance_pair();
+                ((first == pair.first && second == pair.second)
+                    || (first == pair.second && second == pair.first))
+                    .then_some((AssemblyRelationId::new(index), relation))
+            })
+    }
+
+    pub fn unrelated_instance_pairs(&self) -> impl Iterator<Item = ComponentInstancePair> + '_ {
+        self.instance_pairs()
+            .filter(|pair| self.relations_between(*pair).next().is_none())
+    }
+
     pub fn definition(&self, id: ComponentDefinitionId) -> Option<&ComponentDefinition> {
         self.definitions.get(id.index())
+    }
+
+    pub fn instance(&self, id: ComponentInstanceId) -> Option<&ComponentInstance> {
+        self.instances.get(id.index())
+    }
+
+    pub fn instances_with_role(
+        &self,
+        role: ComponentRole,
+    ) -> impl Iterator<Item = (ComponentInstanceId, &ComponentInstance)> {
+        self.instances
+            .iter()
+            .enumerate()
+            .filter(move |(_, instance)| self.definitions[instance.definition.index()].role == role)
+            .map(|(index, instance)| (ComponentInstanceId(index as u32), instance))
+    }
+
+    pub fn component_identity(&self, id: ComponentInstanceId) -> Option<ComponentIdentity> {
+        let instance = self.instance(id)?;
+        Some(ComponentIdentity {
+            role: self.definition(instance.definition)?.role,
+            location: instance.location,
+        })
+    }
+
+    pub fn validate_unique_component_identities(&self) -> Result<(), AssemblyError> {
+        if let Some(collision) = self.component_identity_collisions().first().copied() {
+            return Err(AssemblyError::DuplicateComponentIdentity {
+                first: collision.first,
+                second: collision.second,
+                identity: collision.identity,
+            });
+        }
+        Ok(())
+    }
+
+    pub fn component_identity_collisions(&self) -> Vec<ComponentIdentityCollision> {
+        let mut collisions = Vec::new();
+        for first_index in 0..self.instances.len() {
+            let first_id = ComponentInstanceId(first_index as u32);
+            let first_identity = self
+                .component_identity(first_id)
+                .expect("inserted instances always reference a definition");
+            for second_index in first_index + 1..self.instances.len() {
+                let second_id = ComponentInstanceId(second_index as u32);
+                if self.component_identity(second_id) == Some(first_identity) {
+                    collisions.push(ComponentIdentityCollision {
+                        first: first_id,
+                        second: second_id,
+                        identity: first_identity,
+                    });
+                }
+            }
+        }
+        collisions
+    }
+
+    fn validate_endpoint(&self, endpoint: RelationEndpointRef) -> Result<(), AssemblyError> {
+        let instance = self
+            .instance(endpoint.instance)
+            .ok_or(AssemblyError::InvalidInstance(endpoint.instance))?;
+        let definition = self
+            .definition(instance.definition)
+            .expect("instance definition was validated when inserted");
+        let datum =
+            definition
+                .datums
+                .named(endpoint.datum_index)
+                .ok_or(AssemblyError::InvalidDatum {
+                    instance: endpoint.instance,
+                    datum_index: endpoint.datum_index,
+                })?;
+        let actual = datum.geometry.kind();
+        if actual != endpoint.kind {
+            return Err(AssemblyError::DatumKindMismatch {
+                instance: endpoint.instance,
+                datum_index: endpoint.datum_index,
+                expected: endpoint.kind,
+                actual,
+            });
+        }
+        Ok(())
     }
 }
 
@@ -315,7 +514,13 @@ fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
 
 #[cfg(test)]
 mod tests {
+    use alloc::string::ToString;
+
     use super::*;
+    use crate::{
+        DatumEndpoint, EngineeringTolerance, FeatureBuilder, Manufacturing, NonNegativeAngle,
+        NonNegativeLength, PlaneDatum, Point3, Primitive3, SurfaceContact, UnitVector3,
+    };
 
     #[test]
     fn nested_roll_axis_follows_pitch_frame() {
@@ -340,5 +545,157 @@ mod tests {
         let point = poses[roll.index()].transform_point([1.0, 0.0, 0.0]);
         assert!(point[0].abs() < 1.0e-10);
         assert!((point[2] + 1.0).abs() < 1.0e-10);
+    }
+
+    #[test]
+    fn relation_references_are_checked_against_each_instance_definition() {
+        let mut builder = FeatureBuilder::new();
+        let solid = builder.primitive(Primitive3::Box {
+            x: Length::positive_mm(1.0).expect("positive length"),
+            y: Length::positive_mm(1.0).expect("positive length"),
+            z: Length::positive_mm(1.0).expect("positive length"),
+            centered: true,
+        });
+        let plane = PlaneDatum {
+            origin: Point3::from_mm([0.0, 0.0, 0.0]).expect("finite point"),
+            normal: UnitVector3::new([0.0, 0.0, 1.0]).expect("valid normal"),
+        };
+        let mut first_datums = DatumSet::new();
+        let first_plane = first_datums.add("mounting_plane".to_string(), plane);
+        let mut second_datums = DatumSet::new();
+        let second_plane = second_datums.add("mounting_plane".to_string(), plane);
+
+        let mut assembly = Assembly::new();
+        let first_definition = assembly.add_definition(ComponentDefinition {
+            name: "first".to_string(),
+            role: ComponentRole::FixedCrossmember,
+            body: Body::Solid(solid),
+            manufacturing: Manufacturing::Purchased,
+            color_rgba: [1.0; 4],
+            datums: first_datums,
+        });
+        let second_definition = assembly.add_definition(ComponentDefinition {
+            name: "second".to_string(),
+            role: ComponentRole::FixedCrossmember,
+            body: Body::Solid(solid),
+            manufacturing: Manufacturing::Purchased,
+            color_rgba: [1.0; 4],
+            datums: second_datums,
+        });
+        let first = assembly.add_instance(ComponentInstance {
+            name: "first".to_string(),
+            definition: first_definition,
+            frame: FrameGraph::new().world(),
+            local_pose: RigidTransform::IDENTITY,
+            location: ComponentLocation::default(),
+        });
+        let second = assembly.add_instance(ComponentInstance {
+            name: "second".to_string(),
+            definition: second_definition,
+            frame: FrameGraph::new().world(),
+            local_pose: RigidTransform::IDENTITY,
+            location: ComponentLocation::default(),
+        });
+        let tolerance = EngineeringTolerance {
+            linear: NonNegativeLength::mm(0.01).expect("non-negative tolerance"),
+            angular: NonNegativeAngle::degrees(0.1).expect("non-negative tolerance"),
+        };
+        let relation = AssemblyRelation::SurfaceContact(SurfaceContact {
+            first: DatumEndpoint::new(first, first_plane),
+            second: DatumEndpoint::new(second, second_plane),
+            tolerance,
+        });
+        let relation_id = assembly
+            .add_relation(relation)
+            .expect("valid relation references");
+        assert_eq!(relation_id.index(), 0);
+        assert_eq!(assembly.relations(), &[relation]);
+        let connected_pair = ComponentInstancePair { first, second };
+        assert_eq!(
+            assembly.instance_pairs().collect::<Vec<_>>(),
+            [connected_pair]
+        );
+        assert_eq!(assembly.relations_between(connected_pair).count(), 1);
+        assert_eq!(assembly.unrelated_instance_pairs().count(), 0);
+        assert_eq!(
+            assembly.add_relation(relation),
+            Err(AssemblyError::DuplicateRelation(relation_id))
+        );
+    }
+
+    #[test]
+    fn relation_rejects_a_datum_id_borrowed_from_another_definition() {
+        let mut builder = FeatureBuilder::new();
+        let solid = builder.primitive(Primitive3::Box {
+            x: Length::positive_mm(1.0).expect("positive length"),
+            y: Length::positive_mm(1.0).expect("positive length"),
+            z: Length::positive_mm(1.0).expect("positive length"),
+            centered: true,
+        });
+        let point = Point3::from_mm([0.0, 0.0, 0.0]).expect("finite point");
+        let mut plane_datums = DatumSet::new();
+        let plane_id = plane_datums.add(
+            "mounting_plane".to_string(),
+            PlaneDatum {
+                origin: point,
+                normal: UnitVector3::new([0.0, 0.0, 1.0]).expect("valid normal"),
+            },
+        );
+        let mut wrong_datums = DatumSet::new();
+        wrong_datums.add(
+            "shaft_axis".to_string(),
+            crate::AxisDatum {
+                origin: point,
+                direction: UnitVector3::new([1.0, 0.0, 0.0]).expect("valid direction"),
+            },
+        );
+        let mut assembly = Assembly::new();
+        let plane_definition = assembly.add_definition(ComponentDefinition {
+            name: "plane".to_string(),
+            role: ComponentRole::FixedCrossmember,
+            body: Body::Solid(solid),
+            manufacturing: Manufacturing::Purchased,
+            color_rgba: [1.0; 4],
+            datums: plane_datums,
+        });
+        let wrong_definition = assembly.add_definition(ComponentDefinition {
+            name: "axis".to_string(),
+            role: ComponentRole::RollShaft,
+            body: Body::Solid(solid),
+            manufacturing: Manufacturing::Purchased,
+            color_rgba: [1.0; 4],
+            datums: wrong_datums,
+        });
+        let first = assembly.add_instance(ComponentInstance {
+            name: "plane".to_string(),
+            definition: plane_definition,
+            frame: FrameGraph::new().world(),
+            local_pose: RigidTransform::IDENTITY,
+            location: ComponentLocation::default(),
+        });
+        let second = assembly.add_instance(ComponentInstance {
+            name: "axis".to_string(),
+            definition: wrong_definition,
+            frame: FrameGraph::new().world(),
+            local_pose: RigidTransform::IDENTITY,
+            location: ComponentLocation::default(),
+        });
+        let relation = AssemblyRelation::SurfaceContact(SurfaceContact {
+            first: DatumEndpoint::new(first, plane_id),
+            second: DatumEndpoint::new(second, plane_id),
+            tolerance: EngineeringTolerance {
+                linear: NonNegativeLength::mm(0.0).expect("zero tolerance"),
+                angular: NonNegativeAngle::radians(0.0).expect("zero tolerance"),
+            },
+        });
+        assert!(matches!(
+            assembly.add_relation(relation),
+            Err(AssemblyError::DatumKindMismatch {
+                instance,
+                datum_index: 0,
+                expected: DatumKind::Plane,
+                actual: DatumKind::Axis,
+            }) if instance == second
+        ));
     }
 }

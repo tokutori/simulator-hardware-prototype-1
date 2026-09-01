@@ -528,8 +528,19 @@ Exit criteria:
 - `cargo fmt --all -- --check`、`cargo check --workspace`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`および`cargo test --workspace`が成功した。workspace testは28件成功、失敗0件だった。
 - `gimbal-core`のnative `no_std` checkと`wasm32-unknown-unknown` `no_std` checkが成功した。
 - Phase 0のexit criteriaを満たしたため、Phase 0を完了、Phase 1を進行中へ変更した。
+- Phase 1の最初のcheckpointとして、`ComponentInstanceId`、`AssemblyRelationId`、typed `DatumId<T>`およびappend-onlyなdatum setを実装した。
+- stable semantic datumとしてpoint、axis、plane、cylinderを導入し、kernelのface番号や評価順に依存しないcomponent-local geometryとして保持する構造にした。
+- engineering toleranceとkernelのnumerical toleranceを別型にし、正値・非負値の区別を`PositiveLength`等の型へ移した。
+- `SurfaceContact`、`CylindricalFit`、`GearMesh`をtyped datum endpointで表現し、self relation、無効なinstance/datum、datum kind不一致および完全重複relationを`Assembly::add_relation`で拒否するようにした。
+- 全instance pair、relationがあるpair、relationがないpairを列挙できるAPIを追加した。これはPhase 2の全pair validatorの入力とする。
+- ratio、reference phaseおよびphase backlashを持つangular constraint graphを追加し、閉路を方向付きedge列として列挙できるようにした。閉路整合性の判定はPhase 6で実装する。
+- side、longitudinal end、vertical endおよびcomponent roleをenum化し、現prototypeの繰返しinstanceへstructured locationを付与した。重複identityはtestで拒否する。
+- manifestのdefinition/instance metadataへroleとstructured locationを出力するようにした。既存のhard-coded semantic claimはPhase 2でvalidator由来へ置換するまで未解決である。
+- 実形状が未成立なjointへ先にrelationを付けることはしない。prototypeへのdatum/relation付与はPhase 3–6で各jointの形状を成立させるのと同じcommit系列で行う。
+- `cargo fmt --all -- --check`、`cargo check --workspace`、warning-as-errorのClippyおよび`cargo test --workspace`が成功した。workspace testは35件成功、失敗0件だった。
+- `gimbal-core`のnativeおよび`wasm32-unknown-unknown`の`no_std` checkが成功した。
 
-次の作業はPhase 1のstable datum、typed identity、tolerance modelおよびAssemblyRelation基盤である。
+Phase 1は引き続き進行中である。次は残存する表示名依存のsemantic testをstructured identityへ移行し、Phase 2で使用するrelation/identity traversalをfixtureで固める。実joint relationの登録は未成立形状を正当化しないよう、Phase 3–6の再設計と同時に行う。
 
 ## 9. 完成の定義
 
