@@ -2,7 +2,7 @@
 
 ## 1. 目的と安全境界
 
-本試作は、長さ225 mmの直方体で表したコクピをpitchとrollの2軸で動かす、Rust製CAD-as-codeモデルである。yaw自由度は持たない。
+本試作は、長さ170 mmの直方体で表したコクピをpitchとrollの2軸で動かす、Rust製CAD-as-codeモデルである。yaw自由度は持たない。
 
 同一の検証済みparameterから、形状、assembly、運動、加工データ、静止画および動画を派生生成する。Blenderや3MFはsource of truthではない。
 
@@ -45,13 +45,19 @@ Y=±50 mmに2枚の平行な固定carrierを置く。各carrierは一周のring�
 | sector数 | 4 |
 | sector半角 | 30 deg |
 | 外歯reference | module 0.8 / 372 teeth |
-| 内歯reference | module 0.8 / 350 teeth |
-| face width | 6 mm |
+| 内歯reference | module 0.8 / 338 teeth |
+| 歯面幅 | 8 mm |
+| 連続backbone軸方向厚さ | 16 mm |
+| 最小radial web | 10 mm |
 | pitch可動範囲 | ±20 deg |
 
 reference teethは仮想full circleのpitch geometryを定義する値であり、物理sectorの歯数ではない。sector中央はroll軸延長線と一致し、中央を欠損させない。端部は歯面接触域の外に8度以上のmarginを持つ。
 
-上下レールはZ=±118 mmへ置き、sector端とは短いlinkで接続する。これは内側可動体との間隔を確保するためである。下レールの下面を床上面Z=-122 mmへ直接接地させ、細い追加脚は設けない。下側の前後接続材も同じ床面へ接する。
+上レールはZ=+78 mmへ置き、sector上端へ直接接続する。下レールはZ=-118 mmへ置き、可動包絡を避ける短いlinkでsector下端へ接続する。歯付き円弧は歯面幅8 mmに対して中央webだけを軸方向16 mmへ厚くした連続backboneを持つ。各円弧端は20 mm幅のclampで挟み、円弧側とframe側を別々のM3通しboltで固定する。下linkと下railの高負荷接続には三角gussetと3本のM3通しboltを用いる。
+
+このbackbone、clampおよびgussetは試作モデル上の荷重経路を成立させるための構造であり、許容荷重を保証するものではない。造形方向、積層間強度、材料、bolt座面、締付力および疲労を含む強度確認は実体試作前に別途行う。
+
+下レールの下面を床上面Z=-122 mmへ直接接地させ、細い追加脚は設けない。下側の前後接続材も同じ床面へ接する。
 
 ## 4. pitch走行unit
 
@@ -73,7 +79,7 @@ pitch gearboxはmodule 0.6、18/54 teethの3:1を2段直列にした9:1である
 固定内歯上を公転するdrive pinionの、移動体に対する相対回転は次である。
 
 ```text
-drive pinion relative angle = -(350 / 18) * pitch angle
+drive pinion relative angle = -(338 / 18) * pitch angle
 retention pinion relative angle = +(372 / 18) * pitch angle
 ```
 
@@ -86,7 +92,7 @@ roll shaftはX方向へ前から後ろまで切らずに通す。
 | 項目 | 初期値 |
 | --- | ---: |
 | roll shaft | 長さ270 mm / 直径8 mm |
-| コクピ | 225 × 45 × 45 mm |
+| コクピ | 170 × 45 × 45 mm |
 | roll軸からコクピ中心まで | 下へ42 mm |
 | roll可動範囲 | ±35 deg |
 
@@ -106,8 +112,8 @@ shaft前後に同じ36T driven gearを固定し、各端を18T output pinionで�
 
 | 種別 | 主な部品 | canonical output |
 | --- | --- | --- |
-| FDM | gear、sector、flange、gearbox plate、mount、コクピ | 部品定義別3MF |
-| laser | carrier rail、sector link、bearing pedestal | 部品定義別DXF |
+| FDM | gear、sector、sector clamp、flange、gearbox plate、bearing pedestal、mount、コクピ | 部品定義別3MF |
+| laser | carrier rail、sector link、lower gusset | 部品定義別DXF |
 | purchased | shaft、crossmember、床、leaf spring | assembly内の参照形状 |
 
 DXFはnominal profileを出力し、kerfを加えない。3MFはmm unitを明記する。STLはunitless compatibility outputだけに用いる。
@@ -118,6 +124,7 @@ DXFはnominal profileを出力し、kerfを加えない。3MFはmm unitを明記
 - 4 sectorが同一definitionのinstanceであり、pitch中も固定されること
 - 8 drive pinionと4 retention pinionが移動体と公転すること
 - sector中央がroll軸延長線上で欠損しないこと
+- sectorの16 mm連続backboneと、sectorから上下railまでのpositive-volume接続
 - pinion公転半径、回転方向および歯数比
 - 4 pitch unitの同期
 - roll shaftが連続し、コクピ中心が軸下にあること
@@ -125,6 +132,7 @@ DXFはnominal profileを出力し、kerfを加えない。3MFはmm unitを明記
 - pitch/roll limit
 - 固定下レールと下側接続材が床へ直接接すること
 - 可動範囲全体で床およびgearbox内部にsolid interferenceがないこと
+- 可動範囲全体で短縮コクピとbearing pedestal、roll gearbox mountが干渉しないこと
 - positive-volume manifold mesh
 - glTFのZ-up coreからY-upへの正しい変換
 - DXFのmm、CUT layer、closed contour再読込

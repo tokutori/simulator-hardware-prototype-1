@@ -5,12 +5,12 @@ target_outside_diameter_mm = 299.2
 spacing_mm = 100.0
 module_mm = 0.8
 external_teeth = 372
-internal_teeth = 350
+internal_teeth = 338
 pressure_angle_deg = 20.0
 backlash_mm = 0.12
 chord_tolerance_mm = 0.03
-face_width_mm = 6.0
-minimum_web_mm = 5.0
+face_width_mm = 8.0
+minimum_web_mm = 10.0
 sector_half_angle_deg = 30.0
 
 [contact_unit]
@@ -44,18 +44,23 @@ backlash_mm = 0.12
 chord_tolerance_mm = 0.03
 shaft_length_mm = 270.0
 shaft_diameter_mm = 8.0
+drive_station_mm = 120.5
+bearing_station_mm = 94.0
 
 [cockpit]
-length_mm = 225.0
+length_mm = 170.0
 width_mm = 45.0
 height_mm = 45.0
 suspension_drop_mm = 42.0
 
 [frame]
 crossmember_diameter_mm = 6.0
+moving_crossbar_diameter_mm = 12.0
 bearing_pedestal_thickness_mm = 8.0
 sheet_thickness_mm = 6.0
-carrier_rail_offset_mm = 118.0
+upper_rail_height_mm = 78.0
+lower_rail_depth_mm = 118.0
+moving_crossbar_station_mm = 95.0
 floor_top_below_axis_mm = 122.0
 floor_thickness_mm = 10.0
 

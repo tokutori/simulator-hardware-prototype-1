@@ -359,10 +359,20 @@ def main() -> None:
             "pitch_moving_crossbar_front",
         ),
     )
+    pitch_sector_reinforcement = select_named(
+        meshes,
+        (
+            "pitch_sector_left_front",
+            "pitch_carrier_left_upper_rail",
+            "pitch_carrier_left_lower_rail",
+            "pitch_carrier_left_front_lower_",
+        ),
+    )
     detail_direction = Vector((1.0, -1.35, 0.75))
     for objects, filename in (
         (pitch_gearbox, "pitch-gearbox-detail.png"),
         (roll_gearbox, "roll-gearbox-detail.png"),
+        (pitch_sector_reinforcement, "pitch-sector-reinforcement-detail.png"),
     ):
         set_visible_meshes(meshes, objects)
         scene.frame_set(scene.frame_start)

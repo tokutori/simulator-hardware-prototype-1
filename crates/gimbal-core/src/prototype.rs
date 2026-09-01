@@ -50,6 +50,8 @@ pub struct RollAxisParameters {
     pub pinion: SpurGear,
     pub shaft_length: Length,
     pub shaft_radius: Length,
+    pub drive_station: Length,
+    pub bearing_station: Length,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -64,9 +66,12 @@ pub struct CockpitParameters {
 #[derive(Clone, Copy, Debug)]
 pub struct FrameParameters {
     pub crossmember_radius: Length,
+    pub moving_crossbar_radius: Length,
     pub bearing_pedestal_thickness: Length,
     pub sheet_thickness: Length,
-    pub carrier_rail_offset: Length,
+    pub upper_rail_height: Length,
+    pub lower_rail_depth: Length,
+    pub moving_crossbar_station: Length,
     pub floor_top_below_axis: Length,
     pub floor_thickness: Length,
 }
@@ -113,6 +118,8 @@ pub enum PrototypeError {
     FrameBaseNotOnFloor,
     MovingEnvelopeHitsFloor,
     CarrierRailTooClose,
+    CockpitHitsRollSupport,
+    RollStationOutsideShaft,
 }
 
 pub fn build_prototype(
@@ -242,16 +249,30 @@ fn validate(parameters: &PrototypeParameters) -> Result<(), PrototypeError> {
     {
         return Err(PrototypeError::InvalidGearboxGeometry);
     }
-    if parameters.frame.carrier_rail_offset.mm() <= 80.0 {
+    if parameters.frame.lower_rail_depth.mm() <= 80.0
+        || parameters.frame.upper_rail_height.mm() < 78.0
+    {
         return Err(PrototypeError::CarrierRailTooClose);
     }
-    let intended_floor_depth = parameters.frame.carrier_rail_offset.mm() + 4.0;
+    let intended_floor_depth = parameters.frame.lower_rail_depth.mm() + 4.0;
     if (parameters.frame.floor_top_below_axis.mm() - intended_floor_depth).abs() > 1.0e-6 {
         return Err(PrototypeError::FrameBaseNotOnFloor);
     }
     let floor_z = -parameters.frame.floor_top_below_axis.mm();
     if minimum_moving_z(parameters) < floor_z + 5.0 {
         return Err(PrototypeError::MovingEnvelopeHitsFloor);
+    }
+    let cockpit_half = parameters.cockpit.length.mm() * 0.5;
+    let support_inner_x = (parameters.roll_axis.bearing_station.mm()
+        - parameters.frame.bearing_pedestal_thickness.mm() * 0.5)
+        .min(parameters.frame.moving_crossbar_station.mm() - 4.0);
+    if support_inner_x - cockpit_half < 5.0 {
+        return Err(PrototypeError::CockpitHitsRollSupport);
+    }
+    if parameters.roll_axis.drive_station.mm() + parameters.pitch_sector.face_width.mm() * 0.5
+        > parameters.roll_axis.shaft_length.mm() * 0.5
+    {
+        return Err(PrototypeError::RollStationOutsideShaft);
     }
     Ok(())
 }
@@ -276,13 +297,15 @@ fn minimum_moving_z(p: &PrototypeParameters) -> f64 {
             }
         }
         // Conservative corners of the lowest pitch-frame-mounted structures.
+        let crossbar_x = p.frame.moving_crossbar_station.mm();
+        let drive_x = p.roll_axis.drive_station.mm();
         for (center_x, center_z, half_x, half_z) in [
-            (107.75, -74.0, 17.0, 4.0),
-            (-107.75, -74.0, 17.0, 4.0),
-            (95.0, -64.0, 4.0, 10.0),
-            (-95.0, -64.0, 4.0, 10.0),
-            (137.0, -37.8, 1.5, 30.0),
-            (-137.0, -37.8, 1.5, 30.0),
+            ((crossbar_x + drive_x) * 0.5, -70.0, 17.0, 7.0),
+            (-(crossbar_x + drive_x) * 0.5, -70.0, 17.0, 7.0),
+            (crossbar_x, -60.0, 4.0, 10.0),
+            (-crossbar_x, -60.0, 4.0, 10.0),
+            (drive_x + 16.5, -37.8, 1.5, 30.0),
+            (-drive_x - 16.5, -37.8, 1.5, 30.0),
         ] {
             for x in [center_x - half_x, center_x + half_x] {
                 for z in [center_z - half_z, center_z + half_z] {
@@ -297,9 +320,16 @@ fn minimum_moving_z(p: &PrototypeParameters) -> f64 {
 #[derive(Clone, Copy)]
 struct Definitions {
     sector: ComponentDefinitionId,
+    sector_end_clamp: ComponentDefinitionId,
     carrier_rail: ComponentDefinitionId,
     carrier_link: ComponentDefinitionId,
+    lower_joint_gusset: ComponentDefinitionId,
     crossmember: ComponentDefinitionId,
+    moving_crossbar: ComponentDefinitionId,
+    moving_crossbar_clamp: ComponentDefinitionId,
+    pitch_cradle_longitudinal_rail: ComponentDefinitionId,
+    pitch_end_upper_tie: ComponentDefinitionId,
+    m3_structural_fastener: ComponentDefinitionId,
     floor: ComponentDefinitionId,
     drive_pinion: ComponentDefinitionId,
     encoder_pinion: ComponentDefinitionId,
@@ -313,18 +343,25 @@ struct Definitions {
     contact_carriage_plate: ComponentDefinitionId,
     pitch_gearbox_far_plate: ComponentDefinitionId,
     pitch_gearbox_shaft: ComponentDefinitionId,
-    pitch_unit_frame_arm: ComponentDefinitionId,
+    pitch_gearbox_tie_rod: ComponentDefinitionId,
+    pitch_unit_lower_frame_arm: ComponentDefinitionId,
+    pitch_unit_upper_frame_arm: ComponentDefinitionId,
     leaf_spring: ComponentDefinitionId,
     bearing_block: ComponentDefinitionId,
     cockpit: ComponentDefinitionId,
     cockpit_hanger: ComponentDefinitionId,
+    cockpit_shaft_key: ComponentDefinitionId,
     roll_shaft: ComponentDefinitionId,
     roll_driven: ComponentDefinitionId,
+    roll_driven_hub: ComponentDefinitionId,
+    roll_driven_key: ComponentDefinitionId,
     roll_pinion: ComponentDefinitionId,
     roll_gearbox_small: ComponentDefinitionId,
     roll_gearbox_large: ComponentDefinitionId,
     roll_gearbox_shaft: ComponentDefinitionId,
     roll_pedestal: ComponentDefinitionId,
+    roll_bearing: ComponentDefinitionId,
+    roll_pedestal_support: ComponentDefinitionId,
     roll_gearbox_plate: ComponentDefinitionId,
     roll_gearbox_mount: ComponentDefinitionId,
     moving_drive_mount_arm: ComponentDefinitionId,
@@ -346,16 +383,23 @@ fn build_definitions(
         fdm,
         [0.94, 0.52, 0.08, 1.0],
     );
+    let sector_end_clamp = add_solid_definition(
+        assembly,
+        "pitch_sector_end_clamp",
+        centered_box(builder, [24.0, 20.0, 16.0]),
+        fdm,
+        [0.72, 0.43, 0.18, 1.0],
+    );
     let carrier_rail = sheet_definition(
         builder,
         assembly,
         "pitch_carrier_rail",
-        244.0,
+        260.0,
         8.0,
         p.frame.sheet_thickness,
         [0.58, 0.35, 0.16, 1.0],
     )?;
-    let link_height = p.frame.carrier_rail_offset.mm() - 70.0;
+    let link_height = p.frame.lower_rail_depth.mm() - 70.0;
     let carrier_link = sheet_definition(
         builder,
         assembly,
@@ -364,6 +408,19 @@ fn build_definitions(
         link_height,
         p.frame.sheet_thickness,
         [0.58, 0.35, 0.16, 1.0],
+    )?;
+    let lower_joint_gusset = polygon_sheet_definition(
+        builder,
+        assembly,
+        "pitch_lower_joint_gusset",
+        vec![
+            Point2 { x: -36.0, y: 0.0 },
+            Point2 { x: 6.0, y: 0.0 },
+            Point2 { x: 6.0, y: 32.0 },
+            Point2 { x: -8.0, y: 32.0 },
+        ],
+        p.frame.sheet_thickness,
+        [0.68, 0.42, 0.20, 1.0],
     )?;
     let crossmember = add_solid_definition(
         assembly,
@@ -375,6 +432,46 @@ fn build_definitions(
         )?,
         Manufacturing::Purchased,
         [0.66, 0.69, 0.72, 1.0],
+    );
+    let moving_crossbar = add_solid_definition(
+        assembly,
+        "pitch_moving_crossbar",
+        cylinder_y(builder, p.frame.moving_crossbar_radius.mm(), 100.0)?,
+        Manufacturing::Purchased,
+        [0.66, 0.69, 0.72, 1.0],
+    );
+    let moving_crossbar_clamp = annulus_definition_y(
+        builder,
+        assembly,
+        "pitch_moving_crossbar_clamp",
+        10.0,
+        p.frame.moving_crossbar_radius.mm() + 0.2,
+        14.0,
+        [0.28, 0.31, 0.36, 1.0],
+    )?;
+    let pitch_cradle_longitudinal_rail = add_solid_definition(
+        assembly,
+        "pitch_cradle_longitudinal_rail",
+        centered_box(
+            builder,
+            [p.frame.moving_crossbar_station.mm() * 2.0 + 8.0, 10.0, 12.0],
+        ),
+        fdm,
+        [0.24, 0.27, 0.32, 1.0],
+    );
+    let pitch_end_upper_tie = add_solid_definition(
+        assembly,
+        "pitch_end_upper_tie",
+        centered_box(builder, [12.0, 100.0, 12.0]),
+        fdm,
+        [0.28, 0.31, 0.36, 1.0],
+    );
+    let m3_structural_fastener = add_solid_definition(
+        assembly,
+        "m3_structural_fastener",
+        m3_fastener_y_solid(builder, 20.0)?,
+        Manufacturing::Purchased,
+        [0.70, 0.73, 0.76, 1.0],
     );
     let floor = add_solid_definition(
         assembly,
@@ -483,17 +580,45 @@ fn build_definitions(
         Manufacturing::Purchased,
         [0.62, 0.66, 0.70, 1.0],
     );
-    let layout = pitch_unit_layout(p)?;
-    let arm_dx = layout.branch_midpoint[0] - 95.0;
-    let pitch_unit_frame_arm = add_solid_definition(
+    let pitch_gearbox_tie_rod = add_solid_definition(
         assembly,
-        "pitch_unit_to_roll_frame_arm",
+        "pitch_gearbox_m3_tie_rod",
+        cylinder_y(builder, 1.5, 20.0)?,
+        Manufacturing::Purchased,
+        [0.70, 0.73, 0.76, 1.0],
+    );
+    let layout = pitch_unit_layout(p)?;
+    let lower_dx = layout.branch_midpoint[0] - p.frame.moving_crossbar_station.mm();
+    let lower_dz = layout.branch_midpoint[1] + 70.0;
+    let pitch_unit_lower_frame_arm = add_solid_definition(
+        assembly,
+        "pitch_unit_lower_frame_arm",
         centered_box(
             builder,
-            [libm::sqrt(arm_dx * arm_dx + 74.0 * 74.0) + 8.0, 8.0, 8.0],
+            [
+                libm::sqrt(lower_dx * lower_dx + lower_dz * lower_dz) + 10.0,
+                12.0,
+                12.0,
+            ],
         ),
         fdm,
         [0.26, 0.28, 0.33, 1.0],
+    );
+    let upper_dx = layout.branch_midpoint[0] - p.roll_axis.bearing_station.mm();
+    let upper_dz = layout.branch_midpoint[1] + 58.0;
+    let pitch_unit_upper_frame_arm = add_solid_definition(
+        assembly,
+        "pitch_unit_upper_frame_arm",
+        centered_box(
+            builder,
+            [
+                libm::sqrt(upper_dx * upper_dx + upper_dz * upper_dz) + 10.0,
+                12.0,
+                12.0,
+            ],
+        ),
+        fdm,
+        [0.30, 0.33, 0.38, 1.0],
     );
     let leaf_spring = add_solid_definition(
         assembly,
@@ -523,13 +648,19 @@ fn build_definitions(
         fdm,
         [0.86, 0.20, 0.18, 1.0],
     );
-    let hanger_height = p.cockpit.suspension_drop.mm() - p.cockpit.height.mm() * 0.5;
     let cockpit_hanger = add_solid_definition(
         assembly,
-        "cockpit_roll_shaft_hanger",
-        centered_box(builder, [10.0, 12.0, hanger_height]),
+        "cockpit_roll_shaft_clamp_hanger",
+        cockpit_hanger_solid(builder, p)?,
         fdm,
         [0.72, 0.25, 0.20, 1.0],
+    );
+    let cockpit_shaft_key = add_solid_definition(
+        assembly,
+        "cockpit_roll_shaft_key",
+        centered_box(builder, [14.0, 2.5, 2.0]),
+        Manufacturing::Purchased,
+        [0.72, 0.74, 0.77, 1.0],
     );
     let roll_shaft = add_solid_definition(
         assembly,
@@ -551,6 +682,22 @@ fn build_definitions(
         p.roll_axis.shaft_radius,
         [0.88, 0.72, 0.08, 1.0],
     )?;
+    let roll_driven_hub = annulus_definition_x(
+        builder,
+        assembly,
+        "roll_driven_clamping_hub",
+        10.0,
+        p.roll_axis.shaft_radius.mm() + 0.15,
+        12.0,
+        [0.76, 0.58, 0.10, 1.0],
+    )?;
+    let roll_driven_key = add_solid_definition(
+        assembly,
+        "roll_driven_shaft_key",
+        centered_box(builder, [12.0, 2.5, 2.0]),
+        Manufacturing::Purchased,
+        [0.72, 0.74, 0.77, 1.0],
+    );
     let roll_pinion = gear_definition_x(
         builder,
         assembly,
@@ -585,13 +732,29 @@ fn build_definitions(
         Manufacturing::Purchased,
         [0.62, 0.66, 0.70, 1.0],
     );
-    let roll_pedestal = u_sheet_definition(
-        builder,
+    let roll_pedestal = add_solid_definition(
         assembly,
         "roll_bearing_pedestal",
-        p.frame.bearing_pedestal_thickness,
+        roll_bearing_pedestal_solid(builder, p)?,
+        fdm,
         [0.56, 0.34, 0.16, 1.0],
+    );
+    let roll_bearing = annulus_definition_x(
+        builder,
+        assembly,
+        "roll_shaft_bearing",
+        9.0,
+        p.roll_axis.shaft_radius.mm() + 0.15,
+        p.frame.bearing_pedestal_thickness.mm(),
+        [0.48, 0.52, 0.56, 1.0],
     )?;
+    let roll_pedestal_support = add_solid_definition(
+        assembly,
+        "roll_bearing_pedestal_support",
+        centered_box(builder, [8.0, 8.0, 6.0]),
+        fdm,
+        [0.44, 0.29, 0.18, 1.0],
+    );
     let roll_gearbox_plate = add_solid_definition(
         assembly,
         "roll_gearbox_plate",
@@ -609,15 +772,29 @@ fn build_definitions(
     let moving_drive_mount_arm = add_solid_definition(
         assembly,
         "moving_drive_mount_arm",
-        centered_box(builder, [34.0, 8.0, 12.0]),
+        centered_box(
+            builder,
+            [
+                p.roll_axis.drive_station.mm() + 16.5 - p.frame.moving_crossbar_station.mm() + 12.0,
+                10.0,
+                14.0,
+            ],
+        ),
         fdm,
         [0.34, 0.24, 0.16, 1.0],
     );
     Ok(Definitions {
         sector,
+        sector_end_clamp,
         carrier_rail,
         carrier_link,
+        lower_joint_gusset,
         crossmember,
+        moving_crossbar,
+        moving_crossbar_clamp,
+        pitch_cradle_longitudinal_rail,
+        pitch_end_upper_tie,
+        m3_structural_fastener,
         floor,
         drive_pinion,
         encoder_pinion,
@@ -631,18 +808,25 @@ fn build_definitions(
         contact_carriage_plate,
         pitch_gearbox_far_plate,
         pitch_gearbox_shaft,
-        pitch_unit_frame_arm,
+        pitch_gearbox_tie_rod,
+        pitch_unit_lower_frame_arm,
+        pitch_unit_upper_frame_arm,
         leaf_spring,
         bearing_block,
         cockpit,
         cockpit_hanger,
+        cockpit_shaft_key,
         roll_shaft,
         roll_driven,
+        roll_driven_hub,
+        roll_driven_key,
         roll_pinion,
         roll_gearbox_small,
         roll_gearbox_large,
         roll_gearbox_shaft,
         roll_pedestal,
+        roll_bearing,
+        roll_pedestal_support,
         roll_gearbox_plate,
         roll_gearbox_mount,
         moving_drive_mount_arm,
@@ -656,6 +840,12 @@ fn build_pitch_carrier(
     fixed_frame: FrameId,
 ) {
     let half_spacing = p.pitch_sector.carrier_spacing.mm() * 0.5;
+    let sector_reference_radius = (p.pitch_sector.sector.external_reference().root_radius()
+        + p.pitch_sector.sector.internal_reference().root_radius())
+        * 0.5;
+    let sector_half_angle = p.pitch_sector.sector.half_angle().as_radians();
+    let sector_end_x = sector_reference_radius * libm::cos(sector_half_angle);
+    let sector_end_z = sector_reference_radius * libm::sin(sector_half_angle);
     for (side, y) in [("left", -half_spacing), ("right", half_spacing)] {
         for (end, rotation) in [("front", 0.0), ("rear", PI)] {
             add_instance(
@@ -668,8 +858,8 @@ fn build_pitch_carrier(
             );
         }
         for (rail, z) in [
-            ("upper", p.frame.carrier_rail_offset.mm()),
-            ("lower", -p.frame.carrier_rail_offset.mm()),
+            ("upper", p.frame.upper_rail_height.mm()),
+            ("lower", -p.frame.lower_rail_depth.mm()),
         ] {
             add_instance(
                 assembly,
@@ -680,20 +870,80 @@ fn build_pitch_carrier(
                     .compose(RigidTransform::rotated(Axis3::X, FRAC_PI_2)),
             );
         }
-        let link_center_z = (74.0 + p.frame.carrier_rail_offset.mm()) * 0.5;
-        for (end, x) in [("front", 126.0), ("rear", -126.0)] {
-            for (vertical, z) in [("upper", link_center_z), ("lower", -link_center_z)] {
+        let link_center_z = -(74.0 + p.frame.lower_rail_depth.mm()) * 0.5;
+        for (end, x) in [("front", sector_end_x), ("rear", -sector_end_x)] {
+            let gusset_orientation = if end == "front" {
+                RigidTransform::rotated(Axis3::X, FRAC_PI_2)
+            } else {
+                RigidTransform::rotated(Axis3::Z, PI)
+                    .compose(RigidTransform::rotated(Axis3::X, FRAC_PI_2))
+            };
+            add_instance(
+                assembly,
+                &format!("pitch_carrier_{side}_{end}_lower_link"),
+                definitions.carrier_link,
+                fixed_frame,
+                RigidTransform::translated(x, y, link_center_z)
+                    .compose(RigidTransform::rotated(Axis3::X, FRAC_PI_2)),
+            );
+            add_instance(
+                assembly,
+                &format!("pitch_carrier_{side}_{end}_lower_gusset"),
+                definitions.lower_joint_gusset,
+                fixed_frame,
+                RigidTransform::translated(x, y, -p.frame.lower_rail_depth.mm() - 2.0)
+                    .compose(gusset_orientation),
+            );
+            for (vertical_end, z) in [("upper", sector_end_z), ("lower", -sector_end_z)] {
                 add_instance(
                     assembly,
-                    &format!("pitch_carrier_{side}_{end}_{vertical}_link"),
-                    definitions.carrier_link,
+                    &format!("pitch_sector_{side}_{end}_{vertical_end}_end_clamp"),
+                    definitions.sector_end_clamp,
                     fixed_frame,
-                    RigidTransform::translated(x, y, z)
-                        .compose(RigidTransform::rotated(Axis3::X, FRAC_PI_2)),
+                    RigidTransform::translated(x, y, z),
+                );
+                for (bolt, bolt_z) in [
+                    (
+                        "sector",
+                        vertical_end_sign(vertical_end) * (sector_end_z - 3.0),
+                    ),
+                    (
+                        "frame",
+                        vertical_end_sign(vertical_end) * (sector_end_z + 5.0),
+                    ),
+                ] {
+                    add_instance(
+                        assembly,
+                        &format!("pitch_sector_{side}_{end}_{vertical_end}_{bolt}_m3"),
+                        definitions.m3_structural_fastener,
+                        fixed_frame,
+                        RigidTransform::translated(x, y, bolt_z),
+                    );
+                }
+            }
+            let inward_x = if end == "front" { -1.0 } else { 1.0 };
+            for (index, (bolt_x, bolt_z)) in [
+                (x, -96.0),
+                (x + inward_x * 14.0, -p.frame.lower_rail_depth.mm()),
+                (x + inward_x * 27.0, -p.frame.lower_rail_depth.mm()),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                add_instance(
+                    assembly,
+                    &format!("pitch_carrier_{side}_{end}_lower_joint_m3_{}", index + 1),
+                    definitions.m3_structural_fastener,
+                    fixed_frame,
+                    RigidTransform::translated(bolt_x, y, bolt_z),
                 );
             }
         }
     }
+}
+
+fn vertical_end_sign(vertical_end: &str) -> f64 {
+    if vertical_end == "upper" { 1.0 } else { -1.0 }
 }
 
 fn build_crossmembers(
@@ -703,10 +953,10 @@ fn build_crossmembers(
     world: FrameId,
 ) {
     for (index, (x, z)) in [
-        (-112.0, p.frame.carrier_rail_offset.mm()),
-        (-112.0, -p.frame.carrier_rail_offset.mm()),
-        (112.0, p.frame.carrier_rail_offset.mm()),
-        (112.0, -p.frame.carrier_rail_offset.mm()),
+        (-112.0, p.frame.upper_rail_height.mm()),
+        (-112.0, -p.frame.lower_rail_depth.mm()),
+        (112.0, p.frame.upper_rail_height.mm()),
+        (112.0, -p.frame.lower_rail_depth.mm()),
     ]
     .into_iter()
     .enumerate()
@@ -1012,24 +1262,54 @@ fn build_contact_unit(
         RigidTransform::translated(midpoint[0], inboard_plane_y, midpoint[1])
             .compose(RigidTransform::rotated(Axis3::Y, -end_angle)),
     );
-    let arm_target = [radial[0] * 95.0, -74.0];
-    let arm_dx = arm_target[0] - midpoint[0];
-    let arm_dz = arm_target[1] - midpoint[1];
-    add_instance(
-        assembly,
-        &format!("pitch_contact_{side}_{end}_roll_frame_arm"),
-        d.pitch_unit_frame_arm,
-        pitch_frame,
-        RigidTransform::translated(
-            (midpoint[0] + arm_target[0]) * 0.5,
-            inboard_plane_y,
-            (midpoint[1] + arm_target[1]) * 0.5,
-        )
-        .compose(RigidTransform::rotated(
-            Axis3::Y,
-            -libm::atan2(arm_dz, arm_dx),
-        )),
-    );
+    for (label, arm_target, definition) in [
+        (
+            "lower",
+            [radial[0] * p.frame.moving_crossbar_station.mm(), -70.0],
+            d.pitch_unit_lower_frame_arm,
+        ),
+        (
+            "upper",
+            [radial[0] * p.roll_axis.bearing_station.mm(), -58.0],
+            d.pitch_unit_upper_frame_arm,
+        ),
+    ] {
+        let arm_dx = arm_target[0] - midpoint[0];
+        let arm_dz = arm_target[1] - midpoint[1];
+        add_instance(
+            assembly,
+            &format!("pitch_contact_{side}_{end}_{label}_cradle_brace"),
+            definition,
+            pitch_frame,
+            RigidTransform::translated(
+                (midpoint[0] + arm_target[0]) * 0.5,
+                inboard_plane_y,
+                (midpoint[1] + arm_target[1]) * 0.5,
+            )
+            .compose(RigidTransform::rotated(
+                Axis3::Y,
+                -libm::atan2(arm_dz, arm_dx),
+            )),
+        );
+        if label == "lower" {
+            add_instance(
+                assembly,
+                &format!("pitch_contact_{side}_{end}_crossbar_clamp"),
+                d.moving_crossbar_clamp,
+                pitch_frame,
+                RigidTransform::translated(arm_target[0], inboard_plane_y, arm_target[1]),
+            );
+        }
+        for (joint, point) in [("carriage", midpoint), ("frame", arm_target)] {
+            add_instance(
+                assembly,
+                &format!("pitch_contact_{side}_{end}_{label}_{joint}_m3"),
+                d.m3_structural_fastener,
+                pitch_frame,
+                RigidTransform::translated(point[0], inboard_plane_y, point[1]),
+            );
+        }
+    }
     add_instance(
         assembly,
         &format!("pitch_gearbox_{side}_{end}_contact_carriage_plate"),
@@ -1046,6 +1326,17 @@ fn build_contact_unit(
         RigidTransform::translated(plate_center[0], y + side_sign * 24.0, plate_center[1])
             .compose(RigidTransform::rotated(Axis3::Y, -end_angle)),
     );
+    for (index, tie) in pitch_gearbox_tie_points().into_iter().enumerate() {
+        add_instance(
+            assembly,
+            &format!("pitch_gearbox_{side}_{end}_m3_tie_{}", index + 1),
+            d.pitch_gearbox_tie_rod,
+            pitch_frame,
+            RigidTransform::translated(plate_center[0], y + side_sign * 15.25, plate_center[1])
+                .compose(RigidTransform::rotated(Axis3::Y, -end_angle))
+                .compose(RigidTransform::translated(tie[0], 0.0, tie[1])),
+        );
+    }
     for (shaft, frame) in [
         ("distributor", distributor_frame),
         ("compound", compound_a_frame),
@@ -1087,7 +1378,6 @@ fn build_roll_assembly(
         roll_frame,
         RigidTransform::IDENTITY,
     );
-    let hanger_height = p.cockpit.suspension_drop.mm() - p.cockpit.height.mm() * 0.5;
     for (index, x) in [-p.cockpit.length.mm() * 0.30, p.cockpit.length.mm() * 0.30]
         .into_iter()
         .enumerate()
@@ -1097,21 +1387,44 @@ fn build_roll_assembly(
             &format!("cockpit_hanger_{}", index + 1),
             d.cockpit_hanger,
             roll_frame,
-            RigidTransform::translated(x, 0.0, -hanger_height * 0.5),
+            RigidTransform::translated(x, 0.0, 0.0),
+        );
+        add_instance(
+            assembly,
+            &format!("cockpit_shaft_key_{}", index + 1),
+            d.cockpit_shaft_key,
+            roll_frame,
+            RigidTransform::translated(x, 0.0, 3.5),
+        );
+    }
+    for (index, y) in [-18.0, 40.0].into_iter().enumerate() {
+        add_instance(
+            assembly,
+            &format!("pitch_cradle_longitudinal_rail_{}", index + 1),
+            d.pitch_cradle_longitudinal_rail,
+            pitch_frame,
+            RigidTransform::translated(0.0, y, -70.0),
         );
     }
     for (end, outward) in [("front", 1.0), ("rear", -1.0)] {
-        let gear_x = outward * (p.cockpit.length.mm() * 0.5 + 8.0);
+        let gear_x = outward * p.roll_axis.drive_station.mm();
         // The complete roll drive is suspended below the roll axis. This also
         // keeps the top of the cockpit visually and mechanically unobstructed.
-        let moving_crossbar_x = outward * 95.0;
-        let moving_crossbar_z = -74.0;
+        let moving_crossbar_x = outward * p.frame.moving_crossbar_station.mm();
+        let moving_crossbar_z = -70.0;
         add_instance(
             assembly,
             &format!("pitch_moving_crossbar_{end}"),
-            d.crossmember,
+            d.moving_crossbar,
             pitch_frame,
             RigidTransform::translated(moving_crossbar_x, 0.0, moving_crossbar_z),
+        );
+        add_instance(
+            assembly,
+            &format!("pitch_end_upper_tie_{end}"),
+            d.pitch_end_upper_tie,
+            pitch_frame,
+            RigidTransform::translated(outward * p.roll_axis.bearing_station.mm(), 0.0, -58.0),
         );
         add_instance(
             assembly,
@@ -1119,6 +1432,20 @@ fn build_roll_assembly(
             d.roll_driven,
             roll_frame,
             RigidTransform::translated(gear_x, 0.0, 0.0),
+        );
+        add_instance(
+            assembly,
+            &format!("roll_driven_hub_{end}"),
+            d.roll_driven_hub,
+            roll_frame,
+            RigidTransform::translated(gear_x, 0.0, 0.0),
+        );
+        add_instance(
+            assembly,
+            &format!("roll_driven_key_{end}"),
+            d.roll_driven_key,
+            roll_frame,
+            RigidTransform::translated(gear_x, 0.0, 3.5),
         );
         let output_z =
             -(p.roll_axis.driven_gear.pitch_radius() + p.roll_axis.pinion.pitch_radius());
@@ -1217,7 +1544,7 @@ fn build_roll_assembly(
                 &format!("roll_gearbox_{end}_carrier_mount_{}", index + 1),
                 d.roll_gearbox_mount,
                 pitch_frame,
-                RigidTransform::translated(moving_crossbar_x, y, -64.0),
+                RigidTransform::translated(moving_crossbar_x, y, -60.0),
             );
             add_instance(
                 assembly,
@@ -1225,25 +1552,38 @@ fn build_roll_assembly(
                 d.moving_drive_mount_arm,
                 pitch_frame,
                 RigidTransform::translated(
-                    (moving_crossbar_x + gear_x) * 0.5,
+                    (moving_crossbar_x + gear_x + outward * 16.5) * 0.5,
                     y,
                     moving_crossbar_z,
                 ),
             );
         }
     }
-    for (end, x) in [
-        ("front", p.cockpit.length.mm() * 0.5 - 8.0),
-        ("rear", -p.cockpit.length.mm() * 0.5 + 8.0),
-    ] {
+    for (end, outward) in [("front", 1.0), ("rear", -1.0)] {
+        let x = outward * p.roll_axis.bearing_station.mm();
         add_instance(
             assembly,
             &format!("roll_bearing_pedestal_{end}"),
             d.roll_pedestal,
             pitch_frame,
-            RigidTransform::translated(x, 0.0, -26.0)
-                .compose(RigidTransform::rotated(Axis3::Y, FRAC_PI_2)),
+            RigidTransform::translated(x, 0.0, -31.0),
         );
+        add_instance(
+            assembly,
+            &format!("roll_bearing_{end}"),
+            d.roll_bearing,
+            pitch_frame,
+            RigidTransform::translated(x, 0.0, 0.0),
+        );
+        for (index, y) in [-15.0, 15.0].into_iter().enumerate() {
+            add_instance(
+                assembly,
+                &format!("roll_bearing_pedestal_{end}_support_{}", index + 1),
+                d.roll_pedestal_support,
+                pitch_frame,
+                RigidTransform::translated(x, y, -63.0),
+            );
+        }
     }
 }
 
@@ -1258,7 +1598,7 @@ fn roll_gearbox_plate_solid(
         [stage_distance * 0.5, stage_distance * 0.5],
         [stage_distance * 0.5, -stage_distance * 0.5],
     ];
-    let supports = [[-28.8, -36.2], [29.2, -36.2]];
+    let supports = [[-28.8, -32.2], [29.2, -32.2]];
     let mut plate = cylinder_x(builder, 5.5, 3.0)?;
     plate = builder.translate(
         plate,
@@ -1309,6 +1649,76 @@ fn roll_gearbox_plate_solid(
         plate = builder.boolean(BooleanOperation::Difference, plate, bore)?;
     }
     Ok(plate)
+}
+
+fn roll_bearing_pedestal_solid(
+    builder: &mut FeatureBuilder,
+    p: &PrototypeParameters,
+) -> Result<SolidId, PrototypeError> {
+    let thickness = p.frame.bearing_pedestal_thickness.mm();
+    let boss_center = [0.0, 31.0];
+    let base_left = [-15.0, -28.0];
+    let base_right = [15.0, -28.0];
+
+    let mut pedestal = cylinder_x(builder, 14.0, thickness)?;
+    pedestal = builder.translate(
+        pedestal,
+        Translation3 {
+            x: 0.0,
+            y: boss_center[0],
+            z: boss_center[1],
+        },
+    )?;
+    for endpoint in [base_left, base_right] {
+        let rib = beam_yz(builder, boss_center, endpoint, thickness, 7.0)?;
+        pedestal = builder.boolean(BooleanOperation::Union, pedestal, rib)?;
+    }
+    let base = centered_box(builder, [thickness, 40.0, 8.0]);
+    let base = builder.translate(
+        base,
+        Translation3 {
+            x: 0.0,
+            y: 0.0,
+            z: -30.0,
+        },
+    )?;
+    pedestal = builder.boolean(BooleanOperation::Union, pedestal, base)?;
+
+    let bore = cylinder_x(builder, 9.2, thickness + 2.0)?;
+    let bore = builder.translate(
+        bore,
+        Translation3 {
+            x: 0.0,
+            y: 0.0,
+            z: boss_center[1],
+        },
+    )?;
+    builder
+        .boolean(BooleanOperation::Difference, pedestal, bore)
+        .map_err(PrototypeError::Feature)
+}
+
+fn cockpit_hanger_solid(
+    builder: &mut FeatureBuilder,
+    p: &PrototypeParameters,
+) -> Result<SolidId, PrototypeError> {
+    let cockpit_top = -p.cockpit.suspension_drop.mm() + p.cockpit.height.mm() * 0.5;
+    let web_height = -cockpit_top + 2.0;
+    let web = centered_box(builder, [12.0, 14.0, web_height]);
+    let web = builder.translate(
+        web,
+        Translation3 {
+            x: 0.0,
+            y: 0.0,
+            z: -web_height * 0.5,
+        },
+    )?;
+    let boss = cylinder_x(builder, 9.0, 14.0)?;
+    let hanger = builder.boolean(BooleanOperation::Union, web, boss)?;
+    let bore = cylinder_x(builder, p.roll_axis.shaft_radius.mm() + 0.15, 16.0)?;
+    builder
+        .boolean(BooleanOperation::Difference, hanger, bore)
+        .map_err(PrototypeError::Feature)
 }
 
 #[derive(Clone, Copy)]
@@ -1417,6 +1827,51 @@ fn pitch_contact_carriage_plate_solid(
         let rib = beam_xz(builder, a, b, thickness, 5.0)?;
         plate = builder.boolean(BooleanOperation::Union, plate, rib)?;
     }
+    for (tie, anchor) in pitch_gearbox_tie_points()
+        .into_iter()
+        .zip([centers[0], centers[4], centers[3]])
+    {
+        let boss = cylinder_y(builder, 5.0, thickness)?;
+        let boss = builder.translate(
+            boss,
+            Translation3 {
+                x: tie[0],
+                y: 0.0,
+                z: tie[1],
+            },
+        )?;
+        plate = builder.boolean(BooleanOperation::Union, plate, boss)?;
+        let rib = beam_xz(builder, anchor, tie, thickness, 5.0)?;
+        plate = builder.boolean(BooleanOperation::Union, plate, rib)?;
+        plate = subtract_y_bore(builder, plate, 1.7, thickness + 2.0, tie[0], tie[1])?;
+    }
+    let encoder_anchor = [
+        p.pitch_sector.sector.external_reference().pitch_radius()
+            + p.contact_unit.encoder_pinion.pitch_radius()
+            - 18.0
+            - layout.plate_center[0],
+        -layout.plate_center[1],
+    ];
+    let anchor_boss = cylinder_y(builder, 5.0, thickness)?;
+    let anchor_boss = builder.translate(
+        anchor_boss,
+        Translation3 {
+            x: encoder_anchor[0],
+            y: 0.0,
+            z: encoder_anchor[1],
+        },
+    )?;
+    plate = builder.boolean(BooleanOperation::Union, plate, anchor_boss)?;
+    let anchor_rib = beam_xz(builder, centers[1], encoder_anchor, thickness, 6.0)?;
+    plate = builder.boolean(BooleanOperation::Union, plate, anchor_rib)?;
+    plate = subtract_y_bore(
+        builder,
+        plate,
+        1.7,
+        thickness + 2.0,
+        encoder_anchor[0],
+        encoder_anchor[1],
+    )?;
     let bore_radius = p.pitch_gearbox.shaft_radius.mm() + 0.35;
     for center in centers {
         plate = subtract_y_bore(
@@ -1541,6 +1996,24 @@ fn pitch_gearbox_far_plate_solid(
         let rib = beam_xz(builder, a, b, thickness, 5.0)?;
         plate = builder.boolean(BooleanOperation::Union, plate, rib)?;
     }
+    for (tie, anchor) in pitch_gearbox_tie_points()
+        .into_iter()
+        .zip([centers[0], centers[2], centers[1]])
+    {
+        let boss = cylinder_y(builder, 5.0, thickness)?;
+        let boss = builder.translate(
+            boss,
+            Translation3 {
+                x: tie[0],
+                y: 0.0,
+                z: tie[1],
+            },
+        )?;
+        plate = builder.boolean(BooleanOperation::Union, plate, boss)?;
+        let rib = beam_xz(builder, anchor, tie, thickness, 5.0)?;
+        plate = builder.boolean(BooleanOperation::Union, plate, rib)?;
+        plate = subtract_y_bore(builder, plate, 1.7, thickness + 2.0, tie[0], tie[1])?;
+    }
     let bore_radius = p.pitch_gearbox.shaft_radius.mm() + 0.35;
     for center in centers {
         plate = subtract_y_bore(
@@ -1553,6 +2026,10 @@ fn pitch_gearbox_far_plate_solid(
         )?;
     }
     Ok(plate)
+}
+
+const fn pitch_gearbox_tie_points() -> [[f64; 2]; 3] {
+    [[-24.0, -24.0], [26.0, -18.0], [0.0, 38.0]]
 }
 
 fn encoder_bearing_block_solid(
@@ -1690,9 +2167,60 @@ fn dual_sector_solid(
             z: -p.pitch_sector.face_width.mm() * 0.5,
         },
     )?;
+    let toothed_sector = builder.rotate(
+        centered,
+        Rotation3 {
+            x: angle(90.0),
+            y: angle(0.0),
+            z: angle(0.0),
+        },
+    )?;
+    let backbone = annular_sector_solid_y(
+        builder,
+        internal.root_radius() + 1.0,
+        external.root_radius() - 1.0,
+        half,
+        p.pitch_sector.face_width.mm() + 8.0,
+    )?;
+    builder
+        .boolean(BooleanOperation::Union, toothed_sector, backbone)
+        .map_err(PrototypeError::Feature)
+}
+
+fn annular_sector_solid_y(
+    builder: &mut FeatureBuilder,
+    inner_radius: f64,
+    outer_radius: f64,
+    half_angle: f64,
+    width: f64,
+) -> Result<SolidId, PrototypeError> {
+    let outer = builder.primitive(Primitive3::Cylinder {
+        height: length(width),
+        radius: length(outer_radius),
+        segments: 192,
+        centered: true,
+    });
+    let inner = builder.primitive(Primitive3::Cylinder {
+        height: length(width + 2.0),
+        radius: length(inner_radius),
+        segments: 192,
+        centered: true,
+    });
+    let annulus = builder.boolean(BooleanOperation::Difference, outer, inner)?;
+    let wedge = builder.polygon(sector_wedge_points(outer_radius + 1.0, half_angle))?;
+    let wedge = builder.extrude(wedge, length(width + 2.0))?;
+    let wedge = builder.translate(
+        wedge,
+        Translation3 {
+            x: 0.0,
+            y: 0.0,
+            z: -(width + 2.0) * 0.5,
+        },
+    )?;
+    let sector = builder.boolean(BooleanOperation::Intersection, annulus, wedge)?;
     builder
         .rotate(
-            centered,
+            sector,
             Rotation3 {
                 x: angle(90.0),
                 y: angle(0.0),
@@ -1847,6 +2375,27 @@ fn annulus_definition_y(
     ))
 }
 
+fn annulus_definition_x(
+    builder: &mut FeatureBuilder,
+    assembly: &mut Assembly,
+    name: &str,
+    outer_radius: f64,
+    inner_radius: f64,
+    width: f64,
+    color: [f32; 4],
+) -> Result<ComponentDefinitionId, PrototypeError> {
+    let outer = cylinder_x(builder, outer_radius, width)?;
+    let inner = cylinder_x(builder, inner_radius, width + 2.0)?;
+    let annulus = builder.boolean(BooleanOperation::Difference, outer, inner)?;
+    Ok(add_solid_definition(
+        assembly,
+        name,
+        annulus,
+        Manufacturing::Purchased,
+        color,
+    ))
+}
+
 fn sheet_definition(
     builder: &mut FeatureBuilder,
     assembly: &mut Assembly,
@@ -1856,45 +2405,24 @@ fn sheet_definition(
     thickness: Length,
     color: [f32; 4],
 ) -> Result<ComponentDefinitionId, PrototypeError> {
-    let profile = builder.polygon(rectangle_points(width, height))?;
-    let solid = builder.extrude(profile, thickness)?;
-    let solid = builder.translate(
-        solid,
-        Translation3 {
-            x: 0.0,
-            y: 0.0,
-            z: -thickness.mm() * 0.5,
-        },
-    )?;
-    Ok(assembly.add_definition(ComponentDefinition {
-        name: name.to_string(),
-        body: Body::Sheet {
-            profile,
-            thickness,
-            assembly_solid: solid,
-        },
-        manufacturing: Manufacturing::LaserCut,
-        color_rgba: color,
-    }))
+    polygon_sheet_definition(
+        builder,
+        assembly,
+        name,
+        rectangle_points(width, height),
+        thickness,
+        color,
+    )
 }
 
-fn u_sheet_definition(
+fn polygon_sheet_definition(
     builder: &mut FeatureBuilder,
     assembly: &mut Assembly,
     name: &str,
+    points: Vec<Point2>,
     thickness: Length,
     color: [f32; 4],
 ) -> Result<ComponentDefinitionId, PrototypeError> {
-    let points = vec![
-        Point2 { x: -36.0, y: -32.0 },
-        Point2 { x: 36.0, y: -32.0 },
-        Point2 { x: 36.0, y: 32.0 },
-        Point2 { x: 10.0, y: 32.0 },
-        Point2 { x: 10.0, y: -4.5 },
-        Point2 { x: -10.0, y: -4.5 },
-        Point2 { x: -10.0, y: 32.0 },
-        Point2 { x: -36.0, y: 32.0 },
-    ];
     let profile = builder.polygon(points)?;
     let solid = builder.extrude(profile, thickness)?;
     let solid = builder.translate(
@@ -1937,6 +2465,48 @@ fn cylinder_y(
                 z: angle(0.0),
             },
         )
+        .map_err(PrototypeError::Feature)
+}
+
+fn m3_fastener_y_solid(
+    builder: &mut FeatureBuilder,
+    grip_length: f64,
+) -> Result<SolidId, PrototypeError> {
+    let shank = cylinder_y(builder, 1.5, grip_length + 5.4)?;
+    let head = cylinder_y(builder, 2.75, 3.0)?;
+    let head = builder.translate(
+        head,
+        Translation3 {
+            x: 0.0,
+            y: -(grip_length * 0.5 + 1.5),
+            z: 0.0,
+        },
+    )?;
+    let nut = builder.primitive(Primitive3::Cylinder {
+        height: length(2.4),
+        radius: length(3.2),
+        segments: 6,
+        centered: true,
+    });
+    let nut = builder.rotate(
+        nut,
+        Rotation3 {
+            x: angle(90.0),
+            y: angle(0.0),
+            z: angle(0.0),
+        },
+    )?;
+    let nut = builder.translate(
+        nut,
+        Translation3 {
+            x: 0.0,
+            y: grip_length * 0.5 + 1.2,
+            z: 0.0,
+        },
+    )?;
+    let fastener = builder.boolean(BooleanOperation::Union, shank, head)?;
+    builder
+        .boolean(BooleanOperation::Union, fastener, nut)
         .map_err(PrototypeError::Feature)
 }
 

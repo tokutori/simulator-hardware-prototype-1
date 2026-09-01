@@ -14,6 +14,8 @@ pub struct AnimationParameters {
     pub pitch_limit_degrees: f64,
     pub roll_limit_degrees: f64,
     pub duration_seconds: f32,
+    /// Dense sampling preserves multi-turn gearbox motion through quaternion interpolation.
+    pub sample_count: usize,
 }
 
 pub fn write_animated_gltf(
@@ -118,10 +120,13 @@ pub fn write_animated_gltf(
         }));
     }
 
-    let normalized_times = [0.0_f32, 0.25, 0.5, 0.75, 1.0];
-    let times = normalized_times
+    if parameters.sample_count < 5 {
+        return Err(ExportError::InvalidAnimationPose);
+    }
+    let samples = motion_samples(parameters);
+    let times = samples
         .iter()
-        .map(|value| value * parameters.duration_seconds)
+        .map(|sample| sample.0 * parameters.duration_seconds)
         .collect::<Vec<_>>();
     let time_view = push_view(&mut binary, &mut buffer_views, f32_bytes(&times), None);
     let time_accessor = accessors.len();
@@ -133,26 +138,12 @@ pub fn write_animated_gltf(
         "min": [0.0],
         "max": [parameters.duration_seconds]
     }));
-    let pitch_values = [
-        0.0,
-        parameters.pitch_limit_degrees,
-        0.0,
-        -parameters.pitch_limit_degrees,
-        0.0,
-    ];
-    let roll_values = [
-        0.0,
-        -parameters.roll_limit_degrees,
-        0.0,
-        parameters.roll_limit_degrees,
-        0.0,
-    ];
     let mut samplers = Vec::<Value>::new();
     let mut channels = Vec::<Value>::new();
     for (node_index, part) in parts.iter().enumerate() {
         let mut translations = Vec::with_capacity(times.len() * 3);
         let mut rotations = Vec::with_capacity(times.len() * 4);
-        for (&pitch, &roll) in pitch_values.iter().zip(&roll_values) {
+        for &(_, pitch, roll) in &samples {
             let pose = kinematics
                 .pose(PitchRollCommand {
                     pitch: Angle::degrees(pitch).map_err(|_| ExportError::InvalidAnimationPose)?,
@@ -215,6 +206,29 @@ pub fn write_animated_gltf(
     fs::write(bin_path, &binary.bytes)?;
     fs::write(gltf_path, serde_json::to_vec_pretty(&document)?)?;
     Ok(())
+}
+
+fn motion_samples(parameters: AnimationParameters) -> Vec<(f32, f64, f64)> {
+    (0..parameters.sample_count)
+        .map(|index| {
+            let normalized = index as f64 / (parameters.sample_count - 1) as f64;
+            let phase = normalized * 4.0;
+            let amplitude = if phase <= 1.0 {
+                phase
+            } else if phase <= 2.0 {
+                2.0 - phase
+            } else if phase <= 3.0 {
+                -(phase - 2.0)
+            } else {
+                -(4.0 - phase)
+            };
+            (
+                normalized as f32,
+                amplitude * parameters.pitch_limit_degrees,
+                -amplitude * parameters.roll_limit_degrees,
+            )
+        })
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -347,5 +361,24 @@ mod tests {
         assert!((converted[1] - sine as f32).abs() < 1.0e-6);
         assert_eq!(converted[0], 0.0);
         assert_eq!(converted[2], 0.0);
+    }
+
+    #[test]
+    fn dense_motion_samples_preserve_high_ratio_rotation_direction() {
+        let samples = motion_samples(AnimationParameters {
+            pitch_limit_degrees: 20.0,
+            roll_limit_degrees: 35.0,
+            duration_seconds: 6.0,
+            sample_count: 73,
+        });
+        assert_eq!(samples.len(), 73);
+        assert_eq!(samples[0], (0.0, 0.0, -0.0));
+        assert!((samples[18].1 - 20.0).abs() < 1.0e-10);
+        assert!((samples[18].2 + 35.0).abs() < 1.0e-10);
+        let maximum_input_step = samples
+            .windows(2)
+            .map(|window| (window[1].2 - window[0].2).abs() * 18.0)
+            .fold(0.0_f64, f64::max);
+        assert!(maximum_input_step < 180.0);
     }
 }

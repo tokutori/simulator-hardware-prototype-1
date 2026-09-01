@@ -73,6 +73,8 @@ struct RawRollAxis {
     chord_tolerance_mm: f64,
     shaft_length_mm: f64,
     shaft_diameter_mm: f64,
+    drive_station_mm: f64,
+    bearing_station_mm: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -86,9 +88,12 @@ struct RawCockpit {
 #[derive(Debug, Deserialize)]
 struct RawFrame {
     crossmember_diameter_mm: f64,
+    moving_crossbar_diameter_mm: f64,
     bearing_pedestal_thickness_mm: f64,
     sheet_thickness_mm: f64,
-    carrier_rail_offset_mm: f64,
+    upper_rail_height_mm: f64,
+    lower_rail_depth_mm: f64,
+    moving_crossbar_station_mm: f64,
     floor_top_below_axis_mm: f64,
     floor_thickness_mm: f64,
 }
@@ -345,6 +350,14 @@ pub fn load(parameters_path: &Path, fabrication_path: &Path) -> Result<LoadedCon
                     raw.roll_axis.shaft_diameter_mm * 0.5,
                     "roll_axis.shaft_diameter_mm",
                 )?,
+                drive_station: positive(
+                    raw.roll_axis.drive_station_mm,
+                    "roll_axis.drive_station_mm",
+                )?,
+                bearing_station: positive(
+                    raw.roll_axis.bearing_station_mm,
+                    "roll_axis.bearing_station_mm",
+                )?,
             },
             cockpit: CockpitParameters {
                 length: positive(raw.cockpit.length_mm, "cockpit.length_mm")?,
@@ -360,6 +373,10 @@ pub fn load(parameters_path: &Path, fabrication_path: &Path) -> Result<LoadedCon
                     raw.frame.crossmember_diameter_mm * 0.5,
                     "frame.crossmember_diameter_mm",
                 )?,
+                moving_crossbar_radius: positive(
+                    raw.frame.moving_crossbar_diameter_mm * 0.5,
+                    "frame.moving_crossbar_diameter_mm",
+                )?,
                 bearing_pedestal_thickness: positive(
                     raw.frame.bearing_pedestal_thickness_mm,
                     "frame.bearing_pedestal_thickness_mm",
@@ -368,9 +385,17 @@ pub fn load(parameters_path: &Path, fabrication_path: &Path) -> Result<LoadedCon
                     raw.frame.sheet_thickness_mm,
                     "frame.sheet_thickness_mm",
                 )?,
-                carrier_rail_offset: positive(
-                    raw.frame.carrier_rail_offset_mm,
-                    "frame.carrier_rail_offset_mm",
+                upper_rail_height: positive(
+                    raw.frame.upper_rail_height_mm,
+                    "frame.upper_rail_height_mm",
+                )?,
+                lower_rail_depth: positive(
+                    raw.frame.lower_rail_depth_mm,
+                    "frame.lower_rail_depth_mm",
+                )?,
+                moving_crossbar_station: positive(
+                    raw.frame.moving_crossbar_station_mm,
+                    "frame.moving_crossbar_station_mm",
                 )?,
                 floor_top_below_axis: positive(
                     raw.frame.floor_top_below_axis_mm,

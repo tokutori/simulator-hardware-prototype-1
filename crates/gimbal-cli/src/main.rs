@@ -186,6 +186,7 @@ fn generate(workspace: &Path, loaded: &LoadedConfig) -> Result<(), Box<dyn Error
             pitch_limit_degrees: loaded.parameters.motion.pitch_limit.as_degrees(),
             roll_limit_degrees: loaded.parameters.motion.roll_limit.as_degrees(),
             duration_seconds: 6.0,
+            sample_count: 73,
         },
         &gltf_path,
         &bin_path,
@@ -252,11 +253,13 @@ fn generate(workspace: &Path, loaded: &LoadedConfig) -> Result<(), Box<dyn Error
             "roll_gearbox_count": 2,
             "roll_gearboxes_below_roll_axis": true,
             "roll_mechanism_moves_with_pitch": true,
-            "pitch_unit_to_roll_frame_arm_count": 4,
+            "pitch_unit_to_roll_frame_brace_count": 8,
             "cockpit_length_mm": loaded.parameters.cockpit.length.mm(),
             "cockpit_suspension_drop_mm": loaded.parameters.cockpit.suspension_drop.mm(),
             "continuous_roll_shaft": true,
-            "carrier_rail_offset_mm": loaded.parameters.frame.carrier_rail_offset.mm(),
+            "upper_rail_height_mm": loaded.parameters.frame.upper_rail_height.mm(),
+            "lower_rail_depth_mm": loaded.parameters.frame.lower_rail_depth.mm(),
+            "moving_crossbar_station_mm": loaded.parameters.frame.moving_crossbar_station.mm(),
             "floor_top_below_axis_mm": loaded.parameters.frame.floor_top_below_axis.mm(),
             "fixed_lower_frame_bears_directly_on_floor": true,
             "motor_bodies_included": false,
@@ -400,7 +403,22 @@ mod tests {
     #[test]
     fn repository_design_has_the_required_reused_components() {
         let design = load_design();
-        assert_eq!(count_prefix(&design, "pitch_sector_"), 4);
+        for name in [
+            "pitch_sector_left_front",
+            "pitch_sector_left_rear",
+            "pitch_sector_right_front",
+            "pitch_sector_right_rear",
+        ] {
+            assert!(
+                design
+                    .assembly
+                    .instances()
+                    .iter()
+                    .any(|instance| instance.name == name),
+                "missing fixed pitch sector {name}"
+            );
+        }
+        assert_eq!(count_prefix(&design, "pitch_sector_left_front_"), 6);
         assert_eq!(count_prefix(&design, "pitch_drive_") / 5, 8);
         assert_eq!(count_prefix(&design, "pitch_retention_") / 7, 4);
         assert_eq!(count_prefix(&design, "roll_driven_gear_"), 2);
@@ -544,10 +562,18 @@ mod tests {
             "roll_gearbox_front_mount_arm_2",
             "roll_gearbox_rear_mount_arm_1",
             "roll_gearbox_rear_mount_arm_2",
-            "pitch_contact_left_front_roll_frame_arm",
-            "pitch_contact_right_front_roll_frame_arm",
-            "pitch_contact_left_rear_roll_frame_arm",
-            "pitch_contact_right_rear_roll_frame_arm",
+            "pitch_contact_left_front_lower_cradle_brace",
+            "pitch_contact_right_front_lower_cradle_brace",
+            "pitch_contact_left_rear_lower_cradle_brace",
+            "pitch_contact_right_rear_lower_cradle_brace",
+            "pitch_contact_left_front_upper_cradle_brace",
+            "pitch_contact_right_front_upper_cradle_brace",
+            "pitch_contact_left_rear_upper_cradle_brace",
+            "pitch_contact_right_rear_upper_cradle_brace",
+            "pitch_cradle_longitudinal_rail_1",
+            "pitch_cradle_longitudinal_rail_2",
+            "pitch_end_upper_tie_front",
+            "pitch_end_upper_tie_rear",
         ];
         let mut evaluator = Evaluator::new(&design.graph);
         for pitch in [-20.0, 0.0, 20.0] {
@@ -564,6 +590,111 @@ mod tests {
                     assert!(
                         volume <= 1.0e-7,
                         "{name} intersects the floor by {volume} mm^3 at pitch={pitch}, roll={roll}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pitch_sector_backbone_and_end_joints_form_a_continuous_load_path() {
+        let design = load_design();
+        let mut evaluator = Evaluator::new(&design.graph);
+        let representative_sector = instance_solid(&design, "pitch_sector_left_front");
+        let sector_mesh = evaluator
+            .mesh(representative_sector)
+            .expect("reinforced sector evaluates to a manifold mesh");
+        let minimum_y = sector_mesh
+            .vertices
+            .iter()
+            .map(|vertex| vertex[1])
+            .fold(f64::INFINITY, f64::min);
+        let maximum_y = sector_mesh
+            .vertices
+            .iter()
+            .map(|vertex| vertex[1])
+            .fold(f64::NEG_INFINITY, f64::max);
+        assert!(
+            maximum_y - minimum_y >= 15.9,
+            "sector backbone must retain its 16 mm axial depth"
+        );
+        for side in ["left", "right"] {
+            for end in ["front", "rear"] {
+                let sector = format!("pitch_sector_{side}_{end}");
+                let upper_clamp = format!("{sector}_upper_end_clamp");
+                let lower_clamp = format!("{sector}_lower_end_clamp");
+                let upper_rail = format!("pitch_carrier_{side}_upper_rail");
+                let lower_link = format!("pitch_carrier_{side}_{end}_lower_link");
+                let lower_gusset = format!("pitch_carrier_{side}_{end}_lower_gusset");
+                let lower_rail = format!("pitch_carrier_{side}_lower_rail");
+
+                for (a, b) in [
+                    (&sector, &upper_clamp),
+                    (&upper_clamp, &upper_rail),
+                    (&sector, &lower_clamp),
+                    (&lower_clamp, &lower_link),
+                    (&lower_link, &lower_gusset),
+                    (&lower_gusset, &lower_rail),
+                ] {
+                    let volume = evaluator
+                        .intersection_volume_transformed(
+                            instance_solid(&design, a),
+                            instance_pose(&design, a, 0.0, 0.0),
+                            instance_solid(&design, b),
+                            instance_pose(&design, b, 0.0, 0.0),
+                        )
+                        .expect("structural connection query succeeds");
+                    assert!(
+                        volume > 0.1,
+                        "structural load path is disconnected between {a} and {b}"
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            count_prefix(&design, "pitch_carrier_left_front_upper_link"),
+            0
+        );
+        assert_eq!(
+            count_prefix(&design, "pitch_carrier_left_front_lower_joint_m3_"),
+            3
+        );
+    }
+
+    #[test]
+    fn shortened_cockpit_clears_pitch_frame_roll_supports() {
+        let design = load_design();
+        let cockpit_solid = instance_solid(&design, "cockpit_body");
+        let fixed_to_pitch_frame = [
+            "roll_bearing_pedestal_front",
+            "roll_bearing_pedestal_rear",
+            "roll_gearbox_front_carrier_mount_1",
+            "roll_gearbox_front_carrier_mount_2",
+            "roll_gearbox_rear_carrier_mount_1",
+            "roll_gearbox_rear_carrier_mount_2",
+            "roll_gearbox_front_mount_arm_1",
+            "roll_gearbox_front_mount_arm_2",
+            "roll_gearbox_rear_mount_arm_1",
+            "roll_gearbox_rear_mount_arm_2",
+            "pitch_end_upper_tie_front",
+            "pitch_end_upper_tie_rear",
+        ];
+        let mut evaluator = Evaluator::new(&design.graph);
+        for pitch in [-20.0, 0.0, 20.0] {
+            for roll in [-35.0, 0.0, 35.0] {
+                let cockpit_pose = instance_pose(&design, "cockpit_body", pitch, roll);
+                for support in fixed_to_pitch_frame {
+                    let volume = evaluator
+                        .intersection_volume_transformed(
+                            cockpit_solid,
+                            cockpit_pose,
+                            instance_solid(&design, support),
+                            instance_pose(&design, support, pitch, roll),
+                        )
+                        .expect("cockpit clearance query succeeds");
+                    assert!(
+                        volume <= 1.0e-7,
+                        "cockpit intersects {support} by {volume} mm^3 at pitch={pitch}, roll={roll}"
                     );
                 }
             }
