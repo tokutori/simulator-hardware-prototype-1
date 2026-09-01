@@ -15,6 +15,7 @@ pub struct Prototype {
     idler_pinion: DoubleHelicalGear,
     rack: DoubleHelicalRack,
     spur_face_width: Length,
+    output_spur_face_width: Length,
     pinion_lower_extension: Length,
     bolt_length: Length,
     journal_outer_diameter: Length,
@@ -49,6 +50,7 @@ pub enum PrototypeError {
     NutPocketTooDeep,
     BoltTooShort,
     OutputSpurDoesNotSupportPinionExtension,
+    InvalidOutputSpurFaceWidth,
     PlateTooSmall,
     InvalidPlateCenter,
     InvalidTopSocket,
@@ -66,6 +68,7 @@ impl Prototype {
         idler_pinion: DoubleHelicalGear,
         rack: DoubleHelicalRack,
         spur_face_width: Length,
+        output_spur_face_width: Length,
         pinion_lower_extension: Length,
         bolt_length: Length,
         journal_outer_diameter: Length,
@@ -108,6 +111,12 @@ impl Prototype {
         if output_spur.root_radius() + 1.0e-12 < driven_pinion.spur().tip_radius() {
             return Err(PrototypeError::OutputSpurDoesNotSupportPinionExtension);
         }
+        if output_spur_face_width.mm() + 1.0e-12 < spur_face_width.mm()
+            || output_spur_face_width.mm()
+                > spur_face_width.mm() + pinion_lower_extension.mm() + 1.0e-12
+        {
+            return Err(PrototypeError::InvalidOutputSpurFaceWidth);
+        }
         if bolt_clearance_diameter.mm() >= journal_outer_diameter.mm() {
             return Err(PrototypeError::BoltDoesNotFitJournal);
         }
@@ -142,6 +151,7 @@ impl Prototype {
             idler_pinion,
             rack,
             spur_face_width,
+            output_spur_face_width,
             pinion_lower_extension,
             bolt_length,
             journal_outer_diameter,
@@ -237,6 +247,10 @@ impl Prototype {
 
     pub const fn spur_face_width(&self) -> Length {
         self.spur_face_width
+    }
+
+    pub const fn output_spur_face_width(&self) -> Length {
+        self.output_spur_face_width
     }
 
     pub const fn pinion_lower_extension(&self) -> Length {
@@ -463,9 +477,13 @@ impl Prototype {
     }
 
     pub fn secondary_spur_layer_center_z(&self) -> f64 {
+        self.secondary_spur_bottom_z() + self.output_spur_face_width.mm() * 0.5
+    }
+
+    pub fn secondary_spur_bottom_z(&self) -> f64 {
         -self.driven_pinion.face_width().mm() * 0.5
             - self.pinion_lower_extension.mm()
-            - self.spur_face_width.mm() * 0.5
+            - self.spur_face_width.mm()
     }
 
     pub fn reduction_small_extended_face_width(&self) -> f64 {
@@ -473,7 +491,7 @@ impl Prototype {
     }
 
     pub fn reduction_small_extended_center_z(&self) -> f64 {
-        self.secondary_spur_layer_center_z() + self.pinion_lower_extension.mm() * 0.5
+        self.secondary_spur_bottom_z() + self.reduction_small_extended_face_width() * 0.5
     }
 
     pub fn handle_spur_extended_face_width(&self) -> f64 {
@@ -486,13 +504,18 @@ impl Prototype {
 
     pub fn output_spur_to_rack_axial_gap(&self) -> f64 {
         let output_spur_top =
-            self.secondary_spur_layer_center_z() + self.spur_face_width.mm() * 0.5;
-        let pinion_face_bottom = -self.driven_pinion.face_width().mm() * 0.5;
-        pinion_face_bottom - output_spur_top
+            self.secondary_spur_layer_center_z() + self.output_spur_face_width.mm() * 0.5;
+        -self.rack.face_width().mm() * 0.5 - output_spur_top
+    }
+
+    pub fn output_spur_to_pinion_axial_gap(&self) -> f64 {
+        let output_spur_top =
+            self.secondary_spur_layer_center_z() + self.output_spur_face_width.mm() * 0.5;
+        -self.driven_pinion.face_width().mm() * 0.5 - output_spur_top
     }
 
     pub fn primary_spur_layer_center_z(&self) -> f64 {
-        self.secondary_spur_layer_center_z() - self.spur_face_width.mm()
+        self.secondary_spur_bottom_z() - self.spur_face_width.mm() * 0.5
     }
 
     pub fn frame_inner_bottom_z(&self) -> f64 {
@@ -591,7 +614,8 @@ impl Prototype {
     }
 
     pub fn driven_lower_thrust_spacer_length(&self) -> f64 {
-        let gear_bottom = self.secondary_spur_layer_center_z() - self.spur_face_width.mm() * 0.5;
+        let gear_bottom =
+            self.secondary_spur_layer_center_z() - self.output_spur_face_width.mm() * 0.5;
         gear_bottom - self.frame_inner_bottom_z() - self.axial_clearance.mm()
     }
 
@@ -658,6 +682,9 @@ impl fmt::Display for PrototypeError {
             ),
             Self::OutputSpurDoesNotSupportPinionExtension => formatter.write_str(
                 "output spur root radius must fully support the extended lower helical teeth",
+            ),
+            Self::InvalidOutputSpurFaceWidth => formatter.write_str(
+                "B/C output spur face width must be between the base spur width and the extended D-small face width",
             ),
             Self::PlateTooSmall => formatter.write_str("frame plate is too small for corner bolts"),
             Self::InvalidPlateCenter => formatter.write_str("plate center must be finite"),

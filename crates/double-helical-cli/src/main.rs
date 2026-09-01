@@ -39,6 +39,7 @@ struct SpurStageConfig {
     reduction_small_teeth: u16,
     output_teeth: u16,
     face_width_mm: f64,
+    output_face_width_mm: f64,
     tooth_backlash_mm: f64,
     chord_tolerance_mm: f64,
 }
@@ -302,6 +303,10 @@ impl Config {
             idler,
             rack,
             positive_length("spur_stage.face_width_mm", self.spur_stage.face_width_mm)?,
+            positive_length(
+                "spur_stage.output_face_width_mm",
+                self.spur_stage.output_face_width_mm,
+            )?,
             positive_length(
                 "rack_stage.pinion_lower_extension_mm",
                 self.rack_stage.pinion_lower_extension_mm,
@@ -624,7 +629,7 @@ fn write_outputs(
         + prototype.reduction_small_extended_face_width() * 0.5
         + prototype.reduction_upper_thrust_spacer_length() * 0.5;
     let driven_thrust_z = prototype.secondary_spur_layer_center_z()
-        - prototype.spur_face_width().mm() * 0.5
+        - prototype.output_spur_face_width().mm() * 0.5
         - prototype.driven_lower_thrust_spacer_length() * 0.5;
     let idler_thrust_z = -prototype.idler_pinion().face_width().mm() * 0.5
         - prototype.idler_lower_thrust_spacer_length() * 0.5;
@@ -798,7 +803,7 @@ fn openscad_preview_scene(prototype: &Prototype) -> String {
         + prototype.reduction_small_extended_face_width() * 0.5
         + prototype.reduction_upper_thrust_spacer_length() * 0.5;
     let driven_thrust_z = prototype.secondary_spur_layer_center_z()
-        - prototype.spur_face_width().mm() * 0.5
+        - prototype.output_spur_face_width().mm() * 0.5
         - prototype.driven_lower_thrust_spacer_length() * 0.5;
     let idler_thrust_z = -prototype.idler_pinion().face_width().mm() * 0.5
         - prototype.idler_lower_thrust_spacer_length() * 0.5;
@@ -928,12 +933,13 @@ fn report(
     .unwrap();
     writeln!(
         output,
-        "spur face widths: handle-small {:.6}/D-large {:.6} mm, D-small {:.6}/B/C-large {:.6} mm; B/C-large to rack axial gap {:.6} mm",
+        "spur face widths: handle-small {:.6}/D-large {:.6} mm, D-small {:.6}/B/C-large {:.6} mm; B/C-large to rack axial gap {:.6} mm, to pinion face {:.6} mm",
         prototype.handle_spur_extended_face_width(),
         prototype.spur_face_width().mm(),
         prototype.reduction_small_extended_face_width(),
-        prototype.spur_face_width().mm(),
-        prototype.output_spur_to_rack_axial_gap()
+        prototype.output_spur_face_width().mm(),
+        prototype.output_spur_to_rack_axial_gap(),
+        prototype.output_spur_to_pinion_axial_gap()
     )
     .unwrap();
     writeln!(
@@ -1139,11 +1145,12 @@ mod tests {
 
         let d_large_top =
             prototype.primary_spur_layer_center_z() + prototype.spur_face_width().mm() * 0.5;
-        let d_small_bottom =
-            prototype.secondary_spur_layer_center_z() - prototype.spur_face_width().mm() * 0.5;
+        let d_small_bottom = prototype.reduction_small_extended_center_z()
+            - prototype.reduction_small_extended_face_width() * 0.5;
         assert!((d_large_top - d_small_bottom).abs() < 1.0e-12);
 
         assert_eq!(prototype.spur_face_width().mm(), 3.5);
+        assert_eq!(prototype.output_spur_face_width().mm(), 5.5);
         assert_eq!(prototype.handle_spur_extended_face_width(), 5.5);
         assert_eq!(prototype.reduction_small_extended_face_width(), 5.5);
         let handle_small_bottom = prototype.handle_spur_extended_center_z()
@@ -1153,16 +1160,17 @@ mod tests {
         assert!((handle_small_bottom - d_large_bottom).abs() < 1.0e-12);
         let d_small_bottom = prototype.reduction_small_extended_center_z()
             - prototype.reduction_small_extended_face_width() * 0.5;
-        let output_large_bottom =
-            prototype.secondary_spur_layer_center_z() - prototype.spur_face_width().mm() * 0.5;
+        let output_large_bottom = prototype.secondary_spur_layer_center_z()
+            - prototype.output_spur_face_width().mm() * 0.5;
         assert!((d_small_bottom - output_large_bottom).abs() < 1.0e-12);
-        let output_spur_top =
-            prototype.secondary_spur_layer_center_z() + prototype.spur_face_width().mm() * 0.5;
+        let output_spur_top = prototype.secondary_spur_layer_center_z()
+            + prototype.output_spur_face_width().mm() * 0.5;
         let reduction_small_top = prototype.reduction_small_extended_center_z()
             + prototype.reduction_small_extended_face_width() * 0.5;
         let pinion_bottom = -prototype.driven_pinion().face_width().mm() * 0.5;
-        assert!((prototype.output_spur_to_rack_axial_gap() - 2.0).abs() < 1.0e-12);
-        assert!((pinion_bottom - output_spur_top - 2.0).abs() < 1.0e-12);
+        assert!((prototype.output_spur_to_rack_axial_gap() - 2.5).abs() < 1.0e-12);
+        assert!(prototype.output_spur_to_pinion_axial_gap().abs() < 1.0e-12);
+        assert!((pinion_bottom - output_spur_top).abs() < 1.0e-12);
         assert!((reduction_small_top - pinion_bottom).abs() < 1.0e-12);
         assert!(
             prototype.output_spur().root_radius() >= prototype.driven_pinion().spur().tip_radius()

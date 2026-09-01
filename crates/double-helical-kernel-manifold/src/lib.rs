@@ -127,7 +127,7 @@ pub fn prototype_interference(prototype: &Prototype) -> Result<PrototypeInterfer
     let output_b = transform(
         spur_solid(
             prototype.output_spur(),
-            prototype.spur_face_width().mm(),
+            prototype.output_spur_face_width().mm(),
             prototype.driven_pinion().bore_diameter().mm(),
         )?,
         prototype.output_b_spur_pose(),
@@ -135,7 +135,7 @@ pub fn prototype_interference(prototype: &Prototype) -> Result<PrototypeInterfer
     let output_c = transform(
         spur_solid(
             prototype.output_spur(),
-            prototype.spur_face_width().mm(),
+            prototype.output_spur_face_width().mm(),
             prototype.driven_pinion().bore_diameter().mm(),
         )?,
         prototype.output_c_spur_pose(),
@@ -440,7 +440,7 @@ fn driven_compound_solid(
         .rotate(0.0, 0.0, internal_pinion_rotation_deg);
     let output_spur = spur_solid(
         prototype.output_spur(),
-        prototype.spur_face_width().mm(),
+        prototype.output_spur_face_width().mm(),
         prototype.driven_pinion().bore_diameter().mm(),
     )?
     .translate(Vec3::new(
@@ -510,8 +510,7 @@ fn reduction_compound_solid(prototype: &Prototype) -> Result<Manifold, KernelErr
     let overlap = 0.10;
     let large_top =
         prototype.primary_spur_layer_center_z() + prototype.spur_face_width().mm() * 0.5;
-    let small_bottom =
-        prototype.secondary_spur_layer_center_z() - prototype.spur_face_width().mm() * 0.5;
+    let small_bottom = prototype.secondary_spur_bottom_z();
     let hub = Manifold::extrude(
         &annulus(bore + 6.0, bore),
         small_bottom - large_top + overlap * 2.0,
