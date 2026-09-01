@@ -52,6 +52,7 @@ struct RackStageConfig {
     pinion_teeth: u16,
     rack_teeth: u16,
     face_width_mm: f64,
+    rack_face_width_mm: f64,
     center_gap_mm: f64,
     pinion_lower_extension_mm: f64,
     rack_body_thickness_mm: f64,
@@ -251,8 +252,12 @@ impl Config {
                 self.rack_stage.chord_tolerance_mm,
             )?,
         )?;
-        let face_width =
+        let pinion_face_width =
             positive_length("rack_stage.face_width_mm", self.rack_stage.face_width_mm)?;
+        let rack_face_width = positive_length(
+            "rack_stage.rack_face_width_mm",
+            self.rack_stage.rack_face_width_mm,
+        )?;
         let center_gap =
             non_negative_length("rack_stage.center_gap_mm", self.rack_stage.center_gap_mm)?;
         let rotating_bore = positive_length(
@@ -261,7 +266,7 @@ impl Config {
         )?;
         let driven = normal_system.pinion(
             self.rack_stage.pinion_teeth,
-            face_width,
+            pinion_face_width,
             center_gap,
             rotating_bore,
             self.rack_stage.slices_per_half,
@@ -269,7 +274,7 @@ impl Config {
         )?;
         let idler = normal_system.pinion(
             self.rack_stage.pinion_teeth,
-            face_width,
+            pinion_face_width,
             center_gap,
             rotating_bore,
             self.rack_stage.slices_per_half,
@@ -278,7 +283,7 @@ impl Config {
         let rack = DoubleHelicalRack::new(
             normal_system,
             self.rack_stage.rack_teeth,
-            face_width,
+            rack_face_width,
             center_gap,
             positive_length(
                 "rack_stage.rack_body_thickness_mm",
@@ -941,10 +946,21 @@ fn report(
     .unwrap();
     writeln!(
         output,
-        "rack: {} teeth, toothed length {:.6} mm, overall length {:.6} mm, 30 x 20 mm flat pusher face",
+        "rack: {} teeth, face width {:.6} mm, toothed length {:.6} mm, overall length {:.6} mm, {:.6} x {:.6} mm flat pusher face",
         prototype.rack().teeth(),
+        prototype.rack().face_width().mm(),
         prototype.rack().length(),
-        prototype.rack_overall_length()
+        prototype.rack_overall_length(),
+        prototype.rack_pusher_width(),
+        prototype.rack().face_width().mm()
+    )
+    .unwrap();
+    writeln!(
+        output,
+        "rack axial clearance to frame: top {:.6} mm, bottom {:.6} mm; pinion face width {:.6} mm",
+        prototype.rack_top_plate_clearance(),
+        prototype.rack_bottom_plate_clearance(),
+        prototype.driven_pinion().face_width().mm()
     )
     .unwrap();
     writeln!(
@@ -1060,6 +1076,9 @@ mod tests {
         assert_eq!(prototype.idler_pose().translation_mm[0], 0.0);
         assert_eq!(prototype.driven_pinion().center_gap().mm(), 0.0);
         assert_eq!(prototype.driven_pinion().face_width().mm(), 20.0);
+        assert_eq!(prototype.rack().face_width().mm(), 15.0);
+        assert!((prototype.rack_top_plate_clearance() - 3.0).abs() < 1.0e-12);
+        assert!((prototype.rack_bottom_plate_clearance() - 12.0).abs() < 1.0e-12);
         assert!(
             (prototype.driven_pinion().spur().pitch_radius() * 2.0 - 41.41104721640332).abs()
                 < 1.0e-9

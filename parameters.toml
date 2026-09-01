@@ -19,7 +19,10 @@ normal_pressure_angle_deg = 20.0
 helix_angle_deg = 15.0
 pinion_teeth = 20
 rack_teeth = 24
+# Keep the pinions wide for strength; the rack is narrower to leave axial
+# observation clearance below the top plate.
 face_width_mm = 20.0
+rack_face_width_mm = 15.0
 center_gap_mm = 0.0
 pinion_lower_extension_mm = 2.0
 rack_body_thickness_mm = 8.0

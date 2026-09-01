@@ -463,7 +463,7 @@ impl Prototype {
     }
 
     pub fn secondary_spur_layer_center_z(&self) -> f64 {
-        -self.rack.face_width().mm() * 0.5
+        -self.driven_pinion.face_width().mm() * 0.5
             - self.pinion_lower_extension.mm()
             - self.spur_face_width.mm() * 0.5
     }
@@ -487,8 +487,8 @@ impl Prototype {
     pub fn output_spur_to_rack_axial_gap(&self) -> f64 {
         let output_spur_top =
             self.secondary_spur_layer_center_z() + self.spur_face_width.mm() * 0.5;
-        let rack_face_bottom = -self.driven_pinion.face_width().mm() * 0.5;
-        rack_face_bottom - output_spur_top
+        let pinion_face_bottom = -self.driven_pinion.face_width().mm() * 0.5;
+        pinion_face_bottom - output_spur_top
     }
 
     pub fn primary_spur_layer_center_z(&self) -> f64 {
@@ -502,7 +502,7 @@ impl Prototype {
     }
 
     pub fn frame_inner_top_z(&self) -> f64 {
-        self.rack.face_width().mm() * 0.5 + self.axial_clearance.mm()
+        self.driven_pinion.face_width().mm() * 0.5 + self.axial_clearance.mm()
     }
 
     pub fn bottom_plate_center_z(&self) -> f64 {
@@ -568,6 +568,14 @@ impl Prototype {
 
     pub fn rack_overall_length(&self) -> f64 {
         self.rack.length() + self.rack.half_shift_mm() + self.rack_pusher_length()
+    }
+
+    pub fn rack_top_plate_clearance(&self) -> f64 {
+        self.frame_inner_top_z() - self.rack.face_width().mm() * 0.5
+    }
+
+    pub fn rack_bottom_plate_clearance(&self) -> f64 {
+        -self.rack.face_width().mm() * 0.5 - self.frame_inner_bottom_z()
     }
 
     pub fn handle_upper_thrust_spacer_length(&self) -> f64 {
