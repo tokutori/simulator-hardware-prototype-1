@@ -11,7 +11,7 @@ FDM造形を前提とした、手回し式ラック・ピニオン試験機の C
 
 金属シャフトや軸受はモデルに含めません。D/B/C/Aでは、下プレートから立つ外径10 mmの印刷中空軸上で回転部品が回ります。中空軸と四隅支柱は下プレート一体で、上プレート下面の深さ2 mmの嵌合穴へ1.5 mm入ります。直径方向と奥行き方向のクリアランスは各0.5 mmです。別体のスラストスペーサーがギヤの軸方向移動を上下合計1 mmに抑えます。Dは大小平歯車を段間ギャップなしで接合した複合部品です。B/Cは下側ヘリカル歯を2 mm延長して40T平歯車へ直接接続し、テーパーと空中へ張り出す面をなくしています。Aは今回はセンサーを付けません。
 
-ハンドル18Tギヤは印刷回転軸と角ドライブを一体化し、上プレートを貫通します。ギヤ上側には軸方向拘束スペーサーを置きます。半径40 mmの着脱式クランクはM6ボルト頭との干渉を避ける高さに置き、別体ノブをM6×40で取り付けます。
+ハンドル18Tギヤは印刷回転軸と角ドライブを一体化し、上プレートを貫通します。下側軸から平歯車歯底までは高さ4.5 mmの支持テーパーで接続し、下プレートにも回転テーパーに沿う逃げ穴を設けます。ギヤ上側には軸方向拘束スペーサーを置きます。半径40 mmの着脱式クランクはM6ボルト頭との干渉を避ける高さに置き、別体ノブをM6×40で取り付けます。
 
 ## 生成
 
@@ -26,6 +26,7 @@ cargo run -p double-helical-cli
 - `prototype-blender.png`: Blenderで検証レンダーした画像
 - `prototype-compounds.png`: D/B/C複合ギヤを積層方向の側面から見た印刷性確認画像
 - `prototype-case-fit.png`: 下プレート一体軸／支柱と、反転した上プレート嵌合穴の確認画像
+- `prototype-handle.png`: ハンドル歯車一体軸と下側支持テーパーの側面確認画像
 - `prototype-assembly.3mf`: 部品を個別オブジェクトとして保持する組立モデル
 - `prototype-assembly.stl`: 組立確認用の単一STL
 - `prototype-preview.scad`: OpenSCAD確認シーン
@@ -46,7 +47,8 @@ Steam版Blenderから `.blend` と検証レンダーを再生成する場合:
   .\output\prototype-assembly.blend `
   .\output\prototype-blender.png `
   .\output\prototype-compounds.png `
-  .\output\prototype-case-fit.png
+  .\output\prototype-case-fit.png `
+  .\output\prototype-handle.png
 ```
 
 OpenSCADがPATH上にある場合、確認画像は次のように生成できます。

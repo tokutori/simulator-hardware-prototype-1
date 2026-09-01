@@ -52,6 +52,7 @@ pub enum PrototypeError {
     PlateTooSmall,
     InvalidPlateCenter,
     InvalidTopSocket,
+    HandleTaperHasNoRoom,
 }
 
 impl Prototype {
@@ -188,6 +189,9 @@ impl Prototype {
         .any(|length| length <= 0.0)
         {
             return Err(PrototypeError::ThrustSpacerHasNoRoom);
+        }
+        if prototype.handle_support_taper_height() <= 0.0 {
+            return Err(PrototypeError::HandleTaperHasNoRoom);
         }
         Ok(prototype)
     }
@@ -459,6 +463,10 @@ impl Prototype {
         self.frame_inner_bottom_z() - self.plate_thickness.mm() * 0.5
     }
 
+    pub fn bottom_plate_outer_z(&self) -> f64 {
+        self.bottom_plate_center_z() - self.plate_thickness.mm() * 0.5
+    }
+
     pub fn top_plate_center_z(&self) -> f64 {
         self.frame_inner_top_z() + self.plate_thickness.mm() * 0.5
     }
@@ -470,6 +478,11 @@ impl Prototype {
     pub fn fixed_post_length(&self) -> f64 {
         self.frame_spacer_length() + self.top_socket_depth.mm()
             - self.top_socket_axial_clearance.mm()
+    }
+
+    pub fn handle_support_taper_height(&self) -> f64 {
+        let gear_bottom = self.primary_spur_layer_center_z() - self.spur_face_width.mm() * 0.5;
+        gear_bottom - self.bottom_plate_outer_z()
     }
 
     pub fn handle_upper_thrust_spacer_length(&self) -> f64 {
@@ -556,6 +569,9 @@ impl fmt::Display for PrototypeError {
             Self::InvalidTopSocket => formatter.write_str(
                 "top socket depth must fit inside the plate and exceed its axial clearance",
             ),
+            Self::HandleTaperHasNoRoom => {
+                formatter.write_str("handle shaft has no positive-height room for its print taper")
+            }
         }
     }
 }

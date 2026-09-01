@@ -870,7 +870,8 @@ fn report(
     .unwrap();
     writeln!(
         output,
-        "handle: printed rotating shaft, square drive, crank radius {:.6} mm, M6 knob bore",
+        "handle: printed rotating shaft, {:.6} mm lower print taper, square drive, crank radius {:.6} mm, M6 knob bore",
+        prototype.handle_support_taper_height(),
         prototype.handle_crank_radius().mm()
     )
     .unwrap();
@@ -945,6 +946,10 @@ mod tests {
         assert_eq!(prototype.top_socket_axial_clearance().mm(), 0.5);
         assert_eq!(prototype.top_socket_diameter_clearance().mm(), 0.5);
         assert_eq!(prototype.handle_crank_radius().mm(), 40.0);
+        assert!((prototype.handle_support_taper_height() - 4.5).abs() < 1.0e-12);
+        let handle_taper_expansion =
+            prototype.handle_spur().root_radius() - prototype.journal_outer_diameter().mm() * 0.5;
+        assert!(handle_taper_expansion < prototype.handle_support_taper_height() + 0.25);
         let lateral_margin = prototype.plate_length().mm() * 0.5
             - (prototype.secondary_spur_center_distance() + prototype.output_spur().tip_radius());
         assert!((lateral_margin - 2.5).abs() < 1.0e-12);

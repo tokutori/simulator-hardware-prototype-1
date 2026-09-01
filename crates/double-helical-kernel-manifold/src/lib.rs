@@ -231,6 +231,14 @@ fn handle_shaft_spur_solid(prototype: &Prototype) -> Result<Manifold, KernelErro
     )
     .translate(Vec3::new(0.0, 0.0, shaft_bottom));
     let overlap = 0.10;
+    let taper_height = prototype.handle_support_taper_height();
+    let taper = Manifold::cylinder(
+        taper_height + overlap,
+        shaft_radius,
+        prototype.handle_spur().root_radius(),
+        circular_segments(prototype.handle_spur().root_radius()),
+    )
+    .translate(Vec3::new(0.0, 0.0, shaft_bottom));
     let drive_height =
         prototype.nut_thickness().mm() * 2.0 + prototype.axial_clearance().mm() + 1.0;
     let drive_size = prototype.journal_outer_diameter().mm();
@@ -245,6 +253,7 @@ fn handle_shaft_spur_solid(prototype: &Prototype) -> Result<Manifold, KernelErro
     ));
     let result = gear
         .union_with_engine(&shaft, BooleanEngine::Exact)
+        .union_with_engine(&taper, BooleanEngine::Exact)
         .union_with_engine(&square_drive, BooleanEngine::Exact);
     validate_solid(&result)?;
     Ok(result)
@@ -468,15 +477,17 @@ fn frame_plate(prototype: &Prototype, side: PlateSide) -> Result<Manifold, Kerne
     let corners = prototype.corner_positions();
     let mut bolt_positions = fixed_axles.clone();
     bolt_positions.extend(corners.iter().copied());
-    let handle_hole = CrossSection::circle(
-        prototype.driven_pinion().bore_diameter().mm() * 0.5,
-        circular_segments(prototype.driven_pinion().bore_diameter().mm() * 0.5),
-    )
-    .translate(Vec2::new(
-        handle.translation_mm[0],
-        handle.translation_mm[1],
-    ));
-    section = section.difference(&handle_hole);
+    if side == PlateSide::Top {
+        let handle_hole = CrossSection::circle(
+            prototype.driven_pinion().bore_diameter().mm() * 0.5,
+            circular_segments(prototype.driven_pinion().bore_diameter().mm() * 0.5),
+        )
+        .translate(Vec2::new(
+            handle.translation_mm[0],
+            handle.translation_mm[1],
+        ));
+        section = section.difference(&handle_hole);
+    }
     for [x, y] in &bolt_positions {
         let hole = CrossSection::circle(
             prototype.bolt_clearance_diameter().mm() * 0.5,
@@ -494,6 +505,26 @@ fn frame_plate(prototype: &Prototype, side: PlateSide) -> Result<Manifold, Kerne
     )
     .translate(Vec3::new(0.0, 0.0, -prototype.plate_thickness().mm() * 0.5));
     if side == PlateSide::Bottom {
+        let shaft_radius = prototype.journal_outer_diameter().mm() * 0.5;
+        let taper_top_radius = prototype.handle_spur().root_radius();
+        let taper_height = prototype.handle_support_taper_height();
+        let radial_clearance = prototype.top_socket_diameter_clearance().mm() * 0.5;
+        let plate_thickness = prototype.plate_thickness().mm();
+        let clearance_top_radius = shaft_radius
+            + (taper_top_radius - shaft_radius) * plate_thickness / taper_height
+            + radial_clearance;
+        let handle_clearance = Manifold::cylinder(
+            plate_thickness + 0.10,
+            shaft_radius + radial_clearance,
+            clearance_top_radius,
+            circular_segments(clearance_top_radius),
+        )
+        .translate(Vec3::new(
+            handle.translation_mm[0],
+            handle.translation_mm[1],
+            -plate_thickness * 0.5 - 0.05,
+        ));
+        result = result.difference_with_engine(&handle_clearance, BooleanEngine::Exact);
         let pocket_depth = prototype.nut_pocket_depth().mm();
         let pocket_radius = prototype.nut_across_flats().mm() / 3.0_f64.sqrt();
         let pocket_section = CrossSection::circle(pocket_radius, 6);

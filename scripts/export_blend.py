@@ -14,7 +14,8 @@ def command_arguments() -> list[str]:
     if "--" not in sys.argv:
         raise SystemExit(
             "expected: blender --background --python export_blend.py -- "
-            "INPUT.obj OUTPUT.blend [ASSEMBLY.png [COMPOUNDS.png [CASE.png]]]"
+            "INPUT.obj OUTPUT.blend "
+            "[ASSEMBLY.png [COMPOUNDS.png [CASE.png [HANDLE.png]]]]"
         )
     return sys.argv[sys.argv.index("--") + 1 :]
 
@@ -43,16 +44,18 @@ def add_area_light(
 
 def main() -> None:
     arguments = command_arguments()
-    if len(arguments) not in (2, 3, 4, 5):
+    if len(arguments) not in (2, 3, 4, 5, 6):
         raise SystemExit(
-            "expected INPUT.obj OUTPUT.blend [ASSEMBLY.png [COMPOUNDS.png [CASE.png]]]"
+            "expected INPUT.obj OUTPUT.blend "
+            "[ASSEMBLY.png [COMPOUNDS.png [CASE.png [HANDLE.png]]]]"
         )
 
     obj_path = Path(arguments[0]).resolve()
     blend_path = Path(arguments[1]).resolve()
     render_path = Path(arguments[2]).resolve() if len(arguments) >= 3 else None
     compounds_path = Path(arguments[3]).resolve() if len(arguments) >= 4 else None
-    case_path = Path(arguments[4]).resolve() if len(arguments) == 5 else None
+    case_path = Path(arguments[4]).resolve() if len(arguments) >= 5 else None
+    handle_path = Path(arguments[5]).resolve() if len(arguments) == 6 else None
     if not obj_path.is_file():
         raise SystemExit(f"OBJ does not exist: {obj_path}")
 
@@ -191,11 +194,34 @@ def main() -> None:
         scene.render.filepath = str(case_path)
         bpy.ops.render.render(write_still=True)
 
+    if handle_path is not None:
+        handles = [obj for obj in imported_meshes if obj.name == "handle-shaft-spur"]
+        if len(handles) != 1:
+            found = ", ".join(sorted(obj.name for obj in handles))
+            raise SystemExit(f"expected handle-shaft-spur, found: {found}")
+        handle = handles[0]
+        for obj in imported_meshes:
+            obj.hide_render = obj is not handle
+        corners = [handle.matrix_world @ Vector(corner) for corner in handle.bound_box]
+        lower = Vector(tuple(min(point[index] for point in corners) for index in range(3)))
+        upper = Vector(tuple(max(point[index] for point in corners) for index in range(3)))
+        center = (lower + upper) * 0.5
+        camera.data.type = "ORTHO"
+        camera.data.ortho_scale = max((upper.x - lower.x) * 1.4, (upper.z - lower.z) * 1.2)
+        camera.location = (center.x, center.y - 200.0, center.z)
+        aim_at(camera, tuple(center))
+        scene.render.resolution_x = 1000
+        scene.render.resolution_y = 1000
+        handle_path.parent.mkdir(parents=True, exist_ok=True)
+        scene.render.filepath = str(handle_path)
+        bpy.ops.render.render(write_still=True)
+
     print(
         f"saved {blend_path} with {len(imported_meshes)} mesh objects"
         + (f", rendered {render_path}" if render_path is not None else "")
         + (f", rendered {compounds_path}" if compounds_path is not None else "")
-        + (f", and rendered {case_path}" if case_path is not None else "")
+        + (f", rendered {case_path}" if case_path is not None else "")
+        + (f", and rendered {handle_path}" if handle_path is not None else "")
     )
 
 
