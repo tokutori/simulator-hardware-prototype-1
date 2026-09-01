@@ -1,0 +1,12 @@
+[package]
+name = "double-helical-kernel-manifold"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+double-helical-core = { path = "../double-helical-core" }
+libm.workspace = true
+manifold-rust.workspace = true
+thiserror.workspace = true

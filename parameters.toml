@@ -1,0 +1,50 @@
+# Nominal test geometry. Dimensions are millimetres and angles are degrees.
+
+[spur_stage]
+module_mm = 1.25
+pressure_angle_deg = 20.0
+handle_teeth = 18
+reduction_large_teeth = 36
+reduction_small_teeth = 18
+output_teeth = 40
+face_width_mm = 3.5
+tooth_backlash_mm = 0.10
+chord_tolerance_mm = 0.05
+
+[rack_stage]
+normal_module_mm = 2.0
+normal_pressure_angle_deg = 20.0
+helix_angle_deg = 15.0
+pinion_teeth = 20
+rack_teeth = 24
+face_width_mm = 20.0
+center_gap_mm = 0.0
+pinion_lower_extension_mm = 2.0
+rack_body_thickness_mm = 8.0
+tooth_backlash_mm = 0.10
+chord_tolerance_mm = 0.05
+slices_per_half = 12
+
+[handle]
+crank_radius_mm = 40.0
+
+# M6x40 bolts clamp the frame. Printed hollow axles carry the rotating parts and
+# also maintain the gap between the two printed frame plates.
+[hardware]
+bolt_length_mm = 40.0
+bolt_clearance_diameter_mm = 6.4
+printed_journal_outer_diameter_mm = 10.0
+rotating_bore_diameter_mm = 10.4
+thrust_spacer_outer_diameter_mm = 15.0
+nut_across_flats_mm = 10.4
+nut_thickness_mm = 5.0
+nut_pocket_depth_mm = 3.0
+plate_thickness_mm = 4.0
+plate_length_mm = 130.0
+plate_width_mm = 130.0
+plate_center_y_mm = -9.0
+corner_bolt_inset_mm = 12.0
+axial_clearance_mm = 0.5
+top_socket_depth_mm = 2.0
+top_socket_axial_clearance_mm = 0.5
+top_socket_diameter_clearance_mm = 0.5

@@ -1,0 +1,22 @@
+[workspace]
+members = [
+    "crates/double-helical-core",
+    "crates/double-helical-kernel-manifold",
+    "crates/double-helical-export",
+    "crates/double-helical-cli",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+rust-version = "1.88"
+
+[workspace.dependencies]
+libm = "0.2.15"
+manifold-rust = "0.13.1"
+serde = { version = "1.0.219", features = ["derive"] }
+thiserror = "2.0.16"
+toml = "0.9.5"
+zip = { version = "4.6.0", default-features = false, features = ["deflate"] }

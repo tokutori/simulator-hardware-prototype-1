@@ -1,0 +1,11 @@
+[package]
+name = "double-helical-export"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+double-helical-core = { path = "../double-helical-core" }
+thiserror.workspace = true
+zip.workspace = true
