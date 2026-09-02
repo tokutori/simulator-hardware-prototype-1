@@ -6,9 +6,11 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+chrono = "0.4.42"
 dxf = "0.6.1"
 gimbal-core = { path = "../gimbal-core" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+uuid = "1.18.1"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }

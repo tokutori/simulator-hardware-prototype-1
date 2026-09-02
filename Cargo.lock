@@ -331,11 +331,13 @@ dependencies = [
 name = "gimbal-export"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "dxf",
  "gimbal-core",
  "serde",
  "serde_json",
  "thiserror",
+ "uuid",
  "zip",
 ]
 
