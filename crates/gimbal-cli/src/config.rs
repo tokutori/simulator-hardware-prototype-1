@@ -78,6 +78,7 @@ struct RawRollAxis {
     shaft_diameter_mm: f64,
     drive_station_mm: f64,
     bearing_station_mm: f64,
+    gearbox_support_half_span_mm: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -90,6 +91,8 @@ struct RawCockpit {
 
 #[derive(Debug, Deserialize)]
 struct RawFrame {
+    fixed_rail_length_mm: f64,
+    fixed_crossmember_station_mm: f64,
     fixed_crossmember_width_mm: f64,
     fixed_rail_depth_mm: f64,
     bearing_pedestal_thickness_mm: f64,
@@ -98,6 +101,7 @@ struct RawFrame {
     lower_rail_depth_mm: f64,
     moving_carrier_half_span_mm: f64,
     moving_carrier_height_mm: f64,
+    moving_carrier_inboard_offset_mm: f64,
     moving_carrier_member_width_mm: f64,
     floor_top_below_axis_mm: f64,
     floor_thickness_mm: f64,
@@ -375,6 +379,10 @@ pub fn load(parameters_path: &Path, fabrication_path: &Path) -> Result<LoadedCon
                     raw.roll_axis.bearing_station_mm,
                     "roll_axis.bearing_station_mm",
                 )?,
+                gearbox_support_half_span: positive(
+                    raw.roll_axis.gearbox_support_half_span_mm,
+                    "roll_axis.gearbox_support_half_span_mm",
+                )?,
             },
             cockpit: CockpitParameters {
                 length: positive(raw.cockpit.length_mm, "cockpit.length_mm")?,
@@ -386,6 +394,14 @@ pub fn load(parameters_path: &Path, fabrication_path: &Path) -> Result<LoadedCon
                 )?,
             },
             frame: FrameParameters {
+                fixed_rail_length: positive(
+                    raw.frame.fixed_rail_length_mm,
+                    "frame.fixed_rail_length_mm",
+                )?,
+                fixed_crossmember_station: positive(
+                    raw.frame.fixed_crossmember_station_mm,
+                    "frame.fixed_crossmember_station_mm",
+                )?,
                 fixed_crossmember_width: positive(
                     raw.frame.fixed_crossmember_width_mm,
                     "frame.fixed_crossmember_width_mm",
@@ -417,6 +433,10 @@ pub fn load(parameters_path: &Path, fabrication_path: &Path) -> Result<LoadedCon
                 moving_carrier_height: positive(
                     raw.frame.moving_carrier_height_mm,
                     "frame.moving_carrier_height_mm",
+                )?,
+                moving_carrier_inboard_offset: positive(
+                    raw.frame.moving_carrier_inboard_offset_mm,
+                    "frame.moving_carrier_inboard_offset_mm",
                 )?,
                 moving_carrier_member_width: positive(
                     raw.frame.moving_carrier_member_width_mm,

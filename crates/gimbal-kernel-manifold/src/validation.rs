@@ -41,16 +41,17 @@ impl ValidationScope {
                 | ComponentRole::PitchDrivePinion
                 | ComponentRole::PitchRetentionPinion
                 | ComponentRole::PitchGearboxSmallGear
+                | ComponentRole::PitchGearboxDistributionGear
                 | ComponentRole::PitchGearboxLargeGear
                 | ComponentRole::RollDrivenGear
                 | ComponentRole::RollInputPinion
                 | ComponentRole::RollGearboxSmallGear
                 | ComponentRole::RollGearboxLargeGear => false,
                 ComponentRole::FixedCarrierRail
-                | ComponentRole::SectorToRailLink
+                | ComponentRole::FixedCarrierPost
                 | ComponentRole::FixedCrossmember
                 | ComponentRole::PitchCradleLongitudinalRail
-                | ComponentRole::PitchEndUpperTie
+                | ComponentRole::RollBearingCarrierEnd
                 | ComponentRole::InstallationFloor
                 | ComponentRole::PitchDriveFlange
                 | ComponentRole::PitchRetentionFlange
@@ -70,7 +71,6 @@ impl ValidationScope {
                 | ComponentRole::RollDrivenHub
                 | ComponentRole::RollDrivenKey
                 | ComponentRole::RollGearboxShaft
-                | ComponentRole::RollBearingPedestal
                 | ComponentRole::RollBearing
                 | ComponentRole::RollGearboxPlate
                 | ComponentRole::RollGearboxMount

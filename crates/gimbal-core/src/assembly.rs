@@ -425,6 +425,16 @@ impl Assembly {
         self.instances.get(id.index())
     }
 
+    pub fn instance_by_identity(&self, identity: ComponentIdentity) -> Option<ComponentInstanceId> {
+        self.instances_with_ids().find_map(|(id, instance)| {
+            (ComponentIdentity {
+                role: self.definitions[instance.definition.index()].role,
+                location: instance.location,
+            } == identity)
+                .then_some(id)
+        })
+    }
+
     pub fn instances_with_role(
         &self,
         role: ComponentRole,

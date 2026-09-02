@@ -243,7 +243,7 @@ validatorは`#[cfg(test)]`内へ閉じ込めない。CLIとtestが同じ実装�
 | 0 | 誤った不変条件の撤去とbaseline固定 | 完了 | なし |
 | 1 | typed identityとAssemblyRelation | 完了 | Phase 0 |
 | 2 | 共通AssemblyValidator | 完了 | Phase 1 |
-| 3 | 固定pitch frameとsector荷重経路 | 進行中 | Phase 2 |
+| 3 | 固定pitch frameとsector荷重経路 | 検証中 | Phase 2 |
 | 4 | M3締結とlaser sheet hole | 未着手 | Phase 2, 3 |
 | 5 | roll/pitchの軸、軸受、clamp、hub、key | 未着手 | Phase 2, 4 |
 | 6 | gear mesh、位相、gearbox伝達 | 未着手 | Phase 2, 5 |
@@ -572,8 +572,15 @@ Exit criteria:
 - コクピ直下の2本のmoving crossbar、実機能のなかったannular clampおよび実穴のない仮M3 fastenerをmodelから撤去した。上側moving carrierをroll軸上24 mmの左右長手材と前後矩形tieへ置換した。
 - contact carriageから上側長手材へ伸びる2本のtruss webは、別instance同士のoverlapを接続扱いせず、FDM carriage plate definition内でUnionした。roll bearing pedestalは、roll軸のbearing bossから上側carrier rail内面までを2本のribとbridgeで結ぶ一体のhangerへ置換した。roll gearbox支持はコクピ前後で上側tieから下ろす斜材へ変更した。
 - 固定pitch frameの前後crossmemberは円形shaftから幅12 mm・高さ8 mmの矩形構造部材へ変更し、左右railの内面間へ配置した。下側railと同じ8 mm高さを共通parameterにして床上面とのface contactへ揃えた結果、床への2 mm penetrationを解消した。軽量構造検査のproxy候補は507件から259件へ減少したが、これは機械的成立を意味せず、残候補を引き続きrelationと実joint形状へ置換する。
+- 固定frameへ前後4本の垂直postを追加し、upper/lower rail、矩形crossmember、floorおよびsector supportの24箇所をstable plane datum付き`SurfaceContact`として登録した。旧`SectorToRailLink`は撤去し、sector自身へpinion通過域を避けた上下分離supportをUnionした。
+- relation graph上で4つすべてのsectorからpost、lower railを経てfloorへ到達できることを自動検査した。moving carrier側もrail、carriage mounting pad、front/rear carrier end、L形roll gearbox supportおよびmount plateの20箇所を`SurfaceContact`として登録し、全44 contact relationをsemantic identityで検査する。
+- pitch contact unitを径方向の内2 drive・外1 retentionから、外2 drive・内1 retentionへ反転した。drive pinion偏角を±7.5度として中心間隔を約18 mmから約40.7 mmへ広げ、pitch限界±20度でもsector端へ2.5度を残す。gearbox本体のY方向配置は引き続き左右sector間の内側とした。
+- 離した2 branchへ共通54T distribution gearを配置し、既存54T driven gearと同じFeature DAG solidを再利用した。pitch inputの相対回転比は現構成から62:1へ更新した。複数meshの位相閉路と荷重均等化はPhase 6まで未検証である。
+- 新しい38 definition・187 instanceのpreview model、静止画8枚、`.blend`、`gimbal-motion.mp4`、pitch gearbox動画およびroll gearbox動画を再生成した。manifestは20 artifactを記録し、全SHA-256一致を確認した。動画はH.264、720×540、12 fps、6秒である。
+- 高速検証は高精細gear 10 definitionを除外し、201件のconservative proxy候補と12件の未定義近接を報告している。これは確定干渉ではない。±20度の全pair motion sweepはPhase 7まで未完了であり、可動域成立をまだ宣言しない。
+- Phase 3 checkpointでworkspace test 44件、format、warning-as-error Clippy、native/wasm32の`gimbal-core no_std` checkが成功した。主要moving structure対floor、短縮コクピ対roll support、upper carrier対roll mountおよびgearbox plate対gear/shaftの列挙済みexact干渉testは成功したが、全pair・全中間姿勢の証明ではない。
 
-次の作業はPhase 3の固定pitch frameとsector荷重経路の再設計である。実joint relationの登録は未成立形状を正当化しないよう、Phase 3–6の再設計と同時に行う。
+次の作業はPhase 3の固定構造・moving carrier接触面をexact geometryで確認し、Phase 4の実締結へ渡せるload pathを確定することである。実joint relationの登録は未成立形状を正当化しないよう、Phase 3–6の再設計と同時に行う。
 
 ## 9. 完成の定義
 

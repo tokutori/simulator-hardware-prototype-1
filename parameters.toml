@@ -16,7 +16,7 @@ sector_half_angle_deg = 30.0
 [contact_unit]
 drive_pinion_teeth = 18
 encoder_pinion_teeth = 18
-branch_angle_offset_deg = 4.0
+branch_angle_offset_deg = 7.5
 drive_shaft_diameter_mm = 4.0
 encoder_shaft_diameter_mm = 4.0
 drive_flange_clearance_mm = 0.70
@@ -27,7 +27,7 @@ flange_thickness_mm = 1.2
 module_mm = 0.6
 small_teeth = 18
 large_teeth = 54
-distribution_teeth = 18
+distribution_teeth = 54
 pressure_angle_deg = 20.0
 backlash_mm = 0.10
 chord_tolerance_mm = 0.03
@@ -49,6 +49,7 @@ shaft_length_mm = 270.0
 shaft_diameter_mm = 8.0
 drive_station_mm = 120.5
 bearing_station_mm = 94.0
+gearbox_support_half_span_mm = 12.0
 
 [cockpit]
 length_mm = 170.0
@@ -57,14 +58,17 @@ height_mm = 45.0
 suspension_drop_mm = 42.0
 
 [frame]
+fixed_rail_length_mm = 260.0
+fixed_crossmember_station_mm = 112.0
 fixed_crossmember_width_mm = 12.0
 fixed_rail_depth_mm = 8.0
 bearing_pedestal_thickness_mm = 8.0
 sheet_thickness_mm = 6.0
 upper_rail_height_mm = 78.0
 lower_rail_depth_mm = 118.0
-moving_carrier_half_span_mm = 110.0
+moving_carrier_half_span_mm = 91.0
 moving_carrier_height_mm = 24.0
+moving_carrier_inboard_offset_mm = 14.0
 moving_carrier_member_width_mm = 12.0
 floor_top_below_axis_mm = 122.0
 floor_thickness_mm = 10.0

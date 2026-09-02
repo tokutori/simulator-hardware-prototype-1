@@ -4,7 +4,7 @@ mod config;
 
 use std::error::Error;
 use std::fs;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use config::LoadedConfig;
 use gimbal_core::{
@@ -43,9 +43,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         "generate-preview" => generate(&workspace, &loaded, GenerationMode::PreviewOnly),
         "validate" => validate(&workspace, &loaded, ValidationScope::StructuralFast),
         "validate-full" => validate(&workspace, &loaded, ValidationScope::Full),
+        "refresh-manifest" => refresh_manifest(&workspace),
         "clean-output" => clean_output(&workspace),
         unknown => Err(format!(
-            "unknown command {unknown:?}; expected generate, generate-preview, validate, validate-full, or clean-output"
+            "unknown command {unknown:?}; expected generate, generate-preview, validate, validate-full, refresh-manifest, or clean-output"
         )
         .into()),
     }
@@ -246,40 +247,16 @@ fn generate(
         bin_path,
     ];
     artifact_paths.extend(fabrication_artifacts);
-    for optional in [
-        output.join("model/gimbal-prototype.blend"),
-        output.join("preview/isometric.png"),
-        output.join("preview/top-z.png"),
-        output.join("preview/left-side-minus-y.png"),
-        output.join("preview/front-plus-x.png"),
-        output.join("preview/drive-unit-detail.png"),
-        output.join("preview/pitch-gearbox-detail.png"),
-        output.join("preview/roll-gearbox-detail.png"),
-        output.join("preview/pitch-sector-reinforcement-detail.png"),
-        output.join("preview/gimbal-motion.mp4"),
-        output.join("preview/pitch-gearbox-motion.mp4"),
-        output.join("preview/roll-gearbox-motion.mp4"),
-        output.join("validation-report.json"),
-        output.join("validation-report-structural.json"),
-        output.join("validation-report-full.json"),
-    ] {
+    for optional in optional_artifact_paths(&output) {
         if optional.is_file() {
             artifact_paths.push(optional);
         }
     }
-    let artifacts = artifact_paths
-        .iter()
-        .map(|path| {
-            let relative = path.strip_prefix(workspace).unwrap_or(path);
-            Ok(json!({
-                "path": relative.to_string_lossy().replace('\\', "/"),
-                "bytes": fs::metadata(path)?.len(),
-                "sha256": sha256_file(path)?
-            }))
-        })
-        .collect::<Result<Vec<Value>, Box<dyn Error>>>()?;
+    let artifacts = artifact_manifest(workspace, &artifact_paths)?;
     let sector = &loaded.parameters.pitch_sector.sector;
     let gearbox_stage_ratio = design.pitch_gearbox_pair.ratio();
+    let pitch_distribution_ratio = loaded.parameters.pitch_gearbox.small_gear.teeth() as f64
+        / loaded.parameters.pitch_gearbox.distribution_gear.teeth() as f64;
     let validation_json = validation_report
         .as_ref()
         .map(|report| validation_report_json(&design, report))
@@ -316,12 +293,16 @@ fn generate(
             "roll_gearbox_count": 2,
             "cockpit_length_mm": loaded.parameters.cockpit.length.mm(),
             "cockpit_suspension_drop_mm": loaded.parameters.cockpit.suspension_drop.mm(),
+            "roll_gearbox_support_half_span_mm": loaded.parameters.roll_axis.gearbox_support_half_span.mm(),
             "upper_rail_height_mm": loaded.parameters.frame.upper_rail_height.mm(),
             "lower_rail_depth_mm": loaded.parameters.frame.lower_rail_depth.mm(),
             "moving_carrier_half_span_mm": loaded.parameters.frame.moving_carrier_half_span.mm(),
             "moving_carrier_height_mm": loaded.parameters.frame.moving_carrier_height.mm(),
+            "moving_carrier_inboard_offset_mm": loaded.parameters.frame.moving_carrier_inboard_offset.mm(),
             "moving_carrier_member_width_mm": loaded.parameters.frame.moving_carrier_member_width.mm(),
             "fixed_crossmember_width_mm": loaded.parameters.frame.fixed_crossmember_width.mm(),
+            "fixed_crossmember_station_mm": loaded.parameters.frame.fixed_crossmember_station.mm(),
+            "fixed_rail_length_mm": loaded.parameters.frame.fixed_rail_length.mm(),
             "fixed_rail_depth_mm": loaded.parameters.frame.fixed_rail_depth.mm(),
             "floor_top_below_axis_mm": loaded.parameters.frame.floor_top_below_axis.mm(),
             "pitch_gearbox_near_plate_inboard_offset_mm": loaded.parameters.pitch_gearbox.near_plate_inboard_offset.mm(),
@@ -331,8 +312,9 @@ fn generate(
         "ratios": {
             "pitch_drive_pinion_to_sector_reference": design.pitch_drive_pair.ratio(),
             "pitch_encoder_pinion_to_sector_reference": design.pitch_encoder_pair.ratio(),
+            "pitch_branch_to_distribution": pitch_distribution_ratio,
             "pitch_gearbox_per_stage": gearbox_stage_ratio,
-            "pitch_input_shaft_to_carrier": gearbox_stage_ratio * gearbox_stage_ratio * design.pitch_drive_pair.ratio(),
+            "pitch_input_shaft_to_carrier": pitch_distribution_ratio * gearbox_stage_ratio * gearbox_stage_ratio * design.pitch_drive_pair.ratio(),
             "roll_pinion_to_cockpit": design.roll_pair.ratio(),
             "roll_input_shaft_to_cockpit": gearbox_stage_ratio * gearbox_stage_ratio * design.roll_pair.ratio()
         },
@@ -602,12 +584,94 @@ fn manufacturing_name(manufacturing: Manufacturing) -> &'static str {
     }
 }
 
+fn optional_artifact_paths(output: &Path) -> Vec<PathBuf> {
+    [
+        "model/gimbal-prototype.blend",
+        "preview/isometric.png",
+        "preview/top-z.png",
+        "preview/left-side-minus-y.png",
+        "preview/front-plus-x.png",
+        "preview/drive-unit-detail.png",
+        "preview/pitch-gearbox-detail.png",
+        "preview/roll-gearbox-detail.png",
+        "preview/pitch-sector-reinforcement-detail.png",
+        "preview/gimbal-motion.mp4",
+        "preview/pitch-gearbox-motion.mp4",
+        "preview/roll-gearbox-motion.mp4",
+        "validation-report.json",
+        "validation-report-structural.json",
+        "validation-report-full.json",
+    ]
+    .into_iter()
+    .map(|relative| output.join(relative))
+    .collect()
+}
+
+fn artifact_manifest(
+    workspace: &Path,
+    artifact_paths: &[PathBuf],
+) -> Result<Vec<Value>, Box<dyn Error>> {
+    artifact_paths
+        .iter()
+        .map(|path| {
+            let relative = path.strip_prefix(workspace).unwrap_or(path);
+            Ok(json!({
+                "path": relative.to_string_lossy().replace('\\', "/"),
+                "bytes": fs::metadata(path)?.len(),
+                "sha256": sha256_file(path)?
+            }))
+        })
+        .collect()
+}
+
+fn refresh_manifest(workspace: &Path) -> Result<(), Box<dyn Error>> {
+    let output = workspace.join("output");
+    let manifest_path = output.join("manifest.json");
+    let mut manifest: Value = serde_json::from_slice(&fs::read(&manifest_path)?)?;
+    let mut paths = Vec::<PathBuf>::new();
+    for artifact in manifest
+        .get("artifacts")
+        .and_then(Value::as_array)
+        .ok_or("manifest has no artifact list")?
+    {
+        let relative = artifact
+            .get("path")
+            .and_then(Value::as_str)
+            .ok_or("manifest artifact has no path")?;
+        let relative_path = Path::new(relative);
+        if relative_path.is_absolute()
+            || relative_path.components().any(|component| {
+                matches!(
+                    component,
+                    Component::ParentDir | Component::RootDir | Component::Prefix(_)
+                )
+            })
+            || !relative_path.starts_with("output")
+        {
+            return Err(format!("unsafe artifact path in manifest: {relative:?}").into());
+        }
+        let path = workspace.join(relative_path);
+        if path.is_file() && !paths.contains(&path) {
+            paths.push(path);
+        }
+    }
+    for path in optional_artifact_paths(&output) {
+        if path.is_file() && !paths.contains(&path) {
+            paths.push(path);
+        }
+    }
+    manifest["artifacts"] = Value::Array(artifact_manifest(workspace, &paths)?);
+    fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
+    println!("refreshed {} artifact hashes", paths.len());
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use gimbal_core::{
-        ComponentIdentity, ComponentInstance, ComponentLocation, ComponentRole, LongitudinalEnd,
-        PrototypeDesign, RigidTransform, Side, VerticalEnd,
+        AssemblyRelation, ComponentIdentity, ComponentInstance, ComponentLocation, ComponentRole,
+        LongitudinalEnd, PrototypeDesign, RigidTransform, Side, VerticalEnd,
     };
 
     fn load_configuration() -> config::LoadedConfig {
@@ -732,6 +796,7 @@ mod tests {
             }
         }
         assert_eq!(count_role(&design, ComponentRole::FixedCrossmember), 4);
+        assert_eq!(count_role(&design, ComponentRole::FixedCarrierPost), 4);
         for end in [LongitudinalEnd::Front, LongitudinalEnd::Rear] {
             selected_instance(
                 &design,
@@ -742,6 +807,147 @@ mod tests {
                         .with_ordinal(2),
                 ),
             );
+        }
+    }
+
+    #[test]
+    fn pitch_contact_units_use_two_spread_outer_drives_and_one_inner_retainer() {
+        let design = load_design();
+        let location = ComponentLocation::new()
+            .with_side(Side::Left)
+            .with_longitudinal_end(LongitudinalEnd::Front);
+        let first = instance_pose(
+            &design,
+            located(ComponentRole::PitchDrivePinion, location.with_ordinal(1)),
+            0.0,
+            0.0,
+        );
+        let second = instance_pose(
+            &design,
+            located(ComponentRole::PitchDrivePinion, location.with_ordinal(2)),
+            0.0,
+            0.0,
+        );
+        let retainer = instance_pose(
+            &design,
+            located(ComponentRole::PitchRetentionPinion, location),
+            0.0,
+            0.0,
+        );
+        let radial = |pose: RigidTransform| {
+            (pose.translation[0] * pose.translation[0] + pose.translation[2] * pose.translation[2])
+                .sqrt()
+        };
+        let first_radius = radial(first);
+        let second_radius = radial(second);
+        let retainer_radius = radial(retainer);
+        let sector_outer_pitch = load_configuration()
+            .parameters
+            .pitch_sector
+            .sector
+            .external_reference()
+            .pitch_radius();
+        let sector_inner_pitch = load_configuration()
+            .parameters
+            .pitch_sector
+            .sector
+            .internal_reference()
+            .pitch_radius();
+        assert!(first_radius > sector_outer_pitch);
+        assert!(second_radius > sector_outer_pitch);
+        assert!(retainer_radius < sector_inner_pitch);
+
+        let separation = ((first.translation[0] - second.translation[0]).powi(2)
+            + (first.translation[2] - second.translation[2]).powi(2))
+        .sqrt();
+        assert!(
+            separation >= 40.0,
+            "outer drive pinions need a useful load-sharing baseline; got {separation} mm"
+        );
+    }
+
+    #[test]
+    fn fixed_sector_load_paths_reach_the_floor_through_typed_contacts() {
+        let design = load_design();
+        let floor = design
+            .assembly
+            .instance_by_identity(singleton(ComponentRole::InstallationFloor))
+            .expect("installation floor exists");
+        let mut adjacency = vec![Vec::new(); design.assembly.instances().len()];
+        for relation in design.assembly.relations() {
+            let (first, second) = match relation {
+                AssemblyRelation::SurfaceContact(contact) => {
+                    (contact.first.instance, contact.second.instance)
+                }
+                AssemblyRelation::CylindricalFit(fit) => (fit.shaft.instance, fit.bore.instance),
+                AssemblyRelation::GearMesh(mesh) => {
+                    (mesh.first_axis.instance, mesh.second_axis.instance)
+                }
+            };
+            adjacency[first.index()].push(second);
+            adjacency[second.index()].push(first);
+        }
+        for (sector, _) in design
+            .assembly
+            .instances_with_role(ComponentRole::PitchSector)
+        {
+            let mut visited = vec![false; adjacency.len()];
+            let mut pending = vec![sector];
+            visited[sector.index()] = true;
+            while let Some(current) = pending.pop() {
+                for &next in &adjacency[current.index()] {
+                    if !visited[next.index()] {
+                        visited[next.index()] = true;
+                        pending.push(next);
+                    }
+                }
+            }
+            assert!(
+                visited[floor.index()],
+                "pitch sector {sector:?} has no typed structural path to the floor"
+            );
+        }
+    }
+
+    #[test]
+    fn structural_face_contacts_are_typed_relations() {
+        let design = load_design();
+        let contacts = design
+            .assembly
+            .relations()
+            .iter()
+            .filter(|relation| matches!(relation, AssemblyRelation::SurfaceContact(_)))
+            .count();
+        assert_eq!(contacts, 44);
+
+        for side in [Side::Left, Side::Right] {
+            for end in [LongitudinalEnd::Front, LongitudinalEnd::Rear] {
+                let post = design
+                    .assembly
+                    .instance_by_identity(located(
+                        ComponentRole::FixedCarrierPost,
+                        ComponentLocation::new()
+                            .with_side(side)
+                            .with_longitudinal_end(end),
+                    ))
+                    .expect("fixed carrier post exists");
+                let relation_count = design
+                    .assembly
+                    .relations_with_ids()
+                    .filter(|(_, relation)| match relation {
+                        AssemblyRelation::SurfaceContact(contact) => {
+                            contact.first.instance == post || contact.second.instance == post
+                        }
+                        AssemblyRelation::CylindricalFit(fit) => {
+                            fit.shaft.instance == post || fit.bore.instance == post
+                        }
+                        AssemblyRelation::GearMesh(mesh) => {
+                            mesh.first_axis.instance == post || mesh.second_axis.instance == post
+                        }
+                    })
+                    .count();
+                assert_eq!(relation_count, 3);
+            }
         }
     }
 
@@ -894,16 +1100,11 @@ mod tests {
     }
 
     #[test]
-    fn moving_carrier_and_roll_bearing_supports_are_above_the_cockpit() {
+    fn moving_carrier_and_roll_bearing_supports_avoid_the_cockpit_underbody() {
         let design = load_design();
         for (_, instance) in design
             .assembly
             .instances_with_role(ComponentRole::PitchCradleLongitudinalRail)
-            .chain(
-                design
-                    .assembly
-                    .instances_with_role(ComponentRole::PitchEndUpperTie),
-            )
         {
             let pose = design
                 .kinematics
@@ -915,6 +1116,24 @@ mod tests {
             assert!(
                 pose.translation[2] > 0.0,
                 "upper moving-carrier support {} must not occupy the cockpit underside",
+                instance.name
+            );
+        }
+        let cockpit_half_length = load_configuration().parameters.cockpit.length.mm() * 0.5;
+        for (_, instance) in design
+            .assembly
+            .instances_with_role(ComponentRole::RollBearingCarrierEnd)
+        {
+            let pose = design
+                .kinematics
+                .pose(command(0.0, 0.0))
+                .expect("zero pose is valid")
+                .frame(instance.frame)
+                .expect("instance frame exists")
+                .compose(instance.local_pose);
+            assert!(
+                pose.translation[0].abs() > cockpit_half_length,
+                "roll bearing carrier end {} must remain beyond the cockpit end plane",
                 instance.name
             );
         }
@@ -1047,8 +1266,8 @@ mod tests {
         );
         let drive_angle = quaternion_y_degrees(drive.rotation);
         let encoder_angle = quaternion_y_degrees(encoder.rotation);
-        let expected_drive = pitch * (1.0 - design.pitch_drive_pair.ratio());
-        let expected_encoder = pitch * (1.0 + design.pitch_encoder_pair.ratio());
+        let expected_drive = pitch * (1.0 + design.pitch_drive_pair.ratio());
+        let expected_encoder = pitch * (1.0 - design.pitch_encoder_pair.ratio());
         assert!((drive_angle - expected_drive).abs() < 1.0e-6);
         assert!((encoder_angle - expected_encoder).abs() < 1.0e-6);
     }
@@ -1118,11 +1337,11 @@ mod tests {
                 ComponentLocation::new().with_ordinal(2),
             ),
             located(
-                ComponentRole::PitchEndUpperTie,
+                ComponentRole::RollBearingCarrierEnd,
                 ComponentLocation::new().with_longitudinal_end(LongitudinalEnd::Front),
             ),
             located(
-                ComponentRole::PitchEndUpperTie,
+                ComponentRole::RollBearingCarrierEnd,
                 ComponentLocation::new().with_longitudinal_end(LongitudinalEnd::Rear),
             ),
         ];
@@ -1183,11 +1402,11 @@ mod tests {
         let cockpit_solid = instance_solid(&design, cockpit);
         let fixed_to_pitch_frame = [
             located(
-                ComponentRole::RollBearingPedestal,
+                ComponentRole::RollBearingCarrierEnd,
                 ComponentLocation::new().with_longitudinal_end(LongitudinalEnd::Front),
             ),
             located(
-                ComponentRole::RollBearingPedestal,
+                ComponentRole::RollBearingCarrierEnd,
                 ComponentLocation::new().with_longitudinal_end(LongitudinalEnd::Rear),
             ),
             located(
@@ -1237,14 +1456,6 @@ mod tests {
                 ComponentLocation::new()
                     .with_longitudinal_end(LongitudinalEnd::Rear)
                     .with_ordinal(2),
-            ),
-            located(
-                ComponentRole::PitchEndUpperTie,
-                ComponentLocation::new().with_longitudinal_end(LongitudinalEnd::Front),
-            ),
-            located(
-                ComponentRole::PitchEndUpperTie,
-                ComponentLocation::new().with_longitudinal_end(LongitudinalEnd::Rear),
             ),
         ];
         let mut evaluator = Evaluator::new(&design.graph);
@@ -1292,7 +1503,7 @@ mod tests {
                         right_front.with_ordinal(2),
                     ),
                     located(
-                        ComponentRole::PitchGearboxSmallGear,
+                        ComponentRole::PitchGearboxDistributionGear,
                         right_front.with_ordinal(3),
                     ),
                     located(
@@ -1398,6 +1609,59 @@ mod tests {
                     "{plate:?} intersects {part:?} by {volume} mm^3"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn upper_carrier_and_roll_mounts_do_not_use_solid_overlap() {
+        let design = load_design();
+        let mut evaluator = Evaluator::new(&design.graph);
+        let mut pairs = Vec::new();
+        for end in [LongitudinalEnd::Front, LongitudinalEnd::Rear] {
+            let end_location = ComponentLocation::new().with_longitudinal_end(end);
+            let tie = located(ComponentRole::RollBearingCarrierEnd, end_location);
+            for side in [Side::Left, Side::Right] {
+                pairs.push((
+                    tie,
+                    located(
+                        ComponentRole::PitchGearboxFarPlate,
+                        ComponentLocation::new()
+                            .with_side(side)
+                            .with_longitudinal_end(end),
+                    ),
+                ));
+            }
+            let hub = located(ComponentRole::RollDrivenHub, end_location);
+            for ordinal in [1, 2] {
+                let arm = located(
+                    ComponentRole::MovingDriveMountArm,
+                    end_location.with_ordinal(ordinal),
+                );
+                pairs.push((hub, arm));
+                for plate_ordinal in [1, 2] {
+                    pairs.push((
+                        located(
+                            ComponentRole::RollGearboxPlate,
+                            end_location.with_ordinal(plate_ordinal),
+                        ),
+                        arm,
+                    ));
+                }
+            }
+        }
+        for (first, second) in pairs {
+            let volume = evaluator
+                .intersection_volume_transformed(
+                    instance_solid(&design, first),
+                    instance_pose(&design, first, 0.0, 0.0),
+                    instance_solid(&design, second),
+                    instance_pose(&design, second, 0.0, 0.0),
+                )
+                .expect("structural interference query succeeds");
+            assert!(
+                volume <= 1.0e-7,
+                "{first:?} intersects {second:?} by {volume} mm^3"
+            );
         }
     }
 
