@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 use crate::config::LoadedConfig;
-use crate::manifest::{optional_artifact_paths, staged_artifact_manifest};
+use crate::manifest::{generation_provenance, optional_artifact_paths, staged_artifact_manifest};
 use crate::output::{prepare_staging_output, publish_staging_output};
 use crate::validate::{
     require_valid_assembly, validate_assembly, validation_report_json, write_validation_report_to,
@@ -230,9 +230,11 @@ pub(crate) fn generate(
                 "reason": "mechanical assembly validation was intentionally not run for intermediate visualization"
             })
         });
+    let provenance = generation_provenance(workspace, mode == GenerationMode::PreviewOnly)?;
     let manifest = json!({
-        "schema_version": 3,
+        "schema_version": 4,
         "project": "pitch-roll cockpit attitude simulator prototype",
+        "provenance": provenance,
         "units": "millimeter",
         "status": if mode == GenerationMode::Validated {
             "validated unpowered concept geometry only; not load-rated"
