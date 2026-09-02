@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 use std::fmt::Write as _;
-use std::fs::File;
-use std::io::Write as _;
+use std::io::{Cursor, Seek, Write as IoWrite};
 use std::path::Path;
 
 use gimbal_core::TriangleMesh;
@@ -23,7 +22,8 @@ struct ThreeMfObject {
     triangles: Vec<[u32; 3]>,
 }
 
-pub fn write_3mf(parts: &[ExportPart], path: &Path) -> Result<(), ExportError> {
+/// Encodes an assembly as a deterministic, millimetre-based 3MF package.
+pub fn encode_3mf(parts: &[ExportPart]) -> Result<Vec<u8>, ExportError> {
     let objects = parts
         .iter()
         .map(|part| ThreeMfObject {
@@ -37,29 +37,38 @@ pub fn write_3mf(parts: &[ExportPart], path: &Path) -> Result<(), ExportError> {
             triangles: part.mesh.triangles.clone(),
         })
         .collect::<Vec<_>>();
-    write_package(&objects, path)
+    encode_package(&objects)
 }
 
+/// Writes the bytes produced by [`encode_3mf`] to a file.
+pub fn write_3mf(parts: &[ExportPart], path: &Path) -> Result<(), ExportError> {
+    std::fs::write(path, encode_3mf(parts)?)?;
+    Ok(())
+}
+
+/// Encodes one local-coordinate mesh as a deterministic 3MF package.
+pub fn encode_mesh_3mf(name: &str, mesh: &TriangleMesh) -> Result<Vec<u8>, ExportError> {
+    encode_package(&[ThreeMfObject {
+        name: name.to_string(),
+        vertices: mesh.vertices.clone(),
+        triangles: mesh.triangles.clone(),
+    }])
+}
+
+/// Writes the bytes produced by [`encode_mesh_3mf`] to a file.
 pub fn write_mesh_3mf(name: &str, mesh: &TriangleMesh, path: &Path) -> Result<(), ExportError> {
-    write_package(
-        &[ThreeMfObject {
-            name: name.to_string(),
-            vertices: mesh.vertices.clone(),
-            triangles: mesh.triangles.clone(),
-        }],
-        path,
-    )
+    std::fs::write(path, encode_mesh_3mf(name, mesh)?)?;
+    Ok(())
 }
 
-fn write_package(objects: &[ThreeMfObject], path: &Path) -> Result<(), ExportError> {
+fn encode_package(objects: &[ThreeMfObject]) -> Result<Vec<u8>, ExportError> {
     if objects.is_empty() {
         return Err(ExportError::ThreeMf(
             "a 3MF package must contain at least one object".to_string(),
         ));
     }
     let model_xml = model_xml(objects)?;
-    let file = File::create(path)?;
-    let mut archive = ZipWriter::new(file);
+    let mut archive = ZipWriter::new(Cursor::new(Vec::new()));
     let options = SimpleFileOptions::default()
         .compression_method(CompressionMethod::Deflated)
         .last_modified_time(DateTime::default());
@@ -71,14 +80,14 @@ fn write_package(objects: &[ThreeMfObject], path: &Path) -> Result<(), ExportErr
     )?;
     write_entry(&mut archive, "_rels/.rels", ROOT_RELATIONSHIPS_XML, options)?;
     write_entry(&mut archive, "3D/3dmodel.model", &model_xml, options)?;
-    archive
+    let cursor = archive
         .finish()
         .map_err(|error| ExportError::ThreeMf(error.to_string()))?;
-    Ok(())
+    Ok(cursor.into_inner())
 }
 
-fn write_entry(
-    archive: &mut ZipWriter<File>,
+fn write_entry<W: IoWrite + Seek>(
+    archive: &mut ZipWriter<W>,
     name: &str,
     contents: &str,
     options: SimpleFileOptions,
@@ -150,7 +159,7 @@ fn escape_xml_attribute(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Read;
+    use std::io::{Cursor, Read};
 
     use super::*;
 
@@ -162,13 +171,14 @@ mod tests {
             vertices: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
             triangles: vec![[0, 1, 2]],
         };
+        let encoded = encode_mesh_3mf("test & fixture", &mesh).unwrap();
         write_mesh_3mf("test & fixture", &mesh, &path).unwrap();
         let first_bytes = std::fs::read(&path).unwrap();
+        assert_eq!(first_bytes, encoded);
         write_mesh_3mf("test & fixture", &mesh, &path).unwrap();
         assert_eq!(first_bytes, std::fs::read(&path).unwrap());
 
-        let file = File::open(&path).unwrap();
-        let mut archive = zip::ZipArchive::new(file).unwrap();
+        let mut archive = zip::ZipArchive::new(Cursor::new(encoded)).unwrap();
         assert!(archive.by_name("[Content_Types].xml").is_ok());
         assert!(archive.by_name("_rels/.rels").is_ok());
         let mut model = String::new();

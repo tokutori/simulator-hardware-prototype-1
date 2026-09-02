@@ -10,8 +10,8 @@ use thiserror::Error;
 
 pub use dxf::{write_dxf_profile, write_dxf_sheet_profile};
 pub use gltf::{AnimationParameters, write_animated_gltf};
-pub use mesh_files::{write_binary_stl, write_obj};
-pub use three_mf::{write_3mf, write_mesh_3mf};
+pub use mesh_files::{EncodedObj, encode_binary_stl, encode_obj, write_binary_stl, write_obj};
+pub use three_mf::{encode_3mf, encode_mesh_3mf, write_3mf, write_mesh_3mf};
 
 #[derive(Clone, Debug)]
 pub struct ExportPart {
