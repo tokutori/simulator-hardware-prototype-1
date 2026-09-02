@@ -309,7 +309,7 @@ fn u32_bytes(values: &[u32]) -> Vec<u8> {
 fn position_bounds(positions: &[f32]) -> ([f32; 3], [f32; 3]) {
     let mut minimum = [f32::INFINITY; 3];
     let mut maximum = [f32::NEG_INFINITY; 3];
-    for vertex in positions.chunks_exact(3) {
+    for vertex in positions.as_chunks::<3>().0 {
         for axis in 0..3 {
             minimum[axis] = minimum[axis].min(vertex[axis]);
             maximum[axis] = maximum[axis].max(vertex[axis]);
