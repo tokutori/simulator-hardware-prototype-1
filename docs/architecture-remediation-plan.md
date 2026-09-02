@@ -49,6 +49,7 @@ gimbal-export -> gimbal-core
 | R-13 | Medium | public contractのrustdocが不足する | 単位、owner、検証範囲およびpanic条件を追跡しにくい |
 | R-14 | Low | command parse、helpおよびdispatchが文字列で分散する | command追加時に同期漏れが起きる |
 | R-15 | Low | remediation planが長期履歴を同時に保持する | 現在状態を探しにくい |
+| R-16 | High | generationが既存`output`へ直接書き、旧artifactを存在確認だけでmanifestへ再収録し得る | source、validation report、画像・動画の世代が混在する |
 
 ## 4. Phase計画
 
@@ -115,7 +116,7 @@ gimbal-cli/src/
 
 - `Command` enumへ境界でparseする。
 - `main()`はparseとdispatchだけにする。
-- SHA-256、artifact refreshおよびstagingをmanifest/output責務へ集約する。
+- SHA-256とartifact refreshをmanifest/output責務へ集約する。
 - command helpとdispatchのsource of truthを一つにする。
 
 ### A4: kernel validation分割
@@ -196,6 +197,8 @@ Exit criteria:
 - hash/manifest処理をexport crateからCLIへ移す。
 - glTF node extrasまたはrender manifestへrole、side、end、ordinal、subsystemを出す。
 - Blender adapterの旧prefixと撤去済み部品名を削除し、semantic metadataで選択する。
+- generation runごとのstaging directoryへ全artifactを生成し、成功時だけ`output`へatomicに置換する。
+- manifestへcommit SHA、design/process hash、producer、generation run IDおよびvalidation coverageを記録し、旧世代artifactを存在確認だけで再収録しない。
 
 ### A9: public contractとgate
 
@@ -242,3 +245,4 @@ Exit criteria:
 - 最初のLinux CIでRust 1.98の新しいClippy lintを検出し、MSRV 1.88でstableな`slice::as_chunks`へ修正した。Node.js 20非推奨のcheckout v4も公式v7.0.1のcommit SHA固定へ更新した。再run `33681538072`ではRust quality gatesとRustSec auditの両jobが成功した。
 - relation dispatcherの次の実装として`CylindricalFit`を追加し、datum origin、軸方向およびtarget radial clearanceをengineering toleranceで検証するようにした。正常、0.2 mm偏心、軸傾斜およびclearance不一致fixtureを追加し、未実装relationのcoverage testは`GearMesh`へ移した。
 - A7の最初のbehavior-preserving checkpointとして、汎用2D座標型`Point2`を`gear`から`geometry`へ移した。gear profileは下位のgeometry primitiveを利用する依存方向となり、generic geometryがgear domainへ意味上依存する逆転を解消した。ID moduleとgeneric coordinateへの整理は残るためA7は進行中とする。
+- 追加監査で指摘されたrepository構造上の課題をA6–A9へ対応付けた。次のbehavior-preserving順序は、(1) datum/instance IDへowner provenanceを持たせる、(2) generic `CoordinateId`へpitch/roll固定式を移す、(3) `ComponentRole`と不正な`ordinal`組合せを固有designのtyped keyへ移す、(4) exporterへin-memory encoderを追加する、(5) rustdocと公開前artifact gateを同期する、である。機械Phase 5–6の形状・relation変更と同一commitへ混ぜない。
