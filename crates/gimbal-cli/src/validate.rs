@@ -202,6 +202,38 @@ pub(crate) fn validation_report_json(design: &PrototypeDesign, report: &Validati
                         "minimum_area_mm2": minimum_area_mm2
                     }),
                 ),
+                ValidationIssueKind::PlaneClearanceSeparationMismatch {
+                    actual_mm,
+                    target_mm,
+                    allowed_mm,
+                } => (
+                    "plane_clearance_separation_mismatch",
+                    json!({
+                        "actual_mm": actual_mm,
+                        "target_mm": target_mm,
+                        "allowed_mm": allowed_mm
+                    }),
+                ),
+                ValidationIssueKind::PlaneClearanceNormalMismatch {
+                    error_radians,
+                    allowed_radians,
+                } => (
+                    "plane_clearance_normal_mismatch",
+                    json!({
+                        "error_radians": error_radians,
+                        "allowed_radians": allowed_radians
+                    }),
+                ),
+                ValidationIssueKind::PlaneClearanceAreaInsufficient {
+                    overlap_area_mm2,
+                    minimum_area_mm2,
+                } => (
+                    "plane_clearance_area_insufficient",
+                    json!({
+                        "overlap_area_mm2": overlap_area_mm2,
+                        "minimum_area_mm2": minimum_area_mm2
+                    }),
+                ),
                 ValidationIssueKind::CylindricalFitOriginSeparation {
                     distance_mm,
                     allowed_mm,
@@ -382,6 +414,7 @@ pub(crate) fn validation_report_json(design: &PrototypeDesign, report: &Validati
             let relation = &design.assembly.relations()[check.relation.index()];
             let kind = match relation {
                 gimbal_core::AssemblyRelation::SurfaceContact(_) => "surface-contact",
+                gimbal_core::AssemblyRelation::PlaneClearance(_) => "plane-clearance",
                 gimbal_core::AssemblyRelation::Fastened(_) => "fastened",
                 gimbal_core::AssemblyRelation::CylindricalFit(_) => "cylindrical-fit",
                 gimbal_core::AssemblyRelation::GearMesh(_) => "gear-mesh",

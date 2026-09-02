@@ -41,7 +41,7 @@ pub use manufacturing::{
 pub use relation::{
     AssemblyRelation, AssemblyRelationId, BoltHardware, CylindricalFit, DatumEndpoint,
     EngineeringTolerance, FastenedJoint, FastenerHardware, GearMesh, GearMeshKind, MetricThread,
-    NumericalTolerance, NutHardware, SurfaceContact, WasherHardware,
+    NumericalTolerance, NutHardware, PlaneClearance, SurfaceContact, WasherHardware,
 };
 pub use units::{
     Angle, Length, NonNegativeAngle, NonNegativeLength, PositiveAngle, PositiveArea,

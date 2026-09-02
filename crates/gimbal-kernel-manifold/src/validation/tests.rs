@@ -3,9 +3,9 @@ use gimbal_core::{
     ComponentLocation, ComponentRole, CylinderDatum, CylindricalFit, DatumEndpoint, DatumSet,
     EngineeringTolerance, FastenedJoint, FastenerHardware, FeatureBuilder, FrameGraph, GearMesh,
     GearMeshKind, Kinematics, Manufacturing, MetricThread, NonNegativeAngle, NonNegativeLength,
-    NumericalTolerance, NutHardware, PitchRollCommand, PlaneDatum, Point3, PositiveAngle,
-    PositiveArea, PositiveLength, PositiveVolume, Primitive3, RigidTransform, SurfaceContact,
-    UnitVector3,
+    NumericalTolerance, NutHardware, PitchRollCommand, PlaneClearance, PlaneDatum, Point3,
+    PositiveAngle, PositiveArea, PositiveLength, PositiveVolume, Primitive3, RigidTransform,
+    SurfaceContact, UnitVector3,
 };
 
 use super::*;
@@ -215,6 +215,123 @@ fn surface_contact_validates_semantic_planes_with_engineering_tolerance() {
         issue.kind,
         ValidationIssueKind::SurfaceContactSeparation { distance_mm, .. }
             if (distance_mm - 0.1).abs() < 1.0e-8
+    )));
+}
+
+#[test]
+fn plane_clearance_validates_separation_orientation_and_overlap() {
+    let mut builder = FeatureBuilder::new();
+    let cube = builder.primitive(Primitive3::Box {
+        x: gimbal_core::Length::positive_mm(10.0).expect("positive length"),
+        y: gimbal_core::Length::positive_mm(10.0).expect("positive length"),
+        z: gimbal_core::Length::positive_mm(10.0).expect("positive length"),
+        centered: true,
+    });
+    let graph = builder.finish();
+    let frames = FrameGraph::new();
+    let world = frames.world();
+    let pose = Kinematics::new(
+        frames,
+        Angle::degrees(1.0).expect("finite limit"),
+        Angle::degrees(1.0).expect("finite limit"),
+    )
+    .pose(PitchRollCommand {
+        pitch: Angle::degrees(0.0).expect("finite angle"),
+        roll: Angle::degrees(0.0).expect("finite angle"),
+    })
+    .expect("zero pose");
+
+    let report_for = |offset_x: f64, offset_y: f64, second_normal: [f64; 3]| {
+        let mut assembly = Assembly::new();
+        let mut first_datums = DatumSet::for_definition(assembly.next_definition_id());
+        let first_plane = first_datums.add(
+            "clearance_plane".into(),
+            PlaneDatum {
+                origin: Point3::from_mm([5.0, 0.0, 0.0]).expect("finite point"),
+                normal: UnitVector3::new([1.0, 0.0, 0.0]).expect("valid normal"),
+            },
+        );
+        let first_definition = assembly.add_definition(ComponentDefinition {
+            name: "first_stop".into(),
+            role: ComponentRole::FixedCrossmember,
+            body: Body::Solid(cube),
+            manufacturing: Manufacturing::Purchased,
+            color_rgba: [1.0; 4],
+            datums: first_datums,
+        });
+        let mut second_datums = DatumSet::for_definition(assembly.next_definition_id());
+        let second_plane = second_datums.add(
+            "clearance_plane".into(),
+            PlaneDatum {
+                origin: Point3::from_mm([-5.0, 0.0, 0.0]).expect("finite point"),
+                normal: UnitVector3::new(second_normal).expect("valid normal"),
+            },
+        );
+        let second_definition = assembly.add_definition(ComponentDefinition {
+            name: "second_stop".into(),
+            role: ComponentRole::FixedCarrierRail,
+            body: Body::Solid(cube),
+            manufacturing: Manufacturing::Purchased,
+            color_rgba: [1.0; 4],
+            datums: second_datums,
+        });
+        let first = assembly.add_instance(ComponentInstance {
+            name: "first_stop".into(),
+            definition: first_definition,
+            frame: world,
+            local_pose: RigidTransform::IDENTITY,
+            location: ComponentLocation::new(),
+        });
+        let second = assembly.add_instance(ComponentInstance {
+            name: "second_stop".into(),
+            definition: second_definition,
+            frame: world,
+            local_pose: RigidTransform::translated(offset_x, offset_y, 0.0),
+            location: ComponentLocation::new(),
+        });
+        assembly
+            .add_relation(AssemblyRelation::PlaneClearance(PlaneClearance {
+                first: DatumEndpoint::new(first, first_plane),
+                second: DatumEndpoint::new(second, second_plane),
+                target_separation: NonNegativeLength::mm(1.0).expect("non-negative clearance"),
+                minimum_overlap_area: PositiveArea::square_mm(50.0).expect("positive overlap area"),
+                tolerance: EngineeringTolerance {
+                    linear: NonNegativeLength::mm(0.01).expect("valid tolerance"),
+                    angular: NonNegativeAngle::degrees(0.1).expect("valid tolerance"),
+                },
+            }))
+            .expect("valid clearance relation");
+        AssemblyValidator::new(&graph, &assembly, &pose, settings())
+            .validate()
+            .expect("validation query succeeds")
+    };
+
+    assert!(report_for(11.0, 0.0, [-1.0, 0.0, 0.0]).is_valid());
+
+    let wrong_gap = report_for(11.2, 0.0, [-1.0, 0.0, 0.0]);
+    assert!(wrong_gap.issues.iter().any(|issue| matches!(
+        issue.kind,
+        ValidationIssueKind::PlaneClearanceSeparationMismatch {
+            actual_mm,
+            target_mm,
+            ..
+        } if (actual_mm - 1.2).abs() < 1.0e-8 && (target_mm - 1.0).abs() < 1.0e-8
+    )));
+
+    let wrong_normal = report_for(11.0, 0.0, [1.0, 0.0, 0.0]);
+    assert!(wrong_normal.issues.iter().any(|issue| matches!(
+        issue.kind,
+        ValidationIssueKind::PlaneClearanceNormalMismatch { .. }
+    )));
+
+    let insufficient_overlap = report_for(11.0, 6.0, [-1.0, 0.0, 0.0]);
+    assert!(insufficient_overlap.issues.iter().any(|issue| matches!(
+        issue.kind,
+        ValidationIssueKind::PlaneClearanceAreaInsufficient {
+            overlap_area_mm2,
+            minimum_area_mm2,
+        } if (overlap_area_mm2 - 40.0).abs() < 1.0e-8
+            && (minimum_area_mm2 - 50.0).abs() < 1.0e-8
     )));
 }
 

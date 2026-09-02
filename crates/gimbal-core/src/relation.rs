@@ -49,6 +49,15 @@ pub struct SurfaceContact {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlaneClearance {
+    pub first: DatumEndpoint<PlaneDatum>,
+    pub second: DatumEndpoint<PlaneDatum>,
+    pub target_separation: NonNegativeLength,
+    pub minimum_overlap_area: PositiveArea,
+    pub tolerance: EngineeringTolerance,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CylindricalFit {
     pub shaft: DatumEndpoint<CylinderDatum>,
     pub bore: DatumEndpoint<CylinderDatum>,
@@ -147,6 +156,7 @@ pub struct GearMesh {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum AssemblyRelation {
     SurfaceContact(SurfaceContact),
+    PlaneClearance(PlaneClearance),
     Fastened(FastenedJoint),
     CylindricalFit(CylindricalFit),
     GearMesh(GearMesh),
@@ -186,6 +196,24 @@ impl AssemblyRelation {
             Self::SurfaceContact(contact) => [
                 Some(erased(contact.first, DatumKind::Plane)),
                 Some(erased(contact.second, DatumKind::Plane)),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ],
+            Self::PlaneClearance(clearance) => [
+                Some(erased(clearance.first, DatumKind::Plane)),
+                Some(erased(clearance.second, DatumKind::Plane)),
                 None,
                 None,
                 None,
@@ -315,6 +343,9 @@ impl AssemblyRelation {
     pub(crate) const fn instance_pair(self) -> [ComponentInstanceId; 2] {
         match self {
             Self::SurfaceContact(contact) => [contact.first.instance, contact.second.instance],
+            Self::PlaneClearance(clearance) => {
+                [clearance.first.instance, clearance.second.instance]
+            }
             Self::Fastened(joint) => [joint.first_hole.instance, joint.second_hole.instance],
             Self::CylindricalFit(fit) => [fit.shaft.instance, fit.bore.instance],
             Self::GearMesh(mesh) => [mesh.first_axis.instance, mesh.second_axis.instance],

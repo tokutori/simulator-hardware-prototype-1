@@ -37,6 +37,19 @@ pub enum ValidationIssueKind {
         contact_area_mm2: f64,
         minimum_area_mm2: f64,
     },
+    PlaneClearanceSeparationMismatch {
+        actual_mm: f64,
+        target_mm: f64,
+        allowed_mm: f64,
+    },
+    PlaneClearanceNormalMismatch {
+        error_radians: f64,
+        allowed_radians: f64,
+    },
+    PlaneClearanceAreaInsufficient {
+        overlap_area_mm2: f64,
+        minimum_area_mm2: f64,
+    },
     CylindricalFitOriginSeparation {
         distance_mm: f64,
         allowed_mm: f64,

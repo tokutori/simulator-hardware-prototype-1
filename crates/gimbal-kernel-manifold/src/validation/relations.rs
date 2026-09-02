@@ -7,8 +7,8 @@ use super::{
 use crate::transform;
 use gimbal_core::{
     Assembly, AssemblyRelation, AssemblyRelationId, AxisDatum, ComponentInstanceId,
-    ComponentInstancePair, CylinderDatum, CylindricalFit, DatumEndpoint, FastenedJoint, PlaneDatum,
-    SurfaceContact,
+    ComponentInstancePair, CylinderDatum, CylindricalFit, DatumEndpoint, FastenedJoint,
+    PlaneClearance, PlaneDatum, SurfaceContact,
 };
 use manifold_rust::manifold::Manifold;
 
@@ -24,6 +24,9 @@ impl AssemblyValidator<'_> {
                 let status = match *relation {
                     AssemblyRelation::SurfaceContact(contact) => {
                         self.validate_surface_contact(relation_id, contact, instances, issues)
+                    }
+                    AssemblyRelation::PlaneClearance(clearance) => {
+                        self.validate_plane_clearance(relation_id, clearance, instances, issues)
                     }
                     AssemblyRelation::Fastened(joint) => {
                         self.validate_fastened_joint(relation_id, joint, instances, issues)
@@ -184,6 +187,89 @@ impl AssemblyValidator<'_> {
                     relation: Some(relation_id),
                     kind: ValidationIssueKind::SurfaceContactAreaInsufficient {
                         contact_area_mm2,
+                        minimum_area_mm2,
+                    },
+                });
+            }
+        }
+        relation_status_after(initial_issue_count, issues)
+    }
+
+    fn validate_plane_clearance(
+        &self,
+        relation_id: AssemblyRelationId,
+        clearance: PlaneClearance,
+        instances: &[Option<InstanceGeometry>],
+        issues: &mut Vec<ValidationIssue>,
+    ) -> RelationValidationStatus {
+        let initial_issue_count = issues.len();
+        let pair = ComponentInstancePair {
+            first: clearance.first.instance,
+            second: clearance.second.instance,
+        };
+        let (Some(first_geometry), Some(second_geometry)) = (
+            instances[pair.first.index()].as_ref(),
+            instances[pair.second.index()].as_ref(),
+        ) else {
+            return RelationValidationStatus::SkippedByScope;
+        };
+        let first = world_plane(clearance.first, self.assembly, instances);
+        let second = world_plane(clearance.second, self.assembly, instances);
+        let delta = subtract(second.origin, first.origin);
+        let actual_mm = dot(first.normal, delta).abs();
+        let target_mm = clearance.target_separation.as_mm();
+        let allowed_mm = clearance.tolerance.linear.as_mm();
+        if (actual_mm - target_mm).abs() > allowed_mm {
+            issues.push(ValidationIssue {
+                severity: ValidationSeverity::Error,
+                pair: Some(pair),
+                relation: Some(relation_id),
+                kind: ValidationIssueKind::PlaneClearanceSeparationMismatch {
+                    actual_mm,
+                    target_mm,
+                    allowed_mm,
+                },
+            });
+        }
+
+        let opposed_dot = (-dot(first.normal, second.normal)).clamp(-1.0, 1.0);
+        let error_radians = opposed_dot.acos();
+        let allowed_radians = clearance.tolerance.angular.as_radians();
+        let normals_match = error_radians <= allowed_radians;
+        if !normals_match {
+            issues.push(ValidationIssue {
+                severity: ValidationSeverity::Error,
+                pair: Some(pair),
+                relation: Some(relation_id),
+                kind: ValidationIssueKind::PlaneClearanceNormalMismatch {
+                    error_radians,
+                    allowed_radians,
+                },
+            });
+        }
+        if normals_match {
+            let overlap_area_mm2 = contact_area(
+                &first_geometry.solid,
+                &second_geometry.solid,
+                first,
+                second,
+                self.settings.numerical_tolerance.linear_epsilon.as_mm(),
+            );
+            let minimum_area_mm2 = clearance.minimum_overlap_area.as_square_mm();
+            if overlap_area_mm2
+                + self
+                    .settings
+                    .numerical_tolerance
+                    .area_epsilon
+                    .as_square_mm()
+                < minimum_area_mm2
+            {
+                issues.push(ValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    pair: Some(pair),
+                    relation: Some(relation_id),
+                    kind: ValidationIssueKind::PlaneClearanceAreaInsufficient {
+                        overlap_area_mm2,
                         minimum_area_mm2,
                     },
                 });
