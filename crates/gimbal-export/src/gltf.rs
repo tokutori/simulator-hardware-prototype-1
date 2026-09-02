@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::Path;
 
 use gimbal_core::{Angle, Kinematics, PitchRollCommand};
@@ -18,6 +17,27 @@ pub struct AnimationParameters {
     pub sample_count: usize,
 }
 
+/// In-memory glTF JSON and its external binary buffer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EncodedGltf {
+    pub gltf: Vec<u8>,
+    pub bin: Vec<u8>,
+}
+
+/// Encodes an animated assembly as glTF JSON and an external binary buffer.
+///
+/// `bin_name` is written to the glTF buffer URI and should match the filename
+/// used when the returned `bin` bytes are persisted.
+pub fn encode_animated_gltf(
+    parts: &[ExportPart],
+    kinematics: &Kinematics,
+    parameters: AnimationParameters,
+    bin_name: &str,
+) -> Result<EncodedGltf, ExportError> {
+    encode_animated_gltf_impl(parts, kinematics, parameters, bin_name)
+}
+
+/// Writes the bytes produced by [`encode_animated_gltf`] to a glTF/bin pair.
 pub fn write_animated_gltf(
     parts: &[ExportPart],
     kinematics: &Kinematics,
@@ -25,6 +45,22 @@ pub fn write_animated_gltf(
     gltf_path: &Path,
     bin_path: &Path,
 ) -> Result<(), ExportError> {
+    let bin_name = bin_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("gimbal-motion.bin");
+    let encoded = encode_animated_gltf(parts, kinematics, parameters, bin_name)?;
+    std::fs::write(bin_path, encoded.bin)?;
+    std::fs::write(gltf_path, encoded.gltf)?;
+    Ok(())
+}
+
+fn encode_animated_gltf_impl(
+    parts: &[ExportPart],
+    kinematics: &Kinematics,
+    parameters: AnimationParameters,
+    bin_name: &str,
+) -> Result<EncodedGltf, ExportError> {
     let mut binary = BinaryBuilder::default();
     let mut buffer_views = Vec::<Value>::new();
     let mut accessors = Vec::<Value>::new();
@@ -184,10 +220,6 @@ pub fn write_animated_gltf(
         );
     }
 
-    let bin_name = bin_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("gimbal-motion.bin");
     let document = json!({
         "asset": { "version": "2.0", "generator": "gimbal-export 0.1.0" },
         "scene": 0,
@@ -204,9 +236,10 @@ pub fn write_animated_gltf(
             "channels": channels
         }]
     });
-    fs::write(bin_path, &binary.bytes)?;
-    fs::write(gltf_path, serde_json::to_vec_pretty(&document)?)?;
-    Ok(())
+    Ok(EncodedGltf {
+        gltf: serde_json::to_vec_pretty(&document)?,
+        bin: binary.bytes,
+    })
 }
 
 fn motion_samples(parameters: AnimationParameters) -> Vec<(f32, f64, f64)> {
@@ -356,6 +389,7 @@ fn core_rotation_to_gltf(rotation: [f64; 4]) -> [f32; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gimbal_core::FrameGraph;
 
     #[test]
     fn converts_z_up_millimetres_to_gltf_y_up_metres() {
@@ -407,5 +441,32 @@ mod tests {
         assert_eq!(extras["longitudinal_end"], "front");
         assert!(extras["vertical_end"].is_null());
         assert_eq!(extras["ordinal"], 2);
+    }
+
+    #[test]
+    fn animated_gltf_encoder_matches_filesystem_wrapper() {
+        let kinematics = Kinematics::new(
+            FrameGraph::new(),
+            Angle::degrees(20.0).unwrap(),
+            Angle::degrees(35.0).unwrap(),
+        );
+        let parameters = AnimationParameters {
+            pitch_limit_degrees: 20.0,
+            roll_limit_degrees: 35.0,
+            duration_seconds: 1.0,
+            sample_count: 5,
+        };
+        let encoded = encode_animated_gltf(&[], &kinematics, parameters, "fixture.bin").unwrap();
+        let directory =
+            std::env::temp_dir().join(format!("gimbal-export-{}-gltf-encoder", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let gltf_path = directory.join("fixture.gltf");
+        let bin_path = directory.join("fixture.bin");
+
+        write_animated_gltf(&[], &kinematics, parameters, &gltf_path, &bin_path).unwrap();
+
+        assert_eq!(std::fs::read(&gltf_path).unwrap(), encoded.gltf);
+        assert_eq!(std::fs::read(&bin_path).unwrap(), encoded.bin);
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }
