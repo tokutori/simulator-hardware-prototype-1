@@ -420,9 +420,22 @@ def main() -> None:
                 "RollGearboxShaft",
                 "RollGearboxPlate",
                 "MovingDriveMountArm",
+                "RollBearingCarrierEnd",
+                "RollBearing",
+                "RollBearingRetainer",
             )
         ),
         longitudinal_end="front",
+    )
+    roll_gearbox.extend(
+        obj
+        for obj in meshes
+        if matches_semantics(
+            obj,
+            roles=frozenset(("M3Bolt", "M3Nut", "M3Washer")),
+            longitudinal_end="front",
+        )
+        and obj.get("side") is None
     )
     pitch_sector_reinforcement = select_semantic(
         meshes,
