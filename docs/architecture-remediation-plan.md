@@ -59,8 +59,8 @@ gimbal-export -> gimbal-core
 | A0 | baseline、境界、振舞い固定方法の記録 | 完了 | Phase 4と並行 |
 | A1 | relation validationの網羅性とdispatcher分離 | 完了 | Phase 4完了前 |
 | A2 | CLI integration testの外部化 | 完了 | Phase 5前 |
-| A3 | CLIをcommand/generate/validate/manifestへ分割 | 進行中 | Phase 5前 |
-| A4 | kernel validationをreport/interference/relationsへ分割 | 未着手 | Phase 5前 |
+| A3 | CLIをcommand/generate/validate/manifestへ分割 | 完了 | Phase 5前 |
+| A4 | kernel validationをreport/interference/relationsへ分割 | 進行中 | Phase 5前 |
 | A5 | prototypeをsubsystem別moduleへ分割しDefinitionsをgroup化 | 未着手 | Phase 5前 |
 | A6 | `geared-gimbal-design` crateを追加し固有設計を移す | 未着手 | Phase 6前 |
 | A7 | generic identity、coordinateおよびmodule依存方向を整理 | 未着手 | Phase 6と並行 |
@@ -224,3 +224,6 @@ Exit criteria:
 - CLI reportは`structural-proxy`または`exact`のgeometry fidelityと、`static-pose`のmotion coverageを別fieldで出力する。A1のexit criteriaを満たしたためA1を完了した。
 - A2として、repository既定設計の21 integration testsを`crates/gimbal-cli/tests/default_design.rs`へ移した。CLI packageへlibrary targetを追加し、binary `main.rs`は`gimbal_cli::run()`の結果をprocess exitへ変換する8行だけにした。
 - test移動後もtest名と検査内容を維持し、`cargo test -p gimbal-cli --no-run`とwarning-as-error Clippyでbinary、library、外部integration testの3 targetが成功した。A2を完了し、A3を進行中へ変更した。
+- A3として、CLI libraryを`command`、`generate`、`validate`、`manifest`、`output`へ分割した。`lib.rs`はconfiguration読込みとtyped command dispatchだけを担い、`main.rs`はprocess boundaryだけを担う。
+- command文字列を境界で`Command` enumへ一度だけ変換し、default command、全subcommand、helpおよびunknown commandをunit testで固定した。helpは各validation commandが`structural-proxy/static-pose`または`exact/static-pose`であることを明示する。
+- `generate.rs`はartifact生成、`validate.rs`はvalidator orchestrationとreport、`manifest.rs`はhash/refresh、`output.rs`は出力directoryの削除だけを担当する。A3を完了し、A4を進行中へ変更した。

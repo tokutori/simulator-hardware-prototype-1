@@ -149,15 +149,18 @@ FeatureGraph + Assembly + Kinematics
   -> manifest with hashes
 ```
 
-commandは次の3個である。
+commandのauthorityは`gimbal help`である。現在のcommandは次である。
 
 ```text
-gimbal generate
-gimbal validate
-gimbal clean-output
+generate           exact static validation後にartifactを生成
+generate-preview   未検証preview artifactを生成
+validate           structural proxyをstatic poseで検査
+validate-full      exact geometryをstatic poseで検査
+refresh-manifest   既存artifactのhashを更新
+clean-output       output directoryを削除
 ```
 
-`clean-output` はcanonicalizeしたworkspace直下の `output` だけを削除する。
+`validate-full`の`full`は高精細geometryを含むことを表すhistorical command名であり、全可動域を意味しない。structured reportはgeometry fidelityとmotion coverageを別fieldで出力する。`clean-output` はcanonicalizeしたworkspace直下の `output` だけを削除する。
 
 ## 7. Manufacturing境界
 
