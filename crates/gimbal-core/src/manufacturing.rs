@@ -76,6 +76,7 @@ pub enum ComponentRole {
     RollGearboxLargeGear,
     RollGearboxShaft,
     RollBearing,
+    RollBearingRetainer,
     RollGearboxPlate,
     MovingDriveMountArm,
     M3Bolt,

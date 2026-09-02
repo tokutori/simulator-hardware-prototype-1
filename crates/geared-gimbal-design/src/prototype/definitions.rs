@@ -23,6 +23,13 @@ pub(super) struct FastenerMemberDatums {
 }
 
 #[derive(Clone, Copy)]
+pub(super) struct AxialFastenerDatums {
+    pub(super) hole: DatumId<CylinderDatum>,
+    pub(super) negative_x_seat: DatumId<PlaneDatum>,
+    pub(super) positive_x_seat: DatumId<PlaneDatum>,
+}
+
+#[derive(Clone, Copy)]
 pub(super) struct PostFastenerDatums {
     pub(super) hole: DatumId<CylinderDatum>,
 }
@@ -86,6 +93,9 @@ pub(super) struct CarrierEndDatums {
     pub(super) rail_face: DatumId<PlaneDatum>,
     pub(super) arm_face: DatumId<PlaneDatum>,
     pub(super) bearing_bore: DatumId<CylinderDatum>,
+    pub(super) bearing_shoulder_face: DatumId<PlaneDatum>,
+    pub(super) outer_face: DatumId<PlaneDatum>,
+    pub(super) retainer_fasteners: [AxialFastenerDatums; 3],
 }
 
 #[derive(Clone, Copy)]
@@ -98,6 +108,15 @@ pub(super) struct RollShaftDatums {
 pub(super) struct RollBearingDatums {
     pub(super) inner_bore: DatumId<CylinderDatum>,
     pub(super) outer_surface: DatumId<CylinderDatum>,
+    pub(super) negative_x_face: DatumId<PlaneDatum>,
+    pub(super) positive_x_face: DatumId<PlaneDatum>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct RollBearingRetainerDatums {
+    pub(super) carrier_face: DatumId<PlaneDatum>,
+    pub(super) bearing_face: DatumId<PlaneDatum>,
+    pub(super) fasteners: [AxialFastenerDatums; 3],
 }
 
 #[derive(Clone, Copy)]
@@ -161,6 +180,7 @@ pub(super) struct RollDefinitions {
     pub(super) roll_gearbox_large: ComponentDefinitionId,
     pub(super) roll_gearbox_shaft: ComponentDefinitionId,
     pub(super) roll_bearing: Defined<RollBearingDatums>,
+    pub(super) roll_bearing_retainer: Defined<RollBearingRetainerDatums>,
     pub(super) roll_gearbox_plate: Defined<RollGearboxPlateDatums>,
     pub(super) moving_drive_mount_arm: Defined<MovingArmDatums>,
 }
@@ -450,14 +470,22 @@ pub(super) fn build_definitions(
     let front_bearing_surface = add_cylinder_datum(
         &mut roll_shaft_datums,
         "front_bearing_surface",
-        [p.roll_axis.bearing_station.mm(), 0.0, 0.0],
+        [
+            p.roll_axis.bearing_station.mm() + roll_bearing_center_offset_x(p),
+            0.0,
+            0.0,
+        ],
         [1.0, 0.0, 0.0],
         p.roll_axis.shaft_radius.mm(),
     );
     let rear_bearing_surface = add_cylinder_datum(
         &mut roll_shaft_datums,
         "rear_bearing_surface",
-        [-p.roll_axis.bearing_station.mm(), 0.0, 0.0],
+        [
+            -p.roll_axis.bearing_station.mm() - roll_bearing_center_offset_x(p),
+            0.0,
+            0.0,
+        ],
         [1.0, 0.0, 0.0],
         p.roll_axis.shaft_radius.mm(),
     );
@@ -539,10 +567,45 @@ pub(super) fn build_definitions(
     let roll_bearing_carrier_bore = add_cylinder_datum(
         &mut carrier_end_datums,
         "bearing_bore",
-        [0.0, 0.0, 0.0],
+        [roll_bearing_center_offset_x(p), 0.0, 0.0],
         [1.0, 0.0, 0.0],
         p.roll_axis.bearing_outer_radius.mm() + roll_bearing_carrier_radial_clearance_mm(),
     );
+    let roll_bearing_carrier_shoulder_face = add_plane_datum(
+        &mut carrier_end_datums,
+        "bearing_shoulder_face",
+        [roll_bearing_inner_face_x(p), 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+    );
+    let carrier_half_thickness = p.frame.bearing_pedestal_thickness.mm() * 0.5;
+    let roll_bearing_carrier_outer_face = add_plane_datum(
+        &mut carrier_end_datums,
+        "retainer_contact_face",
+        [carrier_half_thickness, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+    );
+    let roll_bearing_carrier_fasteners =
+        roll_bearing_retainer_hole_centres(p).map(|[y, z]| AxialFastenerDatums {
+            hole: add_cylinder_datum(
+                &mut carrier_end_datums,
+                "retainer_m3_hole",
+                [0.0, y, z],
+                [1.0, 0.0, 0.0],
+                m3_clearance_radius_mm(),
+            ),
+            negative_x_seat: add_plane_datum(
+                &mut carrier_end_datums,
+                "retainer_m3_negative_x_seat",
+                [-carrier_half_thickness, y, z],
+                [-1.0, 0.0, 0.0],
+            ),
+            positive_x_seat: add_plane_datum(
+                &mut carrier_end_datums,
+                "retainer_m3_positive_x_seat",
+                [carrier_half_thickness, y, z],
+                [1.0, 0.0, 0.0],
+            ),
+        });
     let roll_bearing_carrier_end = add_solid_definition_with_datums(
         assembly,
         "roll_bearing_carrier_end",
@@ -567,6 +630,18 @@ pub(super) fn build_definitions(
         [1.0, 0.0, 0.0],
         p.roll_axis.bearing_outer_radius.mm(),
     );
+    let roll_bearing_negative_x_face = add_plane_datum(
+        &mut roll_bearing_datums,
+        "negative_x_face",
+        [-p.roll_axis.bearing_width.mm() * 0.5, 0.0, 0.0],
+        [-1.0, 0.0, 0.0],
+    );
+    let roll_bearing_positive_x_face = add_plane_datum(
+        &mut roll_bearing_datums,
+        "positive_x_face",
+        [p.roll_axis.bearing_width.mm() * 0.5, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+    );
     let roll_bearing = add_solid_definition_with_datums(
         assembly,
         "roll_shaft_bearing",
@@ -580,6 +655,51 @@ pub(super) fn build_definitions(
         Manufacturing::Purchased,
         [0.48, 0.52, 0.56, 1.0],
         roll_bearing_datums,
+    );
+    let mut roll_bearing_retainer_datums = DatumSet::for_definition(assembly.next_definition_id());
+    let retainer_half_thickness = roll_bearing_retainer_thickness_mm() * 0.5;
+    let roll_bearing_retainer_carrier_face = add_plane_datum(
+        &mut roll_bearing_retainer_datums,
+        "carrier_contact_face",
+        [-retainer_half_thickness, 0.0, 0.0],
+        [-1.0, 0.0, 0.0],
+    );
+    let roll_bearing_retainer_bearing_face = add_plane_datum(
+        &mut roll_bearing_retainer_datums,
+        "bearing_contact_face",
+        [-retainer_half_thickness, 0.0, 0.0],
+        [-1.0, 0.0, 0.0],
+    );
+    let roll_bearing_retainer_fasteners =
+        roll_bearing_retainer_hole_centres(p).map(|[y, z]| AxialFastenerDatums {
+            hole: add_cylinder_datum(
+                &mut roll_bearing_retainer_datums,
+                "carrier_m3_hole",
+                [0.0, y, z],
+                [1.0, 0.0, 0.0],
+                m3_clearance_radius_mm(),
+            ),
+            negative_x_seat: add_plane_datum(
+                &mut roll_bearing_retainer_datums,
+                "carrier_m3_negative_x_seat",
+                [-retainer_half_thickness, y, z],
+                [-1.0, 0.0, 0.0],
+            ),
+            positive_x_seat: add_plane_datum(
+                &mut roll_bearing_retainer_datums,
+                "carrier_m3_positive_x_seat",
+                [retainer_half_thickness, y, z],
+                [1.0, 0.0, 0.0],
+            ),
+        });
+    let roll_bearing_retainer = add_solid_definition_with_datums(
+        assembly,
+        "roll_bearing_retainer",
+        ComponentRole::RollBearingRetainer,
+        roll_bearing_retainer_solid(builder, p)?,
+        fdm,
+        [0.40, 0.24, 0.12, 1.0],
+        roll_bearing_retainer_datums,
     );
     let mut roll_gearbox_plate_datums = DatumSet::for_definition(assembly.next_definition_id());
     let roll_gearbox_plate_negative_x = add_plane_datum(
@@ -700,6 +820,9 @@ pub(super) fn build_definitions(
                     rail_face: roll_bearing_carrier_end_rail_face,
                     arm_face: roll_bearing_carrier_end_arm_face,
                     bearing_bore: roll_bearing_carrier_bore,
+                    bearing_shoulder_face: roll_bearing_carrier_shoulder_face,
+                    outer_face: roll_bearing_carrier_outer_face,
+                    retainer_fasteners: roll_bearing_carrier_fasteners,
                 },
             },
             cockpit: Defined {
@@ -731,6 +854,16 @@ pub(super) fn build_definitions(
                 datums: RollBearingDatums {
                     inner_bore: roll_bearing_inner_bore,
                     outer_surface: roll_bearing_outer_surface,
+                    negative_x_face: roll_bearing_negative_x_face,
+                    positive_x_face: roll_bearing_positive_x_face,
+                },
+            },
+            roll_bearing_retainer: Defined {
+                id: roll_bearing_retainer,
+                datums: RollBearingRetainerDatums {
+                    carrier_face: roll_bearing_retainer_carrier_face,
+                    bearing_face: roll_bearing_retainer_bearing_face,
+                    fasteners: roll_bearing_retainer_fasteners,
                 },
             },
             roll_gearbox_plate: Defined {

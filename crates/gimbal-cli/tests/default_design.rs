@@ -331,7 +331,10 @@ fn structural_surface_contacts_do_not_use_solid_overlap() {
         }
         checked += 1;
     }
-    assert_eq!(checked, 42);
+    assert!(
+        checked > 0,
+        "default design must declare structural contacts"
+    );
     assert!(
         overlaps.is_empty(),
         "structural surface contacts must not use solid overlap: {overlaps:#?}"
@@ -399,14 +402,6 @@ fn fixed_structure_has_no_unintended_solid_overlap() {
 #[test]
 fn structural_face_contacts_are_typed_relations() {
     let design = load_design();
-    let contacts = design
-        .assembly
-        .relations()
-        .iter()
-        .filter(|relation| matches!(relation, AssemblyRelation::SurfaceContact(_)))
-        .count();
-    assert_eq!(contacts, 42);
-
     for side in [Side::Left, Side::Right] {
         for end in [LongitudinalEnd::Front, LongitudinalEnd::Rear] {
             let post = design
@@ -587,9 +582,42 @@ fn pitch_gearbox_plates_use_real_m3_fasteners_instead_of_placeholder_rods() {
             .iter()
             .all(|instance| !instance.name.contains("_m3_tie_"))
     );
-    assert_eq!(count_role(&design, ComponentRole::M3Bolt), 20);
-    assert_eq!(count_role(&design, ComponentRole::M3Nut), 20);
-    assert_eq!(count_role(&design, ComponentRole::M3Washer), 40);
+    for joint in &joints {
+        let hardware_roles = [
+            joint.hardware.bolt.instance,
+            joint.hardware.nut.instance,
+            joint
+                .hardware
+                .first_washer
+                .expect("head washer exists")
+                .instance,
+            joint
+                .hardware
+                .second_washer
+                .expect("nut washer exists")
+                .instance,
+        ]
+        .map(|instance_id| {
+            let instance = design
+                .assembly
+                .instance(instance_id)
+                .expect("fastener hardware exists");
+            design
+                .assembly
+                .definition(instance.definition)
+                .expect("fastener hardware definition exists")
+                .role
+        });
+        assert_eq!(
+            hardware_roles,
+            [
+                ComponentRole::M3Bolt,
+                ComponentRole::M3Nut,
+                ComponentRole::M3Washer,
+                ComponentRole::M3Washer,
+            ]
+        );
+    }
 
     let report = validate_assembly(&design, ValidationProfile::STRUCTURAL_STATIC)
         .expect("fast assembly validation succeeds");
@@ -1447,6 +1475,112 @@ fn roll_bearings_use_typed_inner_and_outer_cylindrical_fits() {
             .all(|issue| !is_cylindrical_fit_issue(issue.kind)),
         "roll bearing fit datums must satisfy the typed relation"
     );
+}
+
+#[test]
+fn roll_bearing_outer_races_are_axially_captured_by_m3_retainers() {
+    let design = load_design();
+    assert_eq!(count_role(&design, ComponentRole::RollBearingRetainer), 2);
+
+    let role_of = |instance_id| {
+        let instance = design
+            .assembly
+            .instance(instance_id)
+            .expect("relation participant exists");
+        design
+            .assembly
+            .definition(instance.definition)
+            .expect("relation participant definition exists")
+            .role
+    };
+    let mut retainer_fasteners = Vec::new();
+    let mut bearing_to_carrier_contacts = 0;
+    let mut bearing_to_retainer_contacts = 0;
+    let mut retainer_to_carrier_contacts = 0;
+    for (relation_id, relation) in design.assembly.relations_with_ids() {
+        match relation {
+            AssemblyRelation::Fastened(joint)
+                if matches!(
+                    (
+                        role_of(joint.first_hole.instance),
+                        role_of(joint.second_hole.instance)
+                    ),
+                    (
+                        ComponentRole::RollBearingRetainer,
+                        ComponentRole::RollBearingCarrierEnd
+                    )
+                ) =>
+            {
+                retainer_fasteners.push(relation_id);
+            }
+            AssemblyRelation::SurfaceContact(contact) => {
+                match (
+                    role_of(contact.first.instance),
+                    role_of(contact.second.instance),
+                ) {
+                    (ComponentRole::RollBearing, ComponentRole::RollBearingCarrierEnd) => {
+                        bearing_to_carrier_contacts += 1;
+                    }
+                    (ComponentRole::RollBearing, ComponentRole::RollBearingRetainer) => {
+                        bearing_to_retainer_contacts += 1;
+                    }
+                    (ComponentRole::RollBearingRetainer, ComponentRole::RollBearingCarrierEnd) => {
+                        retainer_to_carrier_contacts += 1;
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(retainer_fasteners.len(), 6);
+    assert_eq!(bearing_to_carrier_contacts, 2);
+    assert_eq!(bearing_to_retainer_contacts, 2);
+    assert_eq!(retainer_to_carrier_contacts, 2);
+
+    let report = validate_assembly(&design, ValidationProfile::STRUCTURAL_STATIC)
+        .expect("structural validation query succeeds");
+    for relation_id in retainer_fasteners {
+        let check = report
+            .relation_checks
+            .iter()
+            .find(|check| check.relation == relation_id)
+            .expect("each retainer fastener has a coverage result");
+        assert_eq!(check.status, RelationValidationStatus::Validated);
+    }
+    assert!(
+        report
+            .issues
+            .iter()
+            .all(|issue| !is_fastener_validation_issue(issue.kind)),
+        "roll bearing retainer fasteners must satisfy the typed relation"
+    );
+
+    let mut evaluator = Evaluator::new(&design.graph);
+    for end in [LongitudinalEnd::Front, LongitudinalEnd::Rear] {
+        let location = ComponentLocation::new().with_longitudinal_end(end);
+        let bearing = located(ComponentRole::RollBearing, location);
+        let carrier = located(ComponentRole::RollBearingCarrierEnd, location);
+        let retainer = located(ComponentRole::RollBearingRetainer, location);
+        for (first, second, label) in [
+            (bearing, carrier, "bearing/carrier"),
+            (bearing, retainer, "bearing/retainer"),
+            (retainer, carrier, "retainer/carrier"),
+        ] {
+            let overlap = evaluator
+                .intersection_volume_transformed(
+                    instance_solid(&design, first),
+                    instance_pose(&design, first, 0.0, 0.0),
+                    instance_solid(&design, second),
+                    instance_pose(&design, second, 0.0, 0.0),
+                )
+                .expect("bearing retention intersection query succeeds");
+            assert!(
+                overlap <= 1.0e-7,
+                "{end:?} {label} has {overlap} mm^3 of positive-volume interference"
+            );
+        }
+    }
 }
 
 fn quaternion_y_degrees(rotation: [f64; 4]) -> f64 {

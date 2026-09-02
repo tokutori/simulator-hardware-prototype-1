@@ -203,13 +203,28 @@ pub(super) fn build_roll_assembly(
     for (end, outward) in [(LongitudinalEnd::Front, 1.0), (LongitudinalEnd::Rear, -1.0)] {
         let location = ComponentLocation::new().with_longitudinal_end(end);
         let end = end.as_str();
-        let x = outward * p.roll_axis.bearing_station.mm();
+        let end_rotation = if outward > 0.0 { 0.0 } else { PI };
+        let x = outward * (p.roll_axis.bearing_station.mm() + roll_bearing_center_offset_x(p));
         add_located_instance(
             assembly,
             &format!("roll_bearing_{end}"),
             d.roll.roll_bearing.id,
             pitch_frame,
-            RigidTransform::translated(x, 0.0, 0.0),
+            RigidTransform::translated(x, 0.0, 0.0)
+                .compose(RigidTransform::rotated(Axis3::Z, end_rotation)),
+            location,
+        );
+        let retainer_x = outward
+            * (p.roll_axis.bearing_station.mm()
+                + p.frame.bearing_pedestal_thickness.mm() * 0.5
+                + roll_bearing_retainer_thickness_mm() * 0.5);
+        add_located_instance(
+            assembly,
+            &format!("roll_bearing_retainer_{end}"),
+            d.roll.roll_bearing_retainer.id,
+            pitch_frame,
+            RigidTransform::translated(retainer_x, 0.0, 0.0)
+                .compose(RigidTransform::rotated(Axis3::Z, end_rotation)),
             location,
         );
     }
@@ -218,12 +233,14 @@ pub(super) fn build_roll_assembly(
 pub(super) fn build_roll_bearing_fits(
     assembly: &mut Assembly,
     d: &Definitions,
+    p: &PrototypeParameters,
 ) -> Result<(), PrototypeError> {
     let shaft = required_instance(assembly, ComponentRole::RollShaft, ComponentLocation::new())?;
     for end in [LongitudinalEnd::Front, LongitudinalEnd::Rear] {
         let location = ComponentLocation::new().with_longitudinal_end(end);
         let bearing = required_instance(assembly, ComponentRole::RollBearing, location)?;
         let carrier = required_instance(assembly, ComponentRole::RollBearingCarrierEnd, location)?;
+        let retainer = required_instance(assembly, ComponentRole::RollBearingRetainer, location)?;
         let shaft_surface = match end {
             LongitudinalEnd::Front => d.roll.roll_shaft.datums.front_bearing_surface,
             LongitudinalEnd::Rear => d.roll.roll_shaft.datums.rear_bearing_surface,
@@ -244,7 +261,159 @@ pub(super) fn build_roll_bearing_fits(
             d.roll.roll_bearing_carrier_end.datums.bearing_bore,
             roll_bearing_carrier_radial_clearance_mm(),
         )?;
+        add_surface_contact(
+            assembly,
+            bearing,
+            d.roll.roll_bearing.datums.negative_x_face,
+            carrier,
+            d.roll.roll_bearing_carrier_end.datums.bearing_shoulder_face,
+            100.0,
+        )?;
+        add_surface_contact(
+            assembly,
+            bearing,
+            d.roll.roll_bearing.datums.positive_x_face,
+            retainer,
+            d.roll.roll_bearing_retainer.datums.bearing_face,
+            100.0,
+        )?;
+        add_surface_contact(
+            assembly,
+            retainer,
+            d.roll.roll_bearing_retainer.datums.carrier_face,
+            carrier,
+            d.roll.roll_bearing_carrier_end.datums.outer_face,
+            500.0,
+        )?;
+        for index in 0..3 {
+            add_roll_bearing_retainer_fastener(assembly, d, p, end, index, carrier, retainer)?;
+        }
     }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_roll_bearing_retainer_fastener(
+    assembly: &mut Assembly,
+    d: &Definitions,
+    p: &PrototypeParameters,
+    end: LongitudinalEnd,
+    index: usize,
+    carrier: ComponentInstanceId,
+    retainer: ComponentInstanceId,
+) -> Result<(), PrototypeError> {
+    const WASHER_THICKNESS: f64 = 0.5;
+    const NUT_THICKNESS: f64 = 2.4;
+    let outward = match end {
+        LongitudinalEnd::Front => 1.0,
+        LongitudinalEnd::Rear => -1.0,
+    };
+    let end_rotation = if outward > 0.0 { 0.0 } else { PI };
+    let carrier_half = p.frame.bearing_pedestal_thickness.mm() * 0.5;
+    let retainer_outer_face_x = carrier_half + roll_bearing_retainer_thickness_mm();
+    let [hole_y, hole_z] = roll_bearing_retainer_hole_centres(p)[index];
+    let carrier_base =
+        RigidTransform::translated(outward * p.roll_axis.bearing_station.mm(), 0.0, 0.0)
+            .compose(RigidTransform::rotated(Axis3::Z, end_rotation));
+    let pose = |local_x| carrier_base.compose(RigidTransform::translated(local_x, hole_y, hole_z));
+    let ordinal = (index + 1) as u16;
+    let base_location = ComponentLocation::new()
+        .with_longitudinal_end(end)
+        .with_ordinal(ordinal);
+    let stem = format!("roll_bearing_retainer_{}_m3x20_{}", end.as_str(), index + 1);
+    let bolt = add_located_instance(
+        assembly,
+        &format!("{stem}_bolt"),
+        d.hardware.m3x20_bolt.definition,
+        assembly
+            .instance(carrier)
+            .expect("roll bearing carrier exists")
+            .frame,
+        pose(retainer_outer_face_x + WASHER_THICKNESS),
+        base_location,
+    );
+    let first_washer = add_located_instance(
+        assembly,
+        &format!("{stem}_head_washer"),
+        d.hardware.m3_washer.definition,
+        assembly
+            .instance(carrier)
+            .expect("roll bearing carrier exists")
+            .frame,
+        pose(retainer_outer_face_x + WASHER_THICKNESS * 0.5),
+        base_location.with_ordinal(ordinal * 2 - 1),
+    );
+    let second_washer = add_located_instance(
+        assembly,
+        &format!("{stem}_nut_washer"),
+        d.hardware.m3_washer.definition,
+        assembly
+            .instance(carrier)
+            .expect("roll bearing carrier exists")
+            .frame,
+        pose(-carrier_half - WASHER_THICKNESS * 0.5),
+        base_location.with_ordinal(ordinal * 2),
+    );
+    let nut = add_located_instance(
+        assembly,
+        &format!("{stem}_nut"),
+        d.hardware.m3_nut.definition,
+        assembly
+            .instance(carrier)
+            .expect("roll bearing carrier exists")
+            .frame,
+        pose(-carrier_half - WASHER_THICKNESS - NUT_THICKNESS * 0.5),
+        base_location,
+    );
+    let retainer_datums = d.roll.roll_bearing_retainer.datums.fasteners[index];
+    let carrier_datums = d.roll.roll_bearing_carrier_end.datums.retainer_fasteners[index];
+    assembly
+        .add_relation(AssemblyRelation::Fastened(FastenedJoint {
+            first_hole: DatumEndpoint::new(retainer, retainer_datums.hole),
+            second_hole: DatumEndpoint::new(carrier, carrier_datums.hole),
+            head_seat: DatumEndpoint::new(retainer, retainer_datums.positive_x_seat),
+            nut_seat: DatumEndpoint::new(carrier, carrier_datums.negative_x_seat),
+            hardware: FastenerHardware {
+                bolt: BoltHardware {
+                    instance: bolt,
+                    axis: d.hardware.m3x20_bolt.axis,
+                    under_head_face: d.hardware.m3x20_bolt.under_head_face,
+                    shank_tip_face: d.hardware.m3x20_bolt.shank_tip_face,
+                },
+                nut: NutHardware {
+                    instance: nut,
+                    axis: d.hardware.m3_nut.axis,
+                    bearing_face: d.hardware.m3_nut.positive_x_face,
+                    outer_face: d.hardware.m3_nut.negative_x_face,
+                },
+                first_washer: Some(WasherHardware {
+                    instance: first_washer,
+                    axis: d.hardware.m3_washer.axis,
+                    member_face: d.hardware.m3_washer.negative_x_face,
+                    hardware_face: d.hardware.m3_washer.positive_x_face,
+                }),
+                second_washer: Some(WasherHardware {
+                    instance: second_washer,
+                    axis: d.hardware.m3_washer.axis,
+                    member_face: d.hardware.m3_washer.positive_x_face,
+                    hardware_face: d.hardware.m3_washer.negative_x_face,
+                }),
+            },
+            thread: MetricThread::M3,
+            target_hole_radial_clearance: NonNegativeLength::mm(0.2)
+                .expect("M3 clearance is non-negative"),
+            grip_length: PositiveLength::mm(
+                p.frame.bearing_pedestal_thickness.mm() + roll_bearing_retainer_thickness_mm(),
+            )
+            .expect("bearing retainer grip is positive"),
+            tolerance: EngineeringTolerance {
+                linear: NonNegativeLength::mm(0.05)
+                    .expect("bearing retainer tolerance is non-negative"),
+                angular: NonNegativeAngle::degrees(0.1)
+                    .expect("bearing retainer angular tolerance is non-negative"),
+            },
+        }))
+        .map_err(PrototypeError::Assembly)?;
     Ok(())
 }
 
@@ -529,6 +698,36 @@ pub(super) const fn roll_bearing_carrier_radial_clearance_mm() -> f64 {
     0.0
 }
 
+pub(super) const fn roll_bearing_retainer_thickness_mm() -> f64 {
+    3.0
+}
+
+pub(super) fn roll_bearing_center_offset_x(p: &PrototypeParameters) -> f64 {
+    (p.frame.bearing_pedestal_thickness.mm() - p.roll_axis.bearing_width.mm()) * 0.5
+}
+
+pub(super) fn roll_bearing_inner_face_x(p: &PrototypeParameters) -> f64 {
+    roll_bearing_center_offset_x(p) - p.roll_axis.bearing_width.mm() * 0.5
+}
+
+pub(super) fn roll_bearing_retainer_hole_centres(p: &PrototypeParameters) -> [[f64; 2]; 3] {
+    let radius = p.roll_axis.bearing_outer_radius.mm() + 3.5;
+    let diagonal = radius * 0.866_025_403_784_438_6;
+    [
+        [0.0, radius],
+        [-diagonal, -radius * 0.5],
+        [diagonal, -radius * 0.5],
+    ]
+}
+
+fn roll_bearing_retainer_outer_radius_mm(p: &PrototypeParameters) -> f64 {
+    p.roll_axis.bearing_outer_radius.mm() + 7.0
+}
+
+fn roll_bearing_retainer_inner_radius_mm(p: &PrototypeParameters) -> f64 {
+    p.roll_axis.bearing_outer_radius.mm() - 2.0
+}
+
 pub(super) fn roll_bearing_carrier_end_solid(
     builder: &mut FeatureBuilder,
     p: &PrototypeParameters,
@@ -539,11 +738,7 @@ pub(super) fn roll_bearing_carrier_end_solid(
         p.pitch_sector.carrier_spacing.mm() * 0.5 - p.frame.moving_carrier_inboard_offset.mm();
     let bridge_half_span = carrier_rail_y - p.frame.moving_carrier_member_width.mm() * 0.5;
     let bridge_z = p.frame.moving_carrier_height.mm();
-    let mut pedestal = cylinder_x(
-        builder,
-        p.roll_axis.bearing_outer_radius.mm() + 3.0,
-        thickness,
-    )?;
+    let mut pedestal = cylinder_x(builder, roll_bearing_retainer_outer_radius_mm(p), thickness)?;
     for endpoint in [
         [-bridge_half_span + 10.0, bridge_z - 4.0],
         [bridge_half_span - 10.0, bridge_z - 4.0],
@@ -580,13 +775,78 @@ pub(super) fn roll_bearing_carrier_end_solid(
     )?;
     pedestal = builder.boolean(BooleanOperation::Union, pedestal, tie)?;
 
-    let bore = cylinder_x(
+    let pocket_inner_x = roll_bearing_inner_face_x(p);
+    let pocket_outer_x = thickness * 0.5 + 1.0;
+    let pocket_width = pocket_outer_x - pocket_inner_x;
+    let pocket = cylinder_x(
         builder,
         p.roll_axis.bearing_outer_radius.mm() + roll_bearing_carrier_radial_clearance_mm(),
+        pocket_width,
+    )?;
+    let pocket = builder.translate(
+        pocket,
+        Translation3 {
+            x: (pocket_inner_x + pocket_outer_x) * 0.5,
+            y: 0.0,
+            z: 0.0,
+        },
+    )?;
+    pedestal = builder.boolean(BooleanOperation::Difference, pedestal, pocket)?;
+    let shoulder_opening = cylinder_x(
+        builder,
+        roll_bearing_retainer_inner_radius_mm(p),
         thickness + 2.0,
     )?;
+    pedestal = builder.boolean(BooleanOperation::Difference, pedestal, shoulder_opening)?;
+    for [y, z] in roll_bearing_retainer_hole_centres(p) {
+        pedestal = subtract_x_bore_at(
+            builder,
+            pedestal,
+            m3_clearance_radius_mm(),
+            thickness + 2.0,
+            y,
+            z,
+        )?;
+    }
+    Ok(pedestal)
+}
+
+pub(super) fn roll_bearing_retainer_solid(
+    builder: &mut FeatureBuilder,
+    p: &PrototypeParameters,
+) -> Result<SolidId, PrototypeError> {
+    let thickness = roll_bearing_retainer_thickness_mm();
+    let mut retainer = annulus_solid_x(
+        builder,
+        roll_bearing_retainer_outer_radius_mm(p),
+        roll_bearing_retainer_inner_radius_mm(p),
+        thickness,
+    )?;
+    for [y, z] in roll_bearing_retainer_hole_centres(p) {
+        retainer = subtract_x_bore_at(
+            builder,
+            retainer,
+            m3_clearance_radius_mm(),
+            thickness + 2.0,
+            y,
+            z,
+        )?;
+    }
+    Ok(retainer)
+}
+
+fn subtract_x_bore_at(
+    builder: &mut FeatureBuilder,
+    solid: SolidId,
+    radius: f64,
+    width: f64,
+    y: f64,
+    z: f64,
+) -> Result<SolidId, PrototypeError> {
+    let bore = cylinder_x(builder, radius, width)?;
+    let bore = builder.translate(bore, Translation3 { x: 0.0, y, z })?;
     builder
-        .boolean(BooleanOperation::Difference, pedestal, bore)
+        .boolean(BooleanOperation::Difference, solid, bore)
         .map_err(PrototypeError::Feature)
 }
 

@@ -166,7 +166,7 @@ pub(super) fn validate(parameters: &PrototypeParameters) -> Result<(), Prototype
     }
     if parameters.roll_axis.bearing_outer_radius.mm()
         <= parameters.roll_axis.shaft_radius.mm() + 2.0
-        || parameters.roll_axis.bearing_width.mm()
+        || parameters.roll_axis.bearing_width.mm() + 0.8
             > parameters.frame.bearing_pedestal_thickness.mm()
     {
         return Err(PrototypeError::InvalidRollBearing);
