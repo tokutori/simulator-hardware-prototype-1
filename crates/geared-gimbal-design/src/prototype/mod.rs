@@ -10,12 +10,12 @@ use crate::{
     Angle, Assembly, AssemblyRelation, Axis3, AxisDatum, Body, BoltHardware, BooleanOperation,
     ComponentDefinition, ComponentDefinitionId, ComponentIdentity, ComponentInstance,
     ComponentInstanceId, ComponentLocation, ComponentRole, CoordinateExpr, CylinderDatum,
-    DatumEndpoint, DatumId, DatumSet, EngineeringTolerance, ExternalGearPair, FastenedJoint,
-    FastenerHardware, FeatureBuilder, FeatureError, FeatureGraph, FrameGraph, FrameId,
-    InternalGearPair, Joint, Kinematics, Length, LongitudinalEnd, Manufacturing, MetricThread,
-    NonNegativeAngle, NonNegativeLength, NutHardware, PlaneDatum, Point2, Point3, PositiveArea,
-    PositiveLength, Primitive3, RigidTransform, Rotation3, Side, SolidId, SpurGear, SurfaceContact,
-    Translation3, UnitVector3, VerticalEnd, WasherHardware,
+    CylindricalFit, DatumEndpoint, DatumId, DatumSet, EngineeringTolerance, ExternalGearPair,
+    FastenedJoint, FastenerHardware, FeatureBuilder, FeatureError, FeatureGraph, FrameGraph,
+    FrameId, InternalGearPair, Joint, Kinematics, Length, LongitudinalEnd, Manufacturing,
+    MetricThread, NonNegativeAngle, NonNegativeLength, NutHardware, PlaneDatum, Point2, Point3,
+    PositiveArea, PositiveLength, Primitive3, RigidTransform, Rotation3, Side, SolidId, SpurGear,
+    SurfaceContact, Translation3, UnitVector3, VerticalEnd, WasherHardware,
 };
 
 mod component_geometry;
@@ -118,6 +118,7 @@ pub fn build_prototype(
         pitch_gearbox_pair.ratio(),
     );
     build_moving_carrier_contacts(&mut assembly, &definitions)?;
+    build_roll_bearing_fits(&mut assembly, &definitions)?;
 
     let kinematics = Kinematics::new(
         frames,

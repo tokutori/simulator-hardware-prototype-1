@@ -135,26 +135,17 @@ pub(super) fn annulus_definition_y(
     ))
 }
 
-pub(super) fn annulus_definition_x(
+pub(super) fn annulus_solid_x(
     builder: &mut FeatureBuilder,
-    assembly: &mut Assembly,
-    name: &str,
     outer_radius: f64,
     inner_radius: f64,
     width: f64,
-    style: DefinitionStyle,
-) -> Result<ComponentDefinitionId, PrototypeError> {
+) -> Result<SolidId, PrototypeError> {
     let outer = cylinder_x(builder, outer_radius, width)?;
     let inner = cylinder_x(builder, inner_radius, width + 2.0)?;
-    let annulus = builder.boolean(BooleanOperation::Difference, outer, inner)?;
-    Ok(add_solid_definition(
-        assembly,
-        name,
-        style.role,
-        annulus,
-        Manufacturing::Purchased,
-        style.color,
-    ))
+    builder
+        .boolean(BooleanOperation::Difference, outer, inner)
+        .map_err(PrototypeError::Feature)
 }
 
 pub(super) fn carrier_post_definition(

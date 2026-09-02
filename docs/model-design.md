@@ -108,7 +108,7 @@ roll shaftはX方向へ前から後ろまで切らずに通す。
 
 コクピは2個のhangerでshaft下へ吊るす。重心をroll軸より下に置くため、駆動が無トルクになった場合はroll=0付近へ戻す方向の重力モーメントを持つ。ただし、減速機の固着、歯欠けによる噛み込み、摩擦または配線拘束がある故障では復元しない。安全保持機能として扱ってはならない。
 
-shaft前後に同じ36T driven gearを固定し、各端を18T output pinionで駆動する。driven gearとhubは一つのFDM definition内でUnionし、gear/hanger取付位置だけshaftに高さ3 mmのD-flat、相手側にnominal 0.15 mm clearanceのD-boreを設ける。旧構成で実keywayなしに別solidへ食い込んでいたkeyとhubは使用しない。bearing位置ではshaftを丸軸のまま保ち、前後を切断しない。各端にはroll軸の下側にmodule 0.6、18/54T×2段の9:1 gearbox、3本のshaft、軸受bossとribから成るside plateおよびpitch移動体へのmountを置く。roll最終段2:1を含む入力対コクピ比は18:1である。D-fitの軸方向保持と製造公差はPhase 5で確定する。
+shaft前後に同じ36T driven gearを固定し、各端を18T output pinionで駆動する。driven gearとhubは一つのFDM definition内でUnionし、gear/hanger取付位置だけshaftに高さ3 mmのD-flat、相手側にnominal 0.15 mm clearanceのD-boreを設ける。旧構成で実keywayなしに別solidへ食い込んでいたkeyとhubは使用しない。bearing位置ではshaftを丸軸のまま保ち、前後を切断しない。shaft–bearing内径とbearing外径–carrier boreは前後各2件のtyped `CylindricalFit`として検証する。現在の18 mm外径相当のbearing envelopeと0.15/0.20 mm radial clearanceは配置確認用referenceであり、購入するbearing規格と実fit公差は未選定である。各端にはroll軸の下側にmodule 0.6、18/54T×2段の9:1 gearbox、3本のshaft、軸受bossとribから成るside plateおよびpitch移動体へのmountを置く。roll最終段2:1を含む入力対コクピ比は18:1である。D-fitの軸方向保持と製造公差はPhase 5で確定する。
 
 前後2入力を同時駆動する場合は機械同期またはtorque-sharingが必要である。本試作は両端のmechanical interfaceを示すだけで、2 motor制御の成立を保証しない。
 

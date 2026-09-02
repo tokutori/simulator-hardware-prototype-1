@@ -85,6 +85,19 @@ pub(super) struct GearboxFarPlateDatums {
 pub(super) struct CarrierEndDatums {
     pub(super) rail_face: DatumId<PlaneDatum>,
     pub(super) arm_face: DatumId<PlaneDatum>,
+    pub(super) bearing_bore: DatumId<CylinderDatum>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct RollShaftDatums {
+    pub(super) front_bearing_surface: DatumId<CylinderDatum>,
+    pub(super) rear_bearing_surface: DatumId<CylinderDatum>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct RollBearingDatums {
+    pub(super) inner_bore: DatumId<CylinderDatum>,
+    pub(super) outer_surface: DatumId<CylinderDatum>,
 }
 
 #[derive(Clone, Copy)]
@@ -141,13 +154,13 @@ pub(super) struct RollDefinitions {
     pub(super) roll_bearing_carrier_end: Defined<CarrierEndDatums>,
     pub(super) cockpit: Defined<CockpitDatums>,
     pub(super) cockpit_hanger: Defined<CockpitHangerDatums>,
-    pub(super) roll_shaft: ComponentDefinitionId,
+    pub(super) roll_shaft: Defined<RollShaftDatums>,
     pub(super) roll_driven: ComponentDefinitionId,
     pub(super) roll_pinion: ComponentDefinitionId,
     pub(super) roll_gearbox_small: ComponentDefinitionId,
     pub(super) roll_gearbox_large: ComponentDefinitionId,
     pub(super) roll_gearbox_shaft: ComponentDefinitionId,
-    pub(super) roll_bearing: ComponentDefinitionId,
+    pub(super) roll_bearing: Defined<RollBearingDatums>,
     pub(super) roll_gearbox_plate: Defined<RollGearboxPlateDatums>,
     pub(super) moving_drive_mount_arm: Defined<MovingArmDatums>,
 }
@@ -433,13 +446,29 @@ pub(super) fn build_definitions(
         [0.72, 0.25, 0.20, 1.0],
         cockpit_hanger_datums,
     );
-    let roll_shaft = add_solid_definition(
+    let mut roll_shaft_datums = DatumSet::for_definition(assembly.next_definition_id());
+    let front_bearing_surface = add_cylinder_datum(
+        &mut roll_shaft_datums,
+        "front_bearing_surface",
+        [p.roll_axis.bearing_station.mm(), 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        p.roll_axis.shaft_radius.mm(),
+    );
+    let rear_bearing_surface = add_cylinder_datum(
+        &mut roll_shaft_datums,
+        "rear_bearing_surface",
+        [-p.roll_axis.bearing_station.mm(), 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        p.roll_axis.shaft_radius.mm(),
+    );
+    let roll_shaft = add_solid_definition_with_datums(
         assembly,
         "roll_shaft",
         ComponentRole::RollShaft,
         roll_shaft_solid(builder, p)?,
         Manufacturing::Purchased,
         [0.64, 0.67, 0.70, 1.0],
+        roll_shaft_datums,
     );
     let roll_driven = add_solid_definition(
         assembly,
@@ -507,6 +536,13 @@ pub(super) fn build_definitions(
         ],
         [1.0, 0.0, 0.0],
     );
+    let roll_bearing_carrier_bore = add_cylinder_datum(
+        &mut carrier_end_datums,
+        "bearing_bore",
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        roll_bearing_outer_radius_mm() + roll_bearing_carrier_radial_clearance_mm(),
+    );
     let roll_bearing_carrier_end = add_solid_definition_with_datums(
         assembly,
         "roll_bearing_carrier_end",
@@ -516,15 +552,35 @@ pub(super) fn build_definitions(
         [0.56, 0.34, 0.16, 1.0],
         carrier_end_datums,
     );
-    let roll_bearing = annulus_definition_x(
-        builder,
+    let mut roll_bearing_datums = DatumSet::for_definition(assembly.next_definition_id());
+    let roll_bearing_inner_bore = add_cylinder_datum(
+        &mut roll_bearing_datums,
+        "inner_bore",
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        p.roll_axis.shaft_radius.mm() + roll_bearing_inner_radial_clearance_mm(),
+    );
+    let roll_bearing_outer_surface = add_cylinder_datum(
+        &mut roll_bearing_datums,
+        "outer_surface",
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        roll_bearing_outer_radius_mm(),
+    );
+    let roll_bearing = add_solid_definition_with_datums(
         assembly,
         "roll_shaft_bearing",
-        9.0,
-        p.roll_axis.shaft_radius.mm() + 0.15,
-        p.frame.bearing_pedestal_thickness.mm(),
-        definition_style(ComponentRole::RollBearing, [0.48, 0.52, 0.56, 1.0]),
-    )?;
+        ComponentRole::RollBearing,
+        annulus_solid_x(
+            builder,
+            roll_bearing_outer_radius_mm(),
+            p.roll_axis.shaft_radius.mm() + roll_bearing_inner_radial_clearance_mm(),
+            p.frame.bearing_pedestal_thickness.mm(),
+        )?,
+        Manufacturing::Purchased,
+        [0.48, 0.52, 0.56, 1.0],
+        roll_bearing_datums,
+    );
     let mut roll_gearbox_plate_datums = DatumSet::for_definition(assembly.next_definition_id());
     let roll_gearbox_plate_negative_x = add_plane_datum(
         &mut roll_gearbox_plate_datums,
@@ -643,6 +699,7 @@ pub(super) fn build_definitions(
                 datums: CarrierEndDatums {
                     rail_face: roll_bearing_carrier_end_rail_face,
                     arm_face: roll_bearing_carrier_end_arm_face,
+                    bearing_bore: roll_bearing_carrier_bore,
                 },
             },
             cockpit: Defined {
@@ -657,13 +714,25 @@ pub(super) fn build_definitions(
                     cockpit_face: cockpit_hanger_cockpit_face,
                 },
             },
-            roll_shaft,
+            roll_shaft: Defined {
+                id: roll_shaft,
+                datums: RollShaftDatums {
+                    front_bearing_surface,
+                    rear_bearing_surface,
+                },
+            },
             roll_driven,
             roll_pinion,
             roll_gearbox_small,
             roll_gearbox_large,
             roll_gearbox_shaft,
-            roll_bearing,
+            roll_bearing: Defined {
+                id: roll_bearing,
+                datums: RollBearingDatums {
+                    inner_bore: roll_bearing_inner_bore,
+                    outer_surface: roll_bearing_outer_surface,
+                },
+            },
             roll_gearbox_plate: Defined {
                 id: roll_gearbox_plate,
                 datums: RollGearboxPlateDatums {

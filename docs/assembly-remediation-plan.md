@@ -251,7 +251,7 @@ validatorは`#[cfg(test)]`内へ閉じ込めない。CLIとtestが同じ実装�
 | 2 | 共通AssemblyValidator | 完了 | Phase 1 |
 | 3 | 固定pitch frameとsector荷重経路 | 完了 | Phase 2 |
 | 4 | M3締結とlaser sheet hole | 進行中 | Phase 2, 3 |
-| 5 | roll/pitchの軸、軸受、clamp、hub、key | 未着手 | Phase 2, 4 |
+| 5 | roll/pitchの軸、軸受、clamp、hub、key | 進行中 | Phase 2, 4 |
 | 6 | gear mesh、位相、gearbox伝達 | 未着手 | Phase 2, 5 |
 | 7 | motion envelope、床、全pair干渉 | 未着手 | Phase 3–6 |
 | 8 | fabrication outputの成立性 | 未着手 | Phase 4–7 |
@@ -651,8 +651,9 @@ Exit criteria:
 - Phase 10を待たず、push/PRごとにformat、workspace check、warning-as-error Clippy、workspace test、両`no_std` crateのnative/WASM checkおよび`cargo-audit 0.22.2`を実行するGitHub Actions workflowを追加した。これはA-17の基本gate部分だけを前倒しするものであり、structured validator reportのartifact保存、検証対象SHAとの照合、branch protectionおよび公開前監査はPhase 10に残す。
 - GitHub Actions再run `33681538072`でRust quality gatesは7分8秒、dependency auditは3分1秒で成功した。Linux Rust 1.98でのみ先行して有効になったClippy lintも修正済みであり、基本CIを実行可能なgateとして確認した。
 - `CylindricalFit`の共通validatorを実装し、datum originの一致、軸方向、shaft/bore半径差とtarget radial clearanceをengineering toleranceで検証するようにした。これでrelation variantのうち`SurfaceContact`、`Fastened`、`CylindricalFit`が検証可能となり、未実装は`GearMesh`だけになった。実prototypeのroll shaft/bearing datumとrelation登録はPhase 5の次checkpointとする。
+- Phase 5の最初のrelation checkpointとして、連続roll shaftの前後journal、各bearingのinner bore/outer surfaceおよびcarrierのbearing boreをstable cylinder datumで表した。shaft–bearing内径2件とbearing外径–carrier bore 2件、合計4件の`CylindricalFit`を登録し、target radial clearance 0.15 mm/0.20 mm、datum origin、軸方向および半径差が共通validatorを通ることを回帰testで確認した。現在のbearing envelopeとclearanceはreference geometryであり、実bearing規格、inner/outer raceの運動表現、軸方向保持および製造公差は未確定なのでPhase 5は進行中とする。
 
-次の作業はPhase 4として、残る全instanceとdefinition内featureの存在理由監査を続け、不要形状を削除した上で、FDM前提の固定frame接合をM3通しbolt、実穴、washer/nut座面および工具空間を持つ実jointへ置換する。relation coverage reportは実装済みであり、今後追加するrelationも未対応なら`Unsupported`として正式生成を失敗させる。LaserCutの`Body::Sheet` hole表現とDXF経路は次prototype向けに維持するが、現prototypeのcustom partはFDMを前提とする。
+次の作業はPhase 4とPhase 5を依存順に進める。残る全instanceとdefinition内featureの存在理由監査を続け、不要形状を削除した上で、FDM前提の固定frame接合をM3通しbolt、実穴、washer/nut座面および工具空間を持つ実jointへ置換する。同時にroll軸系は実bearing規格、inner/outer race、軸方向保持と製造公差を確定して、今回登録したreference fitを製造可能なfitへ置換する。relation coverage reportは実装済みであり、今後追加するrelationも未対応なら`Unsupported`として正式生成を失敗させる。LaserCutの`Body::Sheet` hole表現とDXF経路は次prototype向けに維持するが、現prototypeのcustom partはFDMを前提とする。
 
 ## 9. 完成の定義
 

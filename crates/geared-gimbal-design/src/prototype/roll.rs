@@ -23,7 +23,7 @@ pub(super) fn build_roll_assembly(
     add_instance(
         assembly,
         "roll_shaft",
-        d.roll.roll_shaft,
+        d.roll.roll_shaft.id,
         roll_frame,
         RigidTransform::IDENTITY,
     );
@@ -207,12 +207,69 @@ pub(super) fn build_roll_assembly(
         add_located_instance(
             assembly,
             &format!("roll_bearing_{end}"),
-            d.roll.roll_bearing,
+            d.roll.roll_bearing.id,
             pitch_frame,
             RigidTransform::translated(x, 0.0, 0.0),
             location,
         );
     }
+}
+
+pub(super) fn build_roll_bearing_fits(
+    assembly: &mut Assembly,
+    d: &Definitions,
+) -> Result<(), PrototypeError> {
+    let shaft = required_instance(assembly, ComponentRole::RollShaft, ComponentLocation::new())?;
+    for end in [LongitudinalEnd::Front, LongitudinalEnd::Rear] {
+        let location = ComponentLocation::new().with_longitudinal_end(end);
+        let bearing = required_instance(assembly, ComponentRole::RollBearing, location)?;
+        let carrier = required_instance(assembly, ComponentRole::RollBearingCarrierEnd, location)?;
+        let shaft_surface = match end {
+            LongitudinalEnd::Front => d.roll.roll_shaft.datums.front_bearing_surface,
+            LongitudinalEnd::Rear => d.roll.roll_shaft.datums.rear_bearing_surface,
+        };
+        add_cylindrical_fit(
+            assembly,
+            shaft,
+            shaft_surface,
+            bearing,
+            d.roll.roll_bearing.datums.inner_bore,
+            roll_bearing_inner_radial_clearance_mm(),
+        )?;
+        add_cylindrical_fit(
+            assembly,
+            bearing,
+            d.roll.roll_bearing.datums.outer_surface,
+            carrier,
+            d.roll.roll_bearing_carrier_end.datums.bearing_bore,
+            roll_bearing_carrier_radial_clearance_mm(),
+        )?;
+    }
+    Ok(())
+}
+
+fn add_cylindrical_fit(
+    assembly: &mut Assembly,
+    shaft: ComponentInstanceId,
+    shaft_surface: DatumId<CylinderDatum>,
+    bore: ComponentInstanceId,
+    bore_surface: DatumId<CylinderDatum>,
+    target_radial_clearance_mm: f64,
+) -> Result<(), PrototypeError> {
+    assembly
+        .add_relation(AssemblyRelation::CylindricalFit(CylindricalFit {
+            shaft: DatumEndpoint::new(shaft, shaft_surface),
+            bore: DatumEndpoint::new(bore, bore_surface),
+            target_radial_clearance: NonNegativeLength::mm(target_radial_clearance_mm)
+                .expect("bearing radial clearance is non-negative"),
+            tolerance: EngineeringTolerance {
+                linear: NonNegativeLength::mm(0.02).expect("bearing fit tolerance is non-negative"),
+                angular: NonNegativeAngle::degrees(0.1)
+                    .expect("bearing fit angular tolerance is non-negative"),
+            },
+        }))
+        .map_err(PrototypeError::Assembly)?;
+    Ok(())
 }
 
 pub(super) fn build_moving_carrier_contacts(
@@ -464,6 +521,18 @@ pub(super) fn roll_bearing_carrier_tie_center_x(p: &PrototypeParameters) -> f64 
         - p.roll_axis.bearing_station.mm()
 }
 
+pub(super) const fn roll_bearing_outer_radius_mm() -> f64 {
+    9.0
+}
+
+pub(super) const fn roll_bearing_inner_radial_clearance_mm() -> f64 {
+    0.15
+}
+
+pub(super) const fn roll_bearing_carrier_radial_clearance_mm() -> f64 {
+    0.2
+}
+
 pub(super) fn roll_bearing_carrier_end_solid(
     builder: &mut FeatureBuilder,
     p: &PrototypeParameters,
@@ -511,7 +580,11 @@ pub(super) fn roll_bearing_carrier_end_solid(
     )?;
     pedestal = builder.boolean(BooleanOperation::Union, pedestal, tie)?;
 
-    let bore = cylinder_x(builder, 9.2, thickness + 2.0)?;
+    let bore = cylinder_x(
+        builder,
+        roll_bearing_outer_radius_mm() + roll_bearing_carrier_radial_clearance_mm(),
+        thickness + 2.0,
+    )?;
     builder
         .boolean(BooleanOperation::Difference, pedestal, bore)
         .map_err(PrototypeError::Feature)

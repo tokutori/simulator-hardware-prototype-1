@@ -2,7 +2,8 @@ use geared_gimbal_design::{PrototypeDesign, build_prototype};
 use gimbal_cli::{config, validate_assembly};
 use gimbal_core::*;
 use gimbal_kernel_manifold::{
-    Evaluator, GeometryEvaluationMode, ValidationIssueKind, ValidationProfile,
+    Evaluator, GeometryEvaluationMode, RelationValidationStatus, ValidationIssueKind,
+    ValidationProfile,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -34,6 +35,15 @@ fn is_fastener_validation_issue(kind: ValidationIssueKind) -> bool {
             | ValidationIssueKind::FastenerHardwareContactMismatch { .. }
             | ValidationIssueKind::FastenerThreadEngagementInsufficient { .. }
             | ValidationIssueKind::FastenerBoltProtrusionInsufficient { .. }
+    )
+}
+
+fn is_cylindrical_fit_issue(kind: ValidationIssueKind) -> bool {
+    matches!(
+        kind,
+        ValidationIssueKind::CylindricalFitOriginSeparation { .. }
+            | ValidationIssueKind::CylindricalFitAxisMismatch { .. }
+            | ValidationIssueKind::CylindricalFitClearanceMismatch { .. }
     )
 }
 
@@ -1370,6 +1380,73 @@ fn roll_d_interfaces_replace_obsolete_overlapping_hubs_and_keys() {
             "roll D-shaft intersects cockpit hanger by {hanger_overlap} mm^3"
         );
     }
+}
+
+#[test]
+fn roll_bearings_use_typed_inner_and_outer_cylindrical_fits() {
+    let design = load_design();
+    let fits = design
+        .assembly
+        .relations_with_ids()
+        .filter_map(|(id, relation)| {
+            let AssemblyRelation::CylindricalFit(fit) = relation else {
+                return None;
+            };
+            Some((id, *fit))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        fits.len(),
+        4,
+        "each roll bearing needs inner and outer fits"
+    );
+
+    let role_of = |instance_id| {
+        let instance = design
+            .assembly
+            .instance(instance_id)
+            .expect("fit participant exists");
+        design
+            .assembly
+            .definition(instance.definition)
+            .expect("fit participant definition exists")
+            .role
+    };
+    let mut shaft_to_bearing = 0;
+    let mut bearing_to_carrier = 0;
+    for (_, fit) in &fits {
+        match (role_of(fit.shaft.instance), role_of(fit.bore.instance)) {
+            (ComponentRole::RollShaft, ComponentRole::RollBearing) => {
+                shaft_to_bearing += 1;
+                assert!((fit.target_radial_clearance.as_mm() - 0.15).abs() < 1.0e-8);
+            }
+            (ComponentRole::RollBearing, ComponentRole::RollBearingCarrierEnd) => {
+                bearing_to_carrier += 1;
+                assert!((fit.target_radial_clearance.as_mm() - 0.2).abs() < 1.0e-8);
+            }
+            pair => panic!("unexpected cylindrical fit role pair: {pair:?}"),
+        }
+    }
+    assert_eq!(shaft_to_bearing, 2);
+    assert_eq!(bearing_to_carrier, 2);
+
+    let report = validate_assembly(&design, ValidationProfile::STRUCTURAL_STATIC)
+        .expect("structural validation query succeeds");
+    for (relation_id, _) in fits {
+        let check = report
+            .relation_checks
+            .iter()
+            .find(|check| check.relation == relation_id)
+            .expect("each fit has a coverage result");
+        assert_eq!(check.status, RelationValidationStatus::Validated);
+    }
+    assert!(
+        report
+            .issues
+            .iter()
+            .all(|issue| !is_cylindrical_fit_issue(issue.kind)),
+        "roll bearing fit datums must satisfy the typed relation"
+    );
 }
 
 fn quaternion_y_degrees(rotation: [f64; 4]) -> f64 {
