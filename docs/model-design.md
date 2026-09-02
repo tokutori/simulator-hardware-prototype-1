@@ -72,9 +72,11 @@ reference teethは仮想full circleのpitch geometryを定義する値であり�
 - 2本へのdistribution gear
 - input shaftと将来encoder interface shaft
 - encoder bearing blockと平行leaf spring 2枚
-- 軸受bossをribで結んだside plate、shaft、moving crossbarおよびmount
+- 軸受bossをribで結んだside plate、shaft、上側carrier connectionおよびmount
 
 接触pinionは18 teeth、module 0.8、外径約16 mmである。prototype全体ではdrive pinion 8個、retention pinion 4個、接触歯車合計12個となる。
+
+各unitの2 drive pinionと1 retention pinionは一箇所へ密集させず、利用可能なsector長の範囲で接触点間隔を広げる。これにより移動carriageの支持スパンを確保する。ただし複数meshの荷重が自動的に均等化されるとは扱わず、drive 2軸の位相整合、carriage剛性およびretention側の弾性予圧を別々に検証する。
 
 pitch gearboxはmodule 0.6、18/54 teethの3:1を2段直列にした9:1である。固定内歯referenceと18T pinionの比を含む、移動体上の入力軸からpitch角までの理想比は169:1となる。
 
@@ -85,7 +87,9 @@ drive pinion relative angle = -(338 / 18) * pitch angle
 retention pinion relative angle = +(372 / 18) * pitch angle
 ```
 
-4 unitはroll駆動部とmoving crossbarで一体化する。motorとrotary encoder本体は今回含めない。
+4 unitはroll軸周辺またはコクピ上側のmoving carrierでroll駆動部と一体化する。コクピ直下のcrossbarは撤去し、コクピ下側を床clearance用keep-out volumeとして空ける。pitch gearboxとdistribution部は各sectorの外側でなく左右frame間の内側へ置き、前後stationに留めてコクピ・roll機構の包絡を避ける。各sectorのmid-planeから内側へ、近側支持板6.5 mm、第一gear layer 10.5 mm、遠側支持板24.0 mmの順に配置し、左右の遠側支持板間には52 mmの中央通路を残す。外側には接触pinionの反対側支持板とretention preload部だけを置く。motorとrotary encoder本体は今回含めない。
+
+各pitch/roll gearboxの露出input shaftには、No.2プラスドライバーで低荷重手回しできるPH2-compatible cross recessを設ける。これはprototypeのkinematics確認用であり、規格適合、高トルク耐久または本番入力interfaceを保証しない。
 
 ## 5. roll機構とコクピ吊下げ
 
@@ -114,11 +118,11 @@ shaft前後に同じ36T driven gearを固定し、各端を18T output pinionで�
 
 | 種別 | 主な部品 | canonical output |
 | --- | --- | --- |
-| FDM | gear、sector、flange、gearbox plate、bearing pedestal、mount、コクピ | 部品定義別3MF |
-| laser | carrier rail、sector link | 部品定義別DXF |
-| purchased | shaft、crossmember、床、leaf spring | assembly内の参照形状 |
+| FDM | 本prototypeの全custom part。材料profileはPLAまたはABS | 部品定義別3MF |
+| laser | 本prototypeでは使用しない。次prototype用にsheet modelとexport機能を維持 | 部品定義別DXF |
+| purchased | shaft、bearing、bolt/nut/washer、床等の既製品 | assembly内の参照形状 |
 
-DXFはnominal profileを出力し、kerfを加えない。3MFはmm unitを明記する。STLはunitless compatibility outputだけに用いる。
+本prototypeの初期造形profileは、無動力・手回しのfit確認を優先してPLAを暫定既定とし、ABSへ切替可能にする。材料ごとの強度、耐熱、反り、層間強度および換気条件は未検証である。次prototypeでは各component definitionをFDM、LaserCut、Purchasedへ明示分類する。DXFはnominal profileを出力し、kerfを加えない。3MFはmm unitを明記する。STLはunitless compatibility outputだけに用いる。
 
 ## 8. 必須検証
 

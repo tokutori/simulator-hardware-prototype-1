@@ -50,6 +50,6 @@ pub use relation::{
     GearMesh, GearMeshKind, NumericalTolerance, SurfaceContact,
 };
 pub use units::{
-    Angle, Length, NonNegativeAngle, NonNegativeLength, PositiveAngle, PositiveLength,
-    PositiveVolume, UnitError,
+    Angle, Length, NonNegativeAngle, NonNegativeLength, PositiveAngle, PositiveArea,
+    PositiveLength, PositiveVolume, UnitError,
 };

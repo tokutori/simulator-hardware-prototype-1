@@ -242,8 +242,8 @@ validatorは`#[cfg(test)]`内へ閉じ込めない。CLIとtestが同じ実装�
 | ---: | --- | --- | --- |
 | 0 | 誤った不変条件の撤去とbaseline固定 | 完了 | なし |
 | 1 | typed identityとAssemblyRelation | 完了 | Phase 0 |
-| 2 | 共通AssemblyValidator | 進行中 | Phase 1 |
-| 3 | 固定pitch frameとsector荷重経路 | 未着手 | Phase 2 |
+| 2 | 共通AssemblyValidator | 完了 | Phase 1 |
+| 3 | 固定pitch frameとsector荷重経路 | 進行中 | Phase 2 |
 | 4 | M3締結とlaser sheet hole | 未着手 | Phase 2, 3 |
 | 5 | roll/pitchの軸、軸受、clamp、hub、key | 未着手 | Phase 2, 4 |
 | 6 | gear mesh、位相、gearbox伝達 | 未着手 | Phase 2, 5 |
@@ -335,6 +335,7 @@ Exit criteria:
 - sector支持部を歯面接触領域から分離し、sectorからrail/postへ明確なload pathを作る。
 - 部材同士を体積重複させず、接触面と締結位置を定義する。
 - sectorの曲げ、歯元応力集中、左右frameのねじれを後続解析対象として明記する。
+- コクピ直下のmoving crossbarを撤去し、roll軸周辺またはコクピ上側へmoving carrierの前後・左右接続を移す。コクピ下側はfloor clearance用keep-out volumeとする。
 
 Exit criteria:
 
@@ -382,6 +383,7 @@ Exit criteria:
 - clampはslit、締付boltおよびclamping surfaceを持つ実形状にするか、別方式へ変更する。
 - cockpit hangerはcockpitへ食い込ませず、接触面と締結を成立させる。
 - kinematic co-motionごとに、そのトルクまたは荷重を伝えるrelationを対応付ける。
+- 全pitch/roll gearbox input shaftへ低荷重手回し用のPH2-compatible cross recessを設け、工具accessと周囲clearanceを検証する。
 
 Exit criteria:
 
@@ -403,6 +405,8 @@ Exit criteria:
 - external/internal meshのtransverse contact ratioを計算し、要求下限を検証する。
 - 各meshへreference phaseを与え、nominal poseで歯同士が干渉しないことを検証する。
 - 1 unit内の2 drive pinionが同時に成立する位相と配置を導出する。
+- 1 unit内の2 drive pinionと1 retention pinionをsector上で離して配置し、支持スパン、sector端margin、carriage曲げおよびdistribution伝達経路を同時に成立させる。
+- pitch gearboxとdistribution部をsectorの外側から左右frame間の内側へ移し、コクピ/roll機構keep-out、左右unit間隔、工具accessおよびpitch可動包絡を検証する。
 - GearMeshとgearbox constraintから得られる全閉路についてratio/phase consistencyを検証する。
 - phaseは歯ピッチ周期に対する合同として扱い、backlash由来の許容角度区間と区別する。
 - mesh relationから回転比を導出し、animation用に別の式を重複実装しない。
@@ -444,6 +448,7 @@ Exit criteria:
 
 - inspection artifactとmanufacturing artifactを分離する。
 - FDMはdefinition単位の3MF、laserはholeを含むnominal DXF、PurchasedはBOMへ出力する。
+- 現prototypeのcustom partは一旦すべてFDMとし、PLA/ABSをprocess profileで選択可能にする。LaserCutのdomain型、DXF exporterおよびtestは次prototype用に維持する。
 - FDM partごとにbuild orientationとcritical load directionをprocess metadataとして保持する。
 - kerfとFDM compensationをnominal geometryから分離したprocess profileとして維持する。
 - laser bed寸法をfiniteかつpositiveな型へ変換し、NaN/Infinityを拒否する。
@@ -554,8 +559,18 @@ Exit criteria:
 - `SurfaceContact`について、stableな`PlaneDatum`をworld座標へ変換し、engineering linear/angular toleranceに基づく面間距離と対向法線を検証するrelation validatorを追加した。接触面積検証は引き続きPhase 2の未完了項目である。
 - Phase 2 checkpoint時点でworkspace test 37件、format、workspace check、warning-as-errorのClippy、native/wasm32の`gimbal-core no_std` checkが成功した。
 - 再生成後のpreview-only manifestに`.blend`、静止画8枚、MP4 3本、inspection model、animationおよびvalidation reportを含む19 artifactを記録し、全SHA-256が実ファイルと一致することを確認した。
+- `SurfaceContact`にminimum contact areaを追加し、実solidを接触面座標へ変換して得た2断面の共通面積を検証するようにした。linear、area、volumeのnumerical toleranceはそれぞれ別の型付き値として扱う。
+- relation未定義の面接触または指定距離以内の近接を`Ignore/Warning/Error`から選ぶtyped policyを追加した。一般的なcollision allow-listは導入していない。
+- 通常の`gimbal validate`を`StructuralFast` scopeとし、高精細gear 9 definition/56 instanceを明示的に除外して、残る35 definition/13,861 pairをconservative proxy AABBで検査する経路を追加した。warm実行は約0.2秒、clean build込みで約5.2秒だった。
+- `StructuralFast`は471件のpotential structural interferenceと14件の未定義近接を報告した。これは確定solid interferenceではなく、大域的修正を優先順位付けする保守的候補である。高精細gearとexact solid Booleanを含む検査は`gimbal validate-full`へ分離した。
+- manifestから未検証の`pitch_sectors_ground_fixed: true`等のhard-coded boolean claimを撤去し、設計意図とvalidatorが確認した事実を分けた。
+- positive-volume、face contact、numerical noise、engineering interference、contact area不足およびstructural scope除外のfixtureを追加した。Phase 2のexit criteriaを満たしたためPhase 2を完了し、Phase 3を進行中へ変更した。
+- Phase 3の最初の配置修正として、4基のpitch gearboxをsector外側から左右sector間へ移した。sector mid-planeから内側へ近側支持板6.5 mm、第一gear layer 10.5 mm、遠側支持板24.0 mmとし、各寸法をvalidated parameterへ移した。
+- 接触pinionの外側支持板とretention preload部だけをsector外側へ残し、減速gear、近側gearbox plate、遠側plateおよびtie rodを内側へ反転した。gearbox shaftは固定値でずらさず、2枚の支持板の中点から位置と長さを導出するようにした。
+- 左右の遠側支持板間には52 mmの中央通路が残り、現在のコクピ幅45 mmを上回ることを自動テストした。これはX/Z方向を含む可動包絡の成立を意味せず、Phase 7までpreview-onlyである。
+- 内側移設後のpreview model、静止画8枚、`gimbal-motion.mp4`、pitch/roll gearbox動画および`.blend`を再生成した。軽量構造検査では507件のproxy候補を得ており、中央側の既存構造との整理をPhase 3で継続する。
 
-次の作業はPhase 2の共通`AssemblyValidator`とstructured `ValidationReport`である。実joint relationの登録は未成立形状を正当化しないよう、Phase 3–6の再設計と同時に行う。
+次の作業はPhase 3の固定pitch frameとsector荷重経路の再設計である。実joint relationの登録は未成立形状を正当化しないよう、Phase 3–6の再設計と同時に行う。
 
 ## 9. 完成の定義
 

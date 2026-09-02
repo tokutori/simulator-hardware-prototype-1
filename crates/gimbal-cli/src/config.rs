@@ -4,9 +4,9 @@ use std::fs;
 use std::path::Path;
 
 use gimbal_core::{
-    Angle, CockpitParameters, ContactUnitParameters, FrameParameters, GearSector, InternalGear,
-    Length, MotionParameters, PitchGearboxParameters, PitchSectorParameters, PrototypeParameters,
-    RollAxisParameters, SpurGear,
+    Angle, CockpitParameters, ContactUnitParameters, FdmMaterial, FrameParameters, GearSector,
+    InternalGear, Length, MotionParameters, PitchGearboxParameters, PitchSectorParameters,
+    PrototypeParameters, RollAxisParameters, SpurGear,
 };
 use serde::Deserialize;
 use thiserror::Error;
@@ -61,6 +61,9 @@ struct RawPitchGearbox {
     gear_face_width_mm: f64,
     shaft_diameter_mm: f64,
     side_plate_thickness_mm: f64,
+    near_plate_inboard_offset_mm: f64,
+    gear_plane_inboard_offset_mm: f64,
+    far_plate_inboard_offset_mm: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -127,7 +130,7 @@ struct RawLaser {
 #[derive(Clone, Debug)]
 pub struct LoadedConfig {
     pub parameters: PrototypeParameters,
-    pub fdm_material: String,
+    pub fdm_material: FdmMaterial,
     pub fdm_hole_compensation_mm: f64,
     pub laser_material: String,
     pub laser_kerf_mm: f64,
@@ -152,8 +155,8 @@ pub enum ConfigError {
     Angle(&'static str),
     #[error("invalid gear specification for {0}: {1}")]
     Gear(&'static str, gimbal_core::GearError),
-    #[error("this prototype currently supports PETG as its FDM material")]
-    UnsupportedFdmMaterial,
+    #[error("unsupported FDM material {0:?}; expected PLA, ABS, PETG, or ASA")]
+    UnsupportedFdmMaterial(String),
     #[error("fabrication process values must be finite and non-negative")]
     InvalidProcessProfile,
     #[error("laser bed dimensions must be positive")]
@@ -163,7 +166,7 @@ pub enum ConfigError {
 pub fn load(parameters_path: &Path, fabrication_path: &Path) -> Result<LoadedConfig, ConfigError> {
     let raw: RawParameters = read_toml(parameters_path)?;
     let fabrication: RawFabrication = read_toml(fabrication_path)?;
-    validate_fabrication(&fabrication)?;
+    let fdm_material = validate_fabrication(&fabrication)?;
 
     let ring_module = positive(raw.pitch_rings.module_mm, "pitch_rings.module_mm")?;
     let ring_pressure = degrees(
@@ -341,6 +344,18 @@ pub fn load(parameters_path: &Path, fabrication_path: &Path) -> Result<LoadedCon
                     raw.pitch_gearbox.side_plate_thickness_mm,
                     "pitch_gearbox.side_plate_thickness_mm",
                 )?,
+                near_plate_inboard_offset: positive(
+                    raw.pitch_gearbox.near_plate_inboard_offset_mm,
+                    "pitch_gearbox.near_plate_inboard_offset_mm",
+                )?,
+                gear_plane_inboard_offset: positive(
+                    raw.pitch_gearbox.gear_plane_inboard_offset_mm,
+                    "pitch_gearbox.gear_plane_inboard_offset_mm",
+                )?,
+                far_plate_inboard_offset: positive(
+                    raw.pitch_gearbox.far_plate_inboard_offset_mm,
+                    "pitch_gearbox.far_plate_inboard_offset_mm",
+                )?,
             },
             roll_axis: RollAxisParameters {
                 driven_gear: roll_driven,
@@ -411,7 +426,7 @@ pub fn load(parameters_path: &Path, fabrication_path: &Path) -> Result<LoadedCon
                 roll_limit: degrees(raw.motion.roll_limit_deg, "motion.roll_limit_deg")?,
             },
         },
-        fdm_material: fabrication.fdm.material,
+        fdm_material,
         fdm_hole_compensation_mm: fabrication.fdm.hole_compensation_mm,
         laser_material: fabrication.laser.material,
         laser_kerf_mm: fabrication.laser.kerf_mm,
@@ -422,10 +437,18 @@ pub fn load(parameters_path: &Path, fabrication_path: &Path) -> Result<LoadedCon
     })
 }
 
-fn validate_fabrication(raw: &RawFabrication) -> Result<(), ConfigError> {
-    if raw.fdm.material.to_uppercase() != "PETG" {
-        return Err(ConfigError::UnsupportedFdmMaterial);
-    }
+fn validate_fabrication(raw: &RawFabrication) -> Result<FdmMaterial, ConfigError> {
+    let fdm_material = match raw.fdm.material.to_ascii_uppercase().as_str() {
+        "PLA" => FdmMaterial::Pla,
+        "ABS" => FdmMaterial::Abs,
+        "PETG" => FdmMaterial::Petg,
+        "ASA" => FdmMaterial::Asa,
+        _ => {
+            return Err(ConfigError::UnsupportedFdmMaterial(
+                raw.fdm.material.clone(),
+            ));
+        }
+    };
     if !raw.fdm.hole_compensation_mm.is_finite()
         || raw.fdm.hole_compensation_mm < 0.0
         || !raw.laser.kerf_mm.is_finite()
@@ -436,7 +459,7 @@ fn validate_fabrication(raw: &RawFabrication) -> Result<(), ConfigError> {
     if raw.laser.bed_width_mm <= 0.0 || raw.laser.bed_height_mm <= 0.0 {
         return Err(ConfigError::InvalidLaserBed);
     }
-    Ok(())
+    Ok(fdm_material)
 }
 
 fn read_toml<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, ConfigError> {

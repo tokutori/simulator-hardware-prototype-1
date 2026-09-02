@@ -1,5 +1,5 @@
 [fdm]
-material = "PETG"
+material = "PLA"
 hole_compensation_mm = 0.20
 
 [laser]

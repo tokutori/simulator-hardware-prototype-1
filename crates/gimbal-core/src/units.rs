@@ -21,6 +21,9 @@ pub struct NonNegativeAngle(Angle);
 pub struct PositiveAngle(Angle);
 
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+pub struct PositiveArea(f64);
+
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
 pub struct PositiveVolume(f64);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -170,6 +173,22 @@ impl PositiveAngle {
     }
 }
 
+impl PositiveArea {
+    pub fn square_mm(value: f64) -> Result<Self, UnitError> {
+        if !value.is_finite() {
+            Err(UnitError::NonFinite)
+        } else if value <= 0.0 {
+            Err(UnitError::NotPositive)
+        } else {
+            Ok(Self(value))
+        }
+    }
+
+    pub const fn as_square_mm(self) -> f64 {
+        self.0
+    }
+}
+
 impl PositiveVolume {
     pub fn cubic_mm(value: f64) -> Result<Self, UnitError> {
         if !value.is_finite() {
@@ -203,6 +222,7 @@ mod tests {
     #[test]
     fn tolerance_quantities_preserve_positive_and_non_negative_contracts() {
         assert!(PositiveLength::mm(0.0).is_err());
+        assert!(PositiveArea::square_mm(0.0).is_err());
         assert!(PositiveVolume::cubic_mm(0.0).is_err());
         assert!(PositiveAngle::degrees(0.0).is_err());
         assert!(NonNegativeLength::mm(0.0).is_ok());

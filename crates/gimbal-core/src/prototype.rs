@@ -9,9 +9,9 @@ use core::f64::consts::{FRAC_PI_2, PI};
 use crate::{
     Angle, Assembly, Axis3, Body, BooleanOperation, ComponentDefinition, ComponentDefinitionId,
     ComponentInstance, ComponentLocation, ComponentRole, CoordinateExpr, ExternalGearPair,
-    FdmMaterial, FeatureBuilder, FeatureError, FeatureGraph, FrameGraph, FrameId, GearSector,
-    InternalGearPair, Joint, Kinematics, Length, LongitudinalEnd, Manufacturing, Point2,
-    Primitive3, RigidTransform, Rotation3, Side, SolidId, SpurGear, Translation3, VerticalEnd,
+    FeatureBuilder, FeatureError, FeatureGraph, FrameGraph, FrameId, GearSector, InternalGearPair,
+    Joint, Kinematics, Length, LongitudinalEnd, Manufacturing, Point2, Primitive3, RigidTransform,
+    Rotation3, Side, SolidId, SpurGear, Translation3, VerticalEnd,
 };
 
 #[derive(Clone, Debug)]
@@ -43,6 +43,12 @@ pub struct PitchGearboxParameters {
     pub gear_face_width: Length,
     pub shaft_radius: Length,
     pub side_plate_thickness: Length,
+    /// Distance from the pitch-sector mid-plane toward the opposite sector.
+    pub near_plate_inboard_offset: Length,
+    /// Distance from the pitch-sector mid-plane to the first reduction-gear layer.
+    pub gear_plane_inboard_offset: Length,
+    /// Distance from the pitch-sector mid-plane toward the opposite sector.
+    pub far_plate_inboard_offset: Length,
 }
 
 #[derive(Clone, Debug)]
@@ -116,6 +122,7 @@ pub enum PrototypeError {
     InvalidCockpitEnvelope,
     InvalidCockpitSuspension,
     InvalidGearboxGeometry,
+    InvalidGearboxPlacement,
     FrameBaseNotOnFloor,
     MovingEnvelopeHitsFloor,
     CarrierRailTooClose,
@@ -250,6 +257,23 @@ fn validate(parameters: &PrototypeParameters) -> Result<(), PrototypeError> {
     {
         return Err(PrototypeError::InvalidGearboxGeometry);
     }
+    let gearbox = &parameters.pitch_gearbox;
+    let plate_half = gearbox.side_plate_thickness.mm() * 0.5;
+    let gear_half = gearbox.gear_face_width.mm() * 0.5;
+    let layer_pitch = gearbox.gear_face_width.mm() + 1.0;
+    let near = gearbox.near_plate_inboard_offset.mm();
+    let gear = gearbox.gear_plane_inboard_offset.mm();
+    let far = gearbox.far_plate_inboard_offset.mm();
+    let sector_half = parameters.pitch_sector.face_width.mm() * 0.5;
+    let deepest_gear = gear + 2.0 * layer_pitch;
+    if near - plate_half <= sector_half
+        || gear - gear_half <= sector_half
+        || gear - near < plate_half + gear_half
+        || far - deepest_gear < plate_half + gear_half
+        || far >= parameters.pitch_sector.carrier_spacing.mm() * 0.5
+    {
+        return Err(PrototypeError::InvalidGearboxPlacement);
+    }
     if parameters.frame.lower_rail_depth.mm() <= 80.0
         || parameters.frame.upper_rail_height.mm() < 78.0
     {
@@ -338,7 +362,7 @@ struct Definitions {
     encoder_shaft: ComponentDefinitionId,
     gearbox_small: ComponentDefinitionId,
     gearbox_large: ComponentDefinitionId,
-    pitch_contact_inboard_plate: ComponentDefinitionId,
+    pitch_contact_outboard_plate: ComponentDefinitionId,
     contact_carriage_plate: ComponentDefinitionId,
     pitch_gearbox_far_plate: ComponentDefinitionId,
     pitch_gearbox_shaft: ComponentDefinitionId,
@@ -371,9 +395,7 @@ fn build_definitions(
     assembly: &mut Assembly,
     p: &PrototypeParameters,
 ) -> Result<Definitions, PrototypeError> {
-    let fdm = Manufacturing::Fdm {
-        material: FdmMaterial::Petg,
-    };
+    let fdm = Manufacturing::Fdm;
     let sector = dual_sector_solid(builder, p)?;
     let sector = add_solid_definition(
         assembly,
@@ -546,11 +568,11 @@ fn build_definitions(
             [0.80, 0.28, 0.70, 1.0],
         ),
     )?;
-    let pitch_contact_inboard_plate = add_solid_definition(
+    let pitch_contact_outboard_plate = add_solid_definition(
         assembly,
-        "pitch_contact_inboard_plate",
-        ComponentRole::PitchContactInboardPlate,
-        pitch_contact_inboard_plate_solid(builder, p)?,
+        "pitch_contact_outboard_plate",
+        ComponentRole::PitchContactOutboardPlate,
+        pitch_contact_outboard_plate_solid(builder, p)?,
         fdm,
         [0.20, 0.22, 0.27, 1.0],
     );
@@ -574,7 +596,14 @@ fn build_definitions(
         assembly,
         "pitch_gearbox_shaft",
         ComponentRole::PitchGearboxShaft,
-        cylinder_y(builder, p.pitch_gearbox.shaft_radius.mm() - 0.15, 22.0)?,
+        cylinder_y(
+            builder,
+            p.pitch_gearbox.shaft_radius.mm() - 0.15,
+            p.pitch_gearbox.far_plate_inboard_offset.mm()
+                - p.pitch_gearbox.near_plate_inboard_offset.mm()
+                + p.pitch_gearbox.side_plate_thickness.mm()
+                + 2.0,
+        )?,
         Manufacturing::Purchased,
         [0.62, 0.66, 0.70, 1.0],
     );
@@ -582,7 +611,13 @@ fn build_definitions(
         assembly,
         "pitch_gearbox_m3_tie_rod",
         ComponentRole::PitchGearboxTieRod,
-        cylinder_y(builder, 1.5, 20.0)?,
+        cylinder_y(
+            builder,
+            1.5,
+            p.pitch_gearbox.far_plate_inboard_offset.mm()
+                - p.pitch_gearbox.near_plate_inboard_offset.mm()
+                + p.pitch_gearbox.side_plate_thickness.mm(),
+        )?,
         Manufacturing::Purchased,
         [0.70, 0.73, 0.76, 1.0],
     );
@@ -816,7 +851,7 @@ fn build_definitions(
         encoder_shaft,
         gearbox_small,
         gearbox_large,
-        pitch_contact_inboard_plate,
+        pitch_contact_outboard_plate,
         contact_carriage_plate,
         pitch_gearbox_far_plate,
         pitch_gearbox_shaft,
@@ -1017,11 +1052,11 @@ fn build_contact_unit(
     let drive_radius = internal.pitch_radius() - p.contact_unit.drive_pinion.pitch_radius();
     let offset = p.contact_unit.branch_angle_offset.as_radians();
     let mut branch_centers = [[0.0; 2]; 2];
-    // The reduction train sits entirely on the outboard side of the sector.
-    // Keep an explicit gap between the sector flanges, the bearing plate, and
-    // each gear layer so the model does not rely on coincident/intersecting
-    // solids to look assembled.
-    let outer_layer_y = y + side_sign * 10.5;
+    // The reduction train sits between the two sector planes. Offsets are
+    // measured from each sector mid-plane toward the assembly centre so the
+    // left/right units remain exact mirrors of one another.
+    let inward_sign = -side_sign;
+    let gearbox_layer_y = y + inward_sign * p.pitch_gearbox.gear_plane_inboard_offset.mm();
 
     for (branch, branch_offset) in [-offset, offset].into_iter().enumerate() {
         let angle = end_angle + branch_offset;
@@ -1073,7 +1108,7 @@ fn build_contact_unit(
             &format!("{stem}_distribution_branch"),
             d.gearbox_small,
             frame,
-            RigidTransform::translated(0.0, outer_layer_y - y, 0.0),
+            RigidTransform::translated(0.0, gearbox_layer_y - y, 0.0),
             base_location.with_ordinal((branch + 1) as u16),
         );
     }
@@ -1130,13 +1165,13 @@ fn build_contact_unit(
     let radial = [libm::cos(end_angle), libm::sin(end_angle)];
     let tangent = [-radial[1], radial[0]];
     let block_center = encoder_center;
-    let bearing_plane_y = y + side_sign * 6.5;
+    let outboard_support_plane_y = y + side_sign * p.pitch_gearbox.near_plate_inboard_offset.mm();
     add_located_instance(
         assembly,
         &format!("{encoder_stem}_bearing_block"),
         d.bearing_block,
         pitch_frame,
-        RigidTransform::translated(block_center[0], bearing_plane_y, block_center[1])
+        RigidTransform::translated(block_center[0], outboard_support_plane_y, block_center[1])
             .compose(RigidTransform::rotated(Axis3::Y, -end_angle)),
         base_location,
     );
@@ -1148,7 +1183,7 @@ fn build_contact_unit(
             pitch_frame,
             RigidTransform::translated(
                 block_center[0] - radial[0] * 7.0 + tangent[0] * tangent_offset,
-                bearing_plane_y,
+                outboard_support_plane_y,
                 block_center[1] - radial[1] * 7.0 + tangent[1] * tangent_offset,
             )
             .compose(RigidTransform::rotated(Axis3::Y, -end_angle)),
@@ -1174,7 +1209,7 @@ fn build_contact_unit(
     let distributor_frame = revolute_frame(
         frames,
         pitch_frame,
-        [central[0], outer_layer_y, central[1]],
+        [central[0], gearbox_layer_y, central[1]],
         Axis3::Y,
         CoordinateExpr::pitch(drive_ratio),
     );
@@ -1200,18 +1235,18 @@ fn build_contact_unit(
     let compound_a_frame = revolute_frame(
         frames,
         pitch_frame,
-        [compound_a[0], outer_layer_y, compound_a[1]],
+        [compound_a[0], gearbox_layer_y, compound_a[1]],
         Axis3::Y,
         CoordinateExpr::pitch(-drive_ratio * gearbox_ratio),
     );
     let input_frame = revolute_frame(
         frames,
         pitch_frame,
-        [input_center[0], outer_layer_y, input_center[1]],
+        [input_center[0], gearbox_layer_y, input_center[1]],
         Axis3::Y,
         CoordinateExpr::pitch(drive_ratio * gearbox_ratio * gearbox_ratio),
     );
-    let layer = side_sign * (p.pitch_gearbox.gear_face_width.mm() + 1.0);
+    let layer = inward_sign * (p.pitch_gearbox.gear_face_width.mm() + 1.0);
     add_located_instance(
         assembly,
         &format!("pitch_gearbox_{side}_{end}_stage2_driven"),
@@ -1248,13 +1283,13 @@ fn build_contact_unit(
         (central[0] + input_center[0]) * 0.5,
         (central[1] + input_center[1]) * 0.5,
     ];
-    let inboard_plane_y = y - side_sign * 6.5;
+    let inboard_near_plane_y = y + inward_sign * p.pitch_gearbox.near_plate_inboard_offset.mm();
     add_located_instance(
         assembly,
-        &format!("pitch_contact_{side}_{end}_inboard_plate"),
-        d.pitch_contact_inboard_plate,
+        &format!("pitch_contact_{side}_{end}_outboard_plate"),
+        d.pitch_contact_outboard_plate,
         pitch_frame,
-        RigidTransform::translated(midpoint[0], inboard_plane_y, midpoint[1])
+        RigidTransform::translated(midpoint[0], outboard_support_plane_y, midpoint[1])
             .compose(RigidTransform::rotated(Axis3::Y, -end_angle)),
         base_location,
     );
@@ -1280,7 +1315,7 @@ fn build_contact_unit(
             pitch_frame,
             RigidTransform::translated(
                 (midpoint[0] + arm_target[0]) * 0.5,
-                inboard_plane_y,
+                inboard_near_plane_y,
                 (midpoint[1] + arm_target[1]) * 0.5,
             )
             .compose(RigidTransform::rotated(
@@ -1295,7 +1330,7 @@ fn build_contact_unit(
                 &format!("pitch_contact_{side}_{end}_crossbar_clamp"),
                 d.moving_crossbar_clamp,
                 pitch_frame,
-                RigidTransform::translated(arm_target[0], inboard_plane_y, arm_target[1]),
+                RigidTransform::translated(arm_target[0], inboard_near_plane_y, arm_target[1]),
                 base_location.with_vertical_end(vertical_end),
             );
         }
@@ -1305,7 +1340,7 @@ fn build_contact_unit(
                 &format!("pitch_contact_{side}_{end}_{label}_{joint}_m3"),
                 d.m3_structural_fastener,
                 pitch_frame,
-                RigidTransform::translated(point[0], inboard_plane_y, point[1]),
+                RigidTransform::translated(point[0], inboard_near_plane_y, point[1]),
                 base_location
                     .with_vertical_end(vertical_end)
                     .with_ordinal(ordinal),
@@ -1317,7 +1352,7 @@ fn build_contact_unit(
         &format!("pitch_gearbox_{side}_{end}_contact_carriage_plate"),
         d.contact_carriage_plate,
         pitch_frame,
-        RigidTransform::translated(plate_center[0], bearing_plane_y, plate_center[1])
+        RigidTransform::translated(plate_center[0], inboard_near_plane_y, plate_center[1])
             .compose(RigidTransform::rotated(Axis3::Y, -end_angle)),
         base_location,
     );
@@ -1326,8 +1361,12 @@ fn build_contact_unit(
         &format!("pitch_gearbox_{side}_{end}_far_plate"),
         d.pitch_gearbox_far_plate,
         pitch_frame,
-        RigidTransform::translated(plate_center[0], y + side_sign * 24.0, plate_center[1])
-            .compose(RigidTransform::rotated(Axis3::Y, -end_angle)),
+        RigidTransform::translated(
+            plate_center[0],
+            y + inward_sign * p.pitch_gearbox.far_plate_inboard_offset.mm(),
+            plate_center[1],
+        )
+        .compose(RigidTransform::rotated(Axis3::Y, -end_angle)),
         base_location,
     );
     for (index, tie) in pitch_gearbox_tie_points().into_iter().enumerate() {
@@ -1336,9 +1375,16 @@ fn build_contact_unit(
             &format!("pitch_gearbox_{side}_{end}_m3_tie_{}", index + 1),
             d.pitch_gearbox_tie_rod,
             pitch_frame,
-            RigidTransform::translated(plate_center[0], y + side_sign * 15.25, plate_center[1])
-                .compose(RigidTransform::rotated(Axis3::Y, -end_angle))
-                .compose(RigidTransform::translated(tie[0], 0.0, tie[1])),
+            RigidTransform::translated(
+                plate_center[0],
+                y + inward_sign
+                    * (p.pitch_gearbox.near_plate_inboard_offset.mm()
+                        + p.pitch_gearbox.far_plate_inboard_offset.mm())
+                    * 0.5,
+                plate_center[1],
+            )
+            .compose(RigidTransform::rotated(Axis3::Y, -end_angle))
+            .compose(RigidTransform::translated(tie[0], 0.0, tie[1])),
             base_location.with_ordinal((index + 1) as u16),
         );
     }
@@ -1352,7 +1398,15 @@ fn build_contact_unit(
             &format!("pitch_gearbox_{side}_{end}_{shaft}_shaft"),
             d.pitch_gearbox_shaft,
             frame,
-            RigidTransform::translated(0.0, side_sign * 15.25, 0.0),
+            RigidTransform::translated(
+                0.0,
+                inward_sign
+                    * ((p.pitch_gearbox.near_plate_inboard_offset.mm()
+                        + p.pitch_gearbox.far_plate_inboard_offset.mm())
+                        * 0.5
+                        - p.pitch_gearbox.gear_plane_inboard_offset.mm()),
+                0.0,
+            ),
             base_location.with_ordinal(ordinal),
         );
     }
@@ -1916,7 +1970,7 @@ fn pitch_contact_carriage_plate_solid(
     Ok(plate)
 }
 
-fn pitch_contact_inboard_plate_solid(
+fn pitch_contact_outboard_plate_solid(
     builder: &mut FeatureBuilder,
     p: &PrototypeParameters,
 ) -> Result<SolidId, PrototypeError> {
@@ -2260,9 +2314,7 @@ fn gear_definition_y(
         name,
         style.role,
         solid,
-        Manufacturing::Fdm {
-            material: FdmMaterial::Petg,
-        },
+        Manufacturing::Fdm,
         style.color,
     ))
 }
@@ -2290,9 +2342,7 @@ fn gear_definition_x(
         name,
         style.role,
         solid,
-        Manufacturing::Fdm {
-            material: FdmMaterial::Petg,
-        },
+        Manufacturing::Fdm,
         style.color,
     ))
 }
@@ -2359,9 +2409,7 @@ fn annulus_definition_y(
         name,
         style.role,
         annulus,
-        Manufacturing::Fdm {
-            material: FdmMaterial::Petg,
-        },
+        Manufacturing::Fdm,
         style.color,
     ))
 }
@@ -2435,7 +2483,7 @@ fn polygon_sheet_definition(
             thickness,
             assembly_solid: solid,
         },
-        manufacturing: Manufacturing::LaserCut,
+        manufacturing: Manufacturing::Fdm,
         color_rgba: color,
         datums: Default::default(),
     }))

@@ -34,6 +34,9 @@ chord_tolerance_mm = 0.03
 gear_face_width_mm = 4.0
 shaft_diameter_mm = 4.0
 side_plate_thickness_mm = 3.0
+near_plate_inboard_offset_mm = 6.5
+gear_plane_inboard_offset_mm = 10.5
+far_plate_inboard_offset_mm = 24.0
 
 [roll_axis]
 module_mm = 1.0

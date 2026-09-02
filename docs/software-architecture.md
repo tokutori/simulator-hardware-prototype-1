@@ -163,7 +163,7 @@ gimbal clean-output
 
 ```rust
 enum Manufacturing {
-    Fdm { material: FdmMaterial },
+    Fdm,
     LaserCut,
     Purchased,
 }

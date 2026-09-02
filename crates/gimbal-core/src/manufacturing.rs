@@ -4,15 +4,27 @@
 pub enum FdmMaterial {
     Petg,
     Pla,
+    Abs,
     Asa,
 }
 
 /// Nominal fabrication intent. Machine calibration belongs to the I/O/process layer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Manufacturing {
-    Fdm { material: FdmMaterial },
+    Fdm,
     LaserCut,
     Purchased,
+}
+
+impl FdmMaterial {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Petg => "PETG",
+            Self::Pla => "PLA",
+            Self::Abs => "ABS",
+            Self::Asa => "ASA",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -53,7 +65,7 @@ pub enum ComponentRole {
     PitchRetentionShaft,
     PitchGearboxSmallGear,
     PitchGearboxLargeGear,
-    PitchContactInboardPlate,
+    PitchContactOutboardPlate,
     PitchContactCarriagePlate,
     PitchGearboxFarPlate,
     PitchGearboxShaft,

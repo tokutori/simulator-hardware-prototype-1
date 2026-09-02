@@ -8,16 +8,17 @@ use std::path::Path;
 
 use config::LoadedConfig;
 use gimbal_core::{
-    Angle, Body, Manufacturing, NumericalTolerance, PitchRollCommand, PositiveLength,
-    PositiveVolume, PrototypeDesign, RegionNode, TriangleMesh, build_prototype,
+    Angle, Body, Manufacturing, NonNegativeLength, NumericalTolerance, PitchRollCommand,
+    PositiveArea, PositiveLength, PositiveVolume, PrototypeDesign, RegionNode, TriangleMesh,
+    build_prototype,
 };
 use gimbal_export::{
     AnimationParameters, ExportPart, sha256_file, write_3mf, write_animated_gltf, write_binary_stl,
     write_dxf_profile, write_mesh_3mf, write_obj,
 };
 use gimbal_kernel_manifold::{
-    AssemblyValidator, Evaluator, ValidationIssueKind, ValidationProgress, ValidationReport,
-    ValidatorSettings,
+    AssemblyValidator, Evaluator, UnrelatedProximityPolicy, ValidationIssueKind,
+    ValidationProgress, ValidationReport, ValidationScope, ValidatorSettings,
 };
 use serde_json::{Value, json};
 
@@ -40,10 +41,11 @@ fn run() -> Result<(), Box<dyn Error>> {
     match command.as_str() {
         "generate" => generate(&workspace, &loaded, GenerationMode::Validated),
         "generate-preview" => generate(&workspace, &loaded, GenerationMode::PreviewOnly),
-        "validate" => validate(&workspace, &loaded),
+        "validate" => validate(&workspace, &loaded, ValidationScope::StructuralFast),
+        "validate-full" => validate(&workspace, &loaded, ValidationScope::Full),
         "clean-output" => clean_output(&workspace),
         unknown => Err(format!(
-            "unknown command {unknown:?}; expected generate, generate-preview, validate, or clean-output"
+            "unknown command {unknown:?}; expected generate, generate-preview, validate, validate-full, or clean-output"
         )
         .into()),
     }
@@ -55,10 +57,14 @@ enum GenerationMode {
     PreviewOnly,
 }
 
-fn validate(workspace: &Path, loaded: &LoadedConfig) -> Result<(), Box<dyn Error>> {
+fn validate(
+    workspace: &Path,
+    loaded: &LoadedConfig,
+    scope: ValidationScope,
+) -> Result<(), Box<dyn Error>> {
     let design = build_prototype(&loaded.parameters)
         .map_err(|error| format!("prototype design rejected: {error:?}"))?;
-    let report = validate_assembly(&design)?;
+    let report = validate_assembly(&design, scope)?;
     write_validation_report(workspace, &design, &report)?;
     for validated in &report.definitions {
         let definition = design
@@ -71,9 +77,10 @@ fn validate(workspace: &Path, loaded: &LoadedConfig) -> Result<(), Box<dyn Error
         );
     }
     println!(
-        "validation complete: {} definitions, {} instances, {} pair candidates, {} errors, {} warnings",
-        design.assembly.definitions().len(),
-        design.assembly.instances().len(),
+        "validation complete ({:?}): {} definitions checked ({} skipped), {} pair candidates, {} errors, {} warnings",
+        report.scope,
+        report.definitions.len(),
+        report.skipped_definitions.len(),
         report.broad_phase_candidates,
         report.error_count(),
         report.warning_count(),
@@ -90,7 +97,7 @@ fn generate(
     let design = build_prototype(&loaded.parameters)
         .map_err(|error| format!("prototype design rejected: {error:?}"))?;
     let validation_report = if mode == GenerationMode::Validated {
-        let report = validate_assembly(&design)?;
+        let report = validate_assembly(&design, ValidationScope::Full)?;
         write_validation_report(workspace, &design, &report)?;
         require_valid_assembly(&report)?;
         Some(report)
@@ -140,7 +147,7 @@ fn generate(
         }));
         match (mode, definition.manufacturing) {
             (GenerationMode::PreviewOnly, _) => {}
-            (GenerationMode::Validated, Manufacturing::Fdm { .. }) => {
+            (GenerationMode::Validated, Manufacturing::Fdm) => {
                 let path = fdm_dir.join(format!("{}.3mf", definition.name));
                 write_mesh_3mf(&definition.name, &mesh, &path)?;
                 fabrication_artifacts.push(path);
@@ -253,6 +260,8 @@ fn generate(
         output.join("preview/pitch-gearbox-motion.mp4"),
         output.join("preview/roll-gearbox-motion.mp4"),
         output.join("validation-report.json"),
+        output.join("validation-report-structural.json"),
+        output.join("validation-report-full.json"),
     ] {
         if optional.is_file() {
             artifact_paths.push(optional);
@@ -298,28 +307,23 @@ fn generate(
             "internal_reference_teeth": sector.internal_reference().teeth(),
             "sector_half_angle_deg": sector.half_angle().as_degrees(),
             "physical_sector_count": 4,
-            "pitch_sectors_ground_fixed": true,
             "carrier_count": 2,
             "contact_unit_count": 4,
-            "contact_units_move_with_pitch": true,
             "drive_pinions_per_unit": 2,
             "drive_pinion_count": 8,
             "retention_encoder_pinion_count": 4,
             "pitch_gearbox_count": 4,
             "roll_gearbox_count": 2,
-            "roll_gearboxes_below_roll_axis": true,
-            "roll_mechanism_moves_with_pitch": true,
             "pitch_unit_to_roll_frame_brace_count": 8,
             "cockpit_length_mm": loaded.parameters.cockpit.length.mm(),
             "cockpit_suspension_drop_mm": loaded.parameters.cockpit.suspension_drop.mm(),
-            "continuous_roll_shaft": true,
             "upper_rail_height_mm": loaded.parameters.frame.upper_rail_height.mm(),
             "lower_rail_depth_mm": loaded.parameters.frame.lower_rail_depth.mm(),
             "moving_crossbar_station_mm": loaded.parameters.frame.moving_crossbar_station.mm(),
             "floor_top_below_axis_mm": loaded.parameters.frame.floor_top_below_axis.mm(),
-            "fixed_lower_frame_bears_directly_on_floor": true,
-            "motor_bodies_included": false,
-            "encoder_bodies_included": false
+            "pitch_gearbox_near_plate_inboard_offset_mm": loaded.parameters.pitch_gearbox.near_plate_inboard_offset.mm(),
+            "pitch_gearbox_gear_plane_inboard_offset_mm": loaded.parameters.pitch_gearbox.gear_plane_inboard_offset.mm(),
+            "pitch_gearbox_far_plate_inboard_offset_mm": loaded.parameters.pitch_gearbox.far_plate_inboard_offset.mm()
         },
         "ratios": {
             "pitch_drive_pinion_to_sector_reference": design.pitch_drive_pair.ratio(),
@@ -336,7 +340,7 @@ fn generate(
         },
         "validation": validation_json,
         "process_profiles": {
-            "fdm_material": loaded.fdm_material,
+            "fdm_material": loaded.fdm_material.as_str(),
             "fdm_hole_compensation_mm": loaded.fdm_hole_compensation_mm,
             "laser_material": loaded.laser_material,
             "laser_kerf_mm": loaded.laser_kerf_mm,
@@ -346,6 +350,10 @@ fn generate(
         "instances": instance_manifest,
         "artifacts": artifacts,
         "unverified": [
+            "declared mechanism intent: pitch sectors fixed to world and contact units move with pitch",
+            "declared mechanism intent: roll gearboxes are below the roll axis and move with pitch",
+            "declared mechanism intent: roll shaft is continuous and the lower frame bears directly on the floor",
+            "motor and encoder bodies are intentionally omitted from this prototype",
             "load capacity, stiffness, fatigue life, and tooth contact stress",
             "motor, encoder, bearing, brake, and emergency-stop selection",
             "leaf-spring rate and preload",
@@ -366,7 +374,10 @@ fn generate(
     Ok(())
 }
 
-fn validate_assembly(design: &PrototypeDesign) -> Result<ValidationReport, Box<dyn Error>> {
+fn validate_assembly(
+    design: &PrototypeDesign,
+    scope: ValidationScope,
+) -> Result<ValidationReport, Box<dyn Error>> {
     let zero_pose = design
         .kinematics
         .pose(PitchRollCommand {
@@ -375,11 +386,16 @@ fn validate_assembly(design: &PrototypeDesign) -> Result<ValidationReport, Box<d
         })
         .map_err(|error| format!("zero pose rejected: {error:?}"))?;
     let settings = ValidatorSettings {
+        scope,
         numerical_tolerance: NumericalTolerance {
             linear_epsilon: PositiveLength::mm(1.0e-6).expect("validator epsilon is positive"),
+            area_epsilon: PositiveArea::square_mm(1.0e-8).expect("validator epsilon is positive"),
             volume_epsilon: PositiveVolume::cubic_mm(1.0e-7)
                 .expect("validator epsilon is positive"),
         },
+        unrelated_proximity_threshold: NonNegativeLength::mm(0.05)
+            .expect("validator threshold is non-negative"),
+        unrelated_proximity_policy: UnrelatedProximityPolicy::Warning,
     };
     AssemblyValidator::new(&design.graph, &design.assembly, &zero_pose, settings)
         .validate_with_progress(|progress| match progress {
@@ -420,10 +436,13 @@ fn write_validation_report(
 ) -> Result<(), Box<dyn Error>> {
     let output = workspace.join("output");
     fs::create_dir_all(&output)?;
-    fs::write(
-        output.join("validation-report.json"),
-        serde_json::to_vec_pretty(&validation_report_json(design, report))?,
-    )?;
+    let bytes = serde_json::to_vec_pretty(&validation_report_json(design, report))?;
+    fs::write(output.join("validation-report.json"), &bytes)?;
+    let scoped_name = match report.scope {
+        ValidationScope::StructuralFast => "validation-report-structural.json",
+        ValidationScope::Full => "validation-report-full.json",
+    };
+    fs::write(output.join(scoped_name), bytes)?;
     Ok(())
 }
 
@@ -464,6 +483,12 @@ fn validation_report_json(design: &PrototypeDesign, report: &ValidationReport) -
                     "unexpected_interference",
                     json!({ "intersection_volume_mm3": intersection_volume_mm3 }),
                 ),
+                ValidationIssueKind::PotentialStructuralInterference {
+                    proxy_aabb_overlap_mm3,
+                } => (
+                    "potential_structural_interference",
+                    json!({ "proxy_aabb_overlap_mm3": proxy_aabb_overlap_mm3 }),
+                ),
                 ValidationIssueKind::SurfaceContactSeparation {
                     distance_mm,
                     allowed_mm,
@@ -481,6 +506,26 @@ fn validation_report_json(design: &PrototypeDesign, report: &ValidationReport) -
                         "allowed_radians": allowed_radians
                     }),
                 ),
+                ValidationIssueKind::SurfaceContactAreaInsufficient {
+                    contact_area_mm2,
+                    minimum_area_mm2,
+                } => (
+                    "surface_contact_area_insufficient",
+                    json!({
+                        "contact_area_mm2": contact_area_mm2,
+                        "minimum_area_mm2": minimum_area_mm2
+                    }),
+                ),
+                ValidationIssueKind::UnspecifiedProximity {
+                    gap_mm,
+                    threshold_mm,
+                } => (
+                    "unspecified_proximity",
+                    json!({
+                        "gap_mm": gap_mm,
+                        "threshold_mm": threshold_mm
+                    }),
+                ),
             };
             json!({
                 "severity": format!("{:?}", issue.severity).to_lowercase(),
@@ -491,12 +536,39 @@ fn validation_report_json(design: &PrototypeDesign, report: &ValidationReport) -
             })
         })
         .collect::<Vec<_>>();
+    let skipped_definitions = report
+        .skipped_definitions
+        .iter()
+        .map(|id| {
+            let definition = design
+                .assembly
+                .definition(*id)
+                .expect("validation report references an inserted definition");
+            json!({
+                "definition_id": id.index(),
+                "name": definition.name,
+                "role": format!("{:?}", definition.role),
+            })
+        })
+        .collect::<Vec<_>>();
     json!({
+        "complete": true,
+        "preview_only": false,
         "valid": report.is_valid(),
+        "scope": match report.scope {
+            ValidationScope::StructuralFast => "structural-fast",
+            ValidationScope::Full => "full",
+        },
         "definition_count": report.definitions.len(),
+        "skipped_definition_count": report.skipped_definitions.len(),
+        "skipped_definitions": skipped_definitions,
+        "skipped_instance_count": report.skipped_instances.len(),
         "total_instance_pairs": report.total_instance_pairs,
+        "eligible_instance_pairs": report.eligible_instance_pairs,
         "broad_phase_candidates": report.broad_phase_candidates,
-        "exact_pair_checks": report.exact_pair_checks.len(),
+        "unrelated_proximity_checks": report.unrelated_proximity_checks,
+        "skipped_relation_checks": report.skipped_relation_checks,
+        "pair_checks": report.pair_checks.len(),
         "error_count": report.error_count(),
         "warning_count": report.warning_count(),
         "issues": issues,
@@ -521,7 +593,7 @@ fn clean_output(workspace: &Path) -> Result<(), Box<dyn Error>> {
 
 fn manufacturing_name(manufacturing: Manufacturing) -> &'static str {
     match manufacturing {
-        Manufacturing::Fdm { .. } => "fdm",
+        Manufacturing::Fdm => "fdm",
         Manufacturing::LaserCut => "laser-cut",
         Manufacturing::Purchased => "purchased",
     }
@@ -535,13 +607,17 @@ mod tests {
         PrototypeDesign, RigidTransform, Side, VerticalEnd,
     };
 
-    fn load_design() -> PrototypeDesign {
+    fn load_configuration() -> config::LoadedConfig {
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let loaded = config::load(
+        config::load(
             &workspace.join("parameters.toml"),
             &workspace.join("fabrication.toml"),
         )
-        .expect("repository parameters must be valid");
+        .expect("repository parameters must be valid")
+    }
+
+    fn load_design() -> PrototypeDesign {
+        let loaded = load_configuration();
         build_prototype(&loaded.parameters).expect("repository design must be valid")
     }
 
@@ -750,6 +826,67 @@ mod tests {
                 - distance(roll_shaft_pitched, roll_gearbox_pitched))
             .abs()
                 < 1.0e-8
+        );
+    }
+
+    #[test]
+    fn pitch_gearboxes_are_between_the_two_sector_planes() {
+        let design = load_design();
+        let mut far_plate_y = [0.0; 2];
+        for (side_index, side) in [Side::Left, Side::Right].into_iter().enumerate() {
+            for end in [LongitudinalEnd::Front, LongitudinalEnd::Rear] {
+                let location = ComponentLocation::new()
+                    .with_side(side)
+                    .with_longitudinal_end(end);
+                let sector_y = instance_pose(
+                    &design,
+                    located(ComponentRole::PitchSector, location),
+                    0.0,
+                    0.0,
+                )
+                .translation[1];
+                let outboard_plate_y = instance_pose(
+                    &design,
+                    located(ComponentRole::PitchContactOutboardPlate, location),
+                    0.0,
+                    0.0,
+                )
+                .translation[1];
+                let near_plate_y = instance_pose(
+                    &design,
+                    located(ComponentRole::PitchContactCarriagePlate, location),
+                    0.0,
+                    0.0,
+                )
+                .translation[1];
+                let far_y = instance_pose(
+                    &design,
+                    located(ComponentRole::PitchGearboxFarPlate, location),
+                    0.0,
+                    0.0,
+                )
+                .translation[1];
+                let input_gear_y = instance_pose(
+                    &design,
+                    located(
+                        ComponentRole::PitchGearboxSmallGear,
+                        location.with_ordinal(5),
+                    ),
+                    0.0,
+                    0.0,
+                )
+                .translation[1];
+
+                assert!(outboard_plate_y.abs() > sector_y.abs());
+                assert!(near_plate_y.abs() < sector_y.abs());
+                assert!(input_gear_y.abs() < near_plate_y.abs());
+                assert!(far_y.abs() < input_gear_y.abs());
+                far_plate_y[side_index] = far_y;
+            }
+        }
+        assert!(
+            far_plate_y[1] - far_plate_y[0] > load_configuration().parameters.cockpit.width.mm(),
+            "the opposing inboard gearbox plates must leave a central cockpit corridor"
         );
     }
 
@@ -1203,7 +1340,7 @@ mod tests {
                 ],
             ),
             (
-                located(ComponentRole::PitchContactInboardPlate, right_front),
+                located(ComponentRole::PitchContactOutboardPlate, right_front),
                 &[
                     located(ComponentRole::PitchDrivePinion, right_front.with_ordinal(1)),
                     located(ComponentRole::PitchDrivePinion, right_front.with_ordinal(2)),

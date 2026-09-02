@@ -12,9 +12,9 @@ use thiserror::Error;
 mod validation;
 
 pub use validation::{
-    AssemblyValidator, DefinitionValidation, PairValidation, ValidationError, ValidationIssue,
-    ValidationIssueKind, ValidationProgress, ValidationReport, ValidationSeverity,
-    ValidatorSettings,
+    AssemblyValidator, DefinitionValidation, PairCheckMethod, PairValidation,
+    UnrelatedProximityPolicy, ValidationError, ValidationIssue, ValidationIssueKind,
+    ValidationProgress, ValidationReport, ValidationScope, ValidationSeverity, ValidatorSettings,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -23,6 +23,21 @@ pub struct SolidMetrics {
     pub surface_area_mm2: f64,
     pub vertices: usize,
     pub triangles: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GeometryEvaluationMode {
+    StructuralProxy,
+    Robust,
+}
+
+impl GeometryEvaluationMode {
+    const fn boolean_engine(self) -> BooleanEngine {
+        match self {
+            Self::StructuralProxy => BooleanEngine::Exact,
+            Self::Robust => BooleanEngine::Robust,
+        }
+    }
 }
 
 #[derive(Debug, Error)]
@@ -40,13 +55,19 @@ pub enum KernelError {
 pub struct Evaluator<'a> {
     graph: &'a FeatureGraph,
     cache: Vec<Option<Manifold>>,
+    mode: GeometryEvaluationMode,
 }
 
 impl<'a> Evaluator<'a> {
     pub fn new(graph: &'a FeatureGraph) -> Self {
+        Self::with_mode(graph, GeometryEvaluationMode::Robust)
+    }
+
+    pub fn with_mode(graph: &'a FeatureGraph, mode: GeometryEvaluationMode) -> Self {
         Self {
             graph,
             cache: vec![None; graph.solid_count()],
+            mode,
         }
     }
 
@@ -84,13 +105,22 @@ impl<'a> Evaluator<'a> {
             } => {
                 let lhs = self.evaluate(lhs)?;
                 let rhs = self.evaluate(rhs)?;
-                match operation {
-                    BooleanOperation::Union => lhs.union_with_engine(&rhs, BooleanEngine::Robust),
-                    BooleanOperation::Difference => {
-                        lhs.difference_with_engine(&rhs, BooleanEngine::Robust)
+                match (self.mode, operation) {
+                    (GeometryEvaluationMode::StructuralProxy, BooleanOperation::Union) => {
+                        bounding_box_union(&lhs, &rhs)
                     }
-                    BooleanOperation::Intersection => {
-                        lhs.intersection_with_engine(&rhs, BooleanEngine::Robust)
+                    (GeometryEvaluationMode::StructuralProxy, BooleanOperation::Difference) => lhs,
+                    (GeometryEvaluationMode::StructuralProxy, BooleanOperation::Intersection) => {
+                        lhs
+                    }
+                    (_, BooleanOperation::Union) => {
+                        lhs.union_with_engine(&rhs, self.mode.boolean_engine())
+                    }
+                    (_, BooleanOperation::Difference) => {
+                        lhs.difference_with_engine(&rhs, self.mode.boolean_engine())
+                    }
+                    (_, BooleanOperation::Intersection) => {
+                        lhs.intersection_with_engine(&rhs, self.mode.boolean_engine())
                     }
                 }
             }
@@ -160,6 +190,22 @@ impl<'a> Evaluator<'a> {
             ),
         }
     }
+}
+
+fn bounding_box_union(lhs: &Manifold, rhs: &Manifold) -> Manifold {
+    let lhs_bounds = lhs.bounding_box();
+    let rhs_bounds = rhs.bounding_box();
+    let minimum = Vec3::new(
+        lhs_bounds.min.x.min(rhs_bounds.min.x),
+        lhs_bounds.min.y.min(rhs_bounds.min.y),
+        lhs_bounds.min.z.min(rhs_bounds.min.z),
+    );
+    let maximum = Vec3::new(
+        lhs_bounds.max.x.max(rhs_bounds.max.x),
+        lhs_bounds.max.y.max(rhs_bounds.max.y),
+        lhs_bounds.max.z.max(rhs_bounds.max.z),
+    );
+    Manifold::cube(maximum - minimum, false).translate(minimum)
 }
 
 pub(crate) fn transform(solid: Manifold, pose: RigidTransform) -> Manifold {

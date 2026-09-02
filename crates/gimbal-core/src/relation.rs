@@ -5,7 +5,8 @@ use core::marker::PhantomData;
 use crate::assembly::ComponentInstanceId;
 use crate::datum::{AxisDatum, CylinderDatum, DatumId, DatumKind, DatumType, PlaneDatum};
 use crate::{
-    Angle, NonNegativeAngle, NonNegativeLength, PositiveAngle, PositiveLength, PositiveVolume,
+    Angle, NonNegativeAngle, NonNegativeLength, PositiveAngle, PositiveArea, PositiveLength,
+    PositiveVolume,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -35,6 +36,7 @@ pub struct EngineeringTolerance {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct NumericalTolerance {
     pub linear_epsilon: PositiveLength,
+    pub area_epsilon: PositiveArea,
     pub volume_epsilon: PositiveVolume,
 }
 
@@ -42,6 +44,7 @@ pub struct NumericalTolerance {
 pub struct SurfaceContact {
     pub first: DatumEndpoint<PlaneDatum>,
     pub second: DatumEndpoint<PlaneDatum>,
+    pub minimum_contact_area: PositiveArea,
     pub tolerance: EngineeringTolerance,
 }
 

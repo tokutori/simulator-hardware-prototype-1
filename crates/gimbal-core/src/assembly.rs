@@ -550,7 +550,8 @@ mod tests {
     use super::*;
     use crate::{
         DatumEndpoint, EngineeringTolerance, FeatureBuilder, Manufacturing, NonNegativeAngle,
-        NonNegativeLength, PlaneDatum, Point3, Primitive3, SurfaceContact, UnitVector3,
+        NonNegativeLength, PlaneDatum, Point3, PositiveArea, Primitive3, SurfaceContact,
+        UnitVector3,
     };
 
     #[test]
@@ -634,6 +635,7 @@ mod tests {
         let relation = AssemblyRelation::SurfaceContact(SurfaceContact {
             first: DatumEndpoint::new(first, first_plane),
             second: DatumEndpoint::new(second, second_plane),
+            minimum_contact_area: PositiveArea::square_mm(1.0).expect("positive area"),
             tolerance,
         });
         let relation_id = assembly
@@ -714,6 +716,7 @@ mod tests {
         let relation = AssemblyRelation::SurfaceContact(SurfaceContact {
             first: DatumEndpoint::new(first, plane_id),
             second: DatumEndpoint::new(second, plane_id),
+            minimum_contact_area: PositiveArea::square_mm(1.0).expect("positive area"),
             tolerance: EngineeringTolerance {
                 linear: NonNegativeLength::mm(0.0).expect("zero tolerance"),
                 angular: NonNegativeAngle::radians(0.0).expect("zero tolerance"),
