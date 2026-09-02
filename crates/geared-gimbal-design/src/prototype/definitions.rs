@@ -541,7 +541,7 @@ pub(super) fn build_definitions(
         "bearing_bore",
         [0.0, 0.0, 0.0],
         [1.0, 0.0, 0.0],
-        roll_bearing_outer_radius_mm() + roll_bearing_carrier_radial_clearance_mm(),
+        p.roll_axis.bearing_outer_radius.mm() + roll_bearing_carrier_radial_clearance_mm(),
     );
     let roll_bearing_carrier_end = add_solid_definition_with_datums(
         assembly,
@@ -565,7 +565,7 @@ pub(super) fn build_definitions(
         "outer_surface",
         [0.0, 0.0, 0.0],
         [1.0, 0.0, 0.0],
-        roll_bearing_outer_radius_mm(),
+        p.roll_axis.bearing_outer_radius.mm(),
     );
     let roll_bearing = add_solid_definition_with_datums(
         assembly,
@@ -573,9 +573,9 @@ pub(super) fn build_definitions(
         ComponentRole::RollBearing,
         annulus_solid_x(
             builder,
-            roll_bearing_outer_radius_mm(),
+            p.roll_axis.bearing_outer_radius.mm(),
             p.roll_axis.shaft_radius.mm() + roll_bearing_inner_radial_clearance_mm(),
-            p.frame.bearing_pedestal_thickness.mm(),
+            p.roll_axis.bearing_width.mm(),
         )?,
         Manufacturing::Purchased,
         [0.48, 0.52, 0.56, 1.0],

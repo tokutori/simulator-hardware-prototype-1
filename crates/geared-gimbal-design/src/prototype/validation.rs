@@ -164,6 +164,13 @@ pub(super) fn validate(parameters: &PrototypeParameters) -> Result<(), Prototype
     {
         return Err(PrototypeError::RollStationOutsideShaft);
     }
+    if parameters.roll_axis.bearing_outer_radius.mm()
+        <= parameters.roll_axis.shaft_radius.mm() + 2.0
+        || parameters.roll_axis.bearing_width.mm()
+            > parameters.frame.bearing_pedestal_thickness.mm()
+    {
+        return Err(PrototypeError::InvalidRollBearing);
+    }
     if parameters.roll_axis.gearbox_support_half_span.mm() + 4.0 >= carrier_inner_span * 0.5 {
         return Err(PrototypeError::InvalidGearboxPlacement);
     }

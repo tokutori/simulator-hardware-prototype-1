@@ -81,6 +81,8 @@ struct RawRollAxis {
     chord_tolerance_mm: f64,
     shaft_length_mm: f64,
     shaft_diameter_mm: f64,
+    bearing_outer_diameter_mm: f64,
+    bearing_width_mm: f64,
     drive_station_mm: f64,
     bearing_station_mm: f64,
     gearbox_support_half_span_mm: f64,
@@ -395,6 +397,14 @@ pub fn load(parameters_path: &Path, fabrication_path: &Path) -> Result<LoadedCon
                 shaft_radius: positive(
                     raw.roll_axis.shaft_diameter_mm * 0.5,
                     "roll_axis.shaft_diameter_mm",
+                )?,
+                bearing_outer_radius: positive(
+                    raw.roll_axis.bearing_outer_diameter_mm * 0.5,
+                    "roll_axis.bearing_outer_diameter_mm",
+                )?,
+                bearing_width: positive(
+                    raw.roll_axis.bearing_width_mm,
+                    "roll_axis.bearing_width_mm",
                 )?,
                 drive_station: positive(
                     raw.roll_axis.drive_station_mm,

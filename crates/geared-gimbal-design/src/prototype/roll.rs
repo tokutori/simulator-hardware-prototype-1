@@ -521,16 +521,12 @@ pub(super) fn roll_bearing_carrier_tie_center_x(p: &PrototypeParameters) -> f64 
         - p.roll_axis.bearing_station.mm()
 }
 
-pub(super) const fn roll_bearing_outer_radius_mm() -> f64 {
-    9.0
-}
-
 pub(super) const fn roll_bearing_inner_radial_clearance_mm() -> f64 {
-    0.15
+    0.0
 }
 
 pub(super) const fn roll_bearing_carrier_radial_clearance_mm() -> f64 {
-    0.2
+    0.0
 }
 
 pub(super) fn roll_bearing_carrier_end_solid(
@@ -543,7 +539,11 @@ pub(super) fn roll_bearing_carrier_end_solid(
         p.pitch_sector.carrier_spacing.mm() * 0.5 - p.frame.moving_carrier_inboard_offset.mm();
     let bridge_half_span = carrier_rail_y - p.frame.moving_carrier_member_width.mm() * 0.5;
     let bridge_z = p.frame.moving_carrier_height.mm();
-    let mut pedestal = cylinder_x(builder, 14.0, thickness)?;
+    let mut pedestal = cylinder_x(
+        builder,
+        p.roll_axis.bearing_outer_radius.mm() + 3.0,
+        thickness,
+    )?;
     for endpoint in [
         [-bridge_half_span + 10.0, bridge_z - 4.0],
         [bridge_half_span - 10.0, bridge_z - 4.0],
@@ -582,7 +582,7 @@ pub(super) fn roll_bearing_carrier_end_solid(
 
     let bore = cylinder_x(
         builder,
-        roll_bearing_outer_radius_mm() + roll_bearing_carrier_radial_clearance_mm(),
+        p.roll_axis.bearing_outer_radius.mm() + roll_bearing_carrier_radial_clearance_mm(),
         thickness + 2.0,
     )?;
     builder

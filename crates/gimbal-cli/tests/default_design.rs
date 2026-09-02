@@ -1418,11 +1418,11 @@ fn roll_bearings_use_typed_inner_and_outer_cylindrical_fits() {
         match (role_of(fit.shaft.instance), role_of(fit.bore.instance)) {
             (ComponentRole::RollShaft, ComponentRole::RollBearing) => {
                 shaft_to_bearing += 1;
-                assert!((fit.target_radial_clearance.as_mm() - 0.15).abs() < 1.0e-8);
+                assert!(fit.target_radial_clearance.as_mm().abs() < 1.0e-8);
             }
             (ComponentRole::RollBearing, ComponentRole::RollBearingCarrierEnd) => {
                 bearing_to_carrier += 1;
-                assert!((fit.target_radial_clearance.as_mm() - 0.2).abs() < 1.0e-8);
+                assert!(fit.target_radial_clearance.as_mm().abs() < 1.0e-8);
             }
             pair => panic!("unexpected cylindrical fit role pair: {pair:?}"),
         }
