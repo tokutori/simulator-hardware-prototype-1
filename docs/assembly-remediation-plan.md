@@ -94,6 +94,8 @@ Frame / Joint       = kinematic motion
 | A-26 | High | FDM build orientationと重要荷重方向を保持しない | 造形時に異方性を考慮した設計意図を失う | 8 |
 | A-27 | High | manifestの機械的claimがhard-coded literal | 実モデルが条件を失っても`true`を出力できる | 2, 8 |
 | A-28 | Low | pitch入力対carrier比の文書値が約175:1 | 現parameterから導かれる169:1と不一致 | 0 |
+| A-29 | High | 旧構成のinstanceまたはfeatureが、現在の接続相手・荷重経路・保持機能を失った後も残り得る | 不要部品、干渉、誤った組立意図および加工点数を増やす | 4–6 |
+| A-30 | High | floor clearance testが手書きした一部instanceだけを対象とし、`RollGearboxMount`を漏らしていた | pitch端での床干渉を成功扱いする | 4, 7 |
 
 この一覧は完了条件ではない。Phase 2以降の全instance監査で新たに発見した問題も、この表へ追加する。
 
@@ -346,6 +348,16 @@ Exit criteria:
 
 ### Phase 4: M3締結とlaser sheet hole
 
+Phase 4の先頭でcomponent/feature existence auditを行う。締結を追加して旧形状を延命する前に、各instanceと各definition内featureを次のいずれかへ分類する。
+
+1. 現在の荷重経路を構成する。
+2. 現在の運動またはトルク伝達を構成する。
+3. 現在の位置決め、軸方向保持または脱落防止を構成する。
+4. 床支持、安全または工具accessを構成する。
+5. 明示されたPurchased/reference geometryである。
+
+どれにも該当しないinstanceは削除する。一つのdefinition内でも、廃止した相手部品のためのboss、rib、tab、逃げ、仮Union等はfeature単位で削除する。名前、色またはpreview上の見栄えは存在理由にしない。
+
 作業:
 
 - `Body::Sheet`または2D regionを、outer contourと複数cutoutを保持できる構造へ拡張する。
@@ -354,6 +366,8 @@ Exit criteria:
 - `FastenedJoint`にbolt軸、締結対象layer、head/nut側およびstack長を持たせる。
 - 2枚の板を積層する場合は厚み方向に別layerへ配置し、同一空間へ重ねない。
 - DXFへhole contourを出力し、closed contourと単位を再読込検証する。
+- 全instanceと主要なUnion/Difference featureについて、現在のrelation、load pathまたはkeep-out requirementへ到達する存在理由を監査する。
+- 高精細gearを除外した高速な全可動instance対floor検査を常時gateとし、歯形固有検査は独立した低頻度routeへ分ける。
 
 Exit criteria:
 
@@ -361,6 +375,8 @@ Exit criteria:
 - head/nut/washerの座面と必要空間が成立する。
 - laser部品のDXFだけから締結穴を再現できる。
 - boltを削除しても部品同士の接触関係、boltを追加すると締結関係が検証できる。
+- 旧構成だけを根拠とするinstanceおよび内部featureが残っていない。
+- 手書きの対象部品列挙なしで、全可動structural instanceが全sample姿勢で床上5 mm以上を保つ。
 
 ### Phase 5: 軸、軸受、clamp、hub、keyによるトルク伝達
 
@@ -508,6 +524,25 @@ Exit criteria:
 - 各Phaseのcommit前にdiffを確認し、対応するexit criteriaをtest結果とともにこの文書へ記録する。
 - Gitignoredなpreviewはcommitしないが、生成に使ったmanifest hashと確認結果を記録する。
 
+### 7.1 Component / feature existence audit
+
+存在理由はcomponent名から推測せず、現行relation、荷重経路、運動拘束またはkeep-out requirementで判定する。2026-09-03時点の優先監査結果は次の通りである。
+
+| 対象 | 判定 | 対応 |
+| --- | --- | --- |
+| `RollGearboxMount` 4個 | 削除 | 上側armとplateの隙間を埋めるだけの旧中継blockだったためrole/definition/instanceを撤去し、armをplateへ直接接続した |
+| sector上下support | 維持 | 歯面荷重をpostへ渡し、中央のpinion通過域を空ける現在の荷重経路である |
+| sector両側clevis cheek | 維持 | sector/postのface contactをM3で締結する現在のjoint形状である |
+| `PitchGearboxTieRod` | 置換 | 現在はhead/nut/washerのない円柱であり、実M3締結へ置換後に旧definitionを削除する |
+| outboard plateのretention軸boss/boreと別`RetentionBearingBlock` | 再設計 | rigid bossとspring支持を同時に置いた重複拘束である。可動bearing carrierとleaf-spring anchorへ一本化する |
+| `RetentionLeafSpring` | 再設計 | spring rate、固定端、可動端が未定義であり、現在のbox形状を完成部品扱いしない |
+| cockpit hangerのcockpit内2 mm延長 | 削除予定 | 接続をpenetrationで代用した旧featureであり、接触面と実締結へ置換する |
+| `RollDrivenHub`と`RollDrivenKey` | 再設計 | 現在はgear/shaftへ重なる別solidであり、clamping hub、keywayまたは一体gearのいずれかへ一本化する |
+| drive/retention flange | 維持・再検証 | sectorからの軸方向脱落防止という現行機能を持つ。Phase 5でshaft retentionと工具accessを含めて再検証する |
+| front/rear roll driven gearとgearbox | 維持・topology確定待ち | コクピ前後に置く要求に対応する。Phase 6でactive/passive分類と閉路整合性を確定する |
+
+この表は削除対象だけでなく、維持する理由も記録する。featureを変更したcommitでは該当行を更新し、未監査の複合solidを完成扱いしない。
+
 ## 8. 進捗記録
 
 ### 2026-09-01
@@ -586,8 +621,12 @@ Exit criteria:
 - Phase 4の基盤として、`Body::Sheet`をouter contourと複数cutoutを保持する構造へ拡張し、DXFへ各contourを閉じた`CUT` polylineとして出力・再読込検証する経路を追加した。現prototypeをFDM前提とする方針は変えず、次prototypeのlaser部品で同じnominal hole geometryを使用できるようにする。
 - M3 bolt/nut/washerを個別のPurchased component roleとして型付けし、2部材のhole cylinder datum、座面plane datum、head/nut側、radial clearanceおよびgrip長を持つ`FastenedJoint`を追加した。relation挿入時にdatum所属、全participant IDの存在・一意性とhardware roleを検査し、kernel validatorで穴軸、穴径、座面法線およびgrip長を検査する。これはrelation/DXF基盤のcheckpointであり、prototype実部品への実穴・hardware配置・工具空間適用は未完了である。
 - このcheckpointでworkspace test 49件、format、warning-as-error Clippy、native/wasm32の`gimbal-core no_std` checkが成功した。hardware role検査追加後の対象unit testも再実行して成功した。
+- sector–post接続を、別solidのoverlapではなくsector一体の両側clevis cheek、postの実M3 clearance hole、M3x20 bolt、nut、両washerおよび8件の`FastenedJoint`へ置換した。8 jointの全participant pairについて高精細Boolean intersection volumeが0であることを確認した。
+- 2026-09-03の追加監査を現HEADへ照合した。±4度branch、sector端margin式、固定post不足およびcarriage/rail overlapの指摘は既に現設計で解消済みだったため再実装しない。一方、全可動部品対床、drive participation、shaft/bearing/spring、relation validation coverage、artifact staging、FDM orientationおよびCIは未完了として各Phaseへ維持する。
+- floor testの手書き`watched`配列を撤去し、高精細gearを除く全可動instanceをframe poseから自動抽出する0.05秒級のstructural routeへ置換した。これにより旧`roll_gearbox_*_carrier_mount_*`がpitch端で床へ3.28 mm干渉することを検出した。
+- `RollGearboxMount`は上側armとgearbox plateの間を埋めるだけで独立部品としての機械的役割がなかったため、role、definitionおよび4 instanceを削除した。armをplateの実接触面まで延長し、plate側support tabを8.2 mm上げた。変更後は自動列挙された全可動structural instanceが9 sample姿勢で床上5 mm以上を満たした。
 
-次の作業はPhase 4として、FDM前提の固定frame接合をM3通しbolt、実穴、washer/nut座面および工具空間を持つ実jointへ置換することである。LaserCutの`Body::Sheet` hole表現とDXF経路は次prototype向けに維持するが、現prototypeのcustom partはFDMを前提とする。
+次の作業はPhase 4として、残る全instanceとdefinition内featureの存在理由監査を行い、不要形状を削除した上で、FDM前提の固定frame接合をM3通しbolt、実穴、washer/nut座面および工具空間を持つ実jointへ置換することである。LaserCutの`Body::Sheet` hole表現とDXF経路は次prototype向けに維持するが、現prototypeのcustom partはFDMを前提とする。
 
 ## 9. 完成の定義
 

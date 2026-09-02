@@ -70,12 +70,6 @@ impl MetricThread {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FastenerHeadSide {
-    First,
-    Second,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FastenerHardware {
     pub bolt: ComponentInstanceId,
     pub nut: ComponentInstanceId,
@@ -87,13 +81,12 @@ pub struct FastenerHardware {
 pub struct FastenedJoint {
     pub first_hole: DatumEndpoint<CylinderDatum>,
     pub second_hole: DatumEndpoint<CylinderDatum>,
-    pub first_seat: DatumEndpoint<PlaneDatum>,
-    pub second_seat: DatumEndpoint<PlaneDatum>,
+    pub head_seat: DatumEndpoint<PlaneDatum>,
+    pub nut_seat: DatumEndpoint<PlaneDatum>,
     pub hardware: FastenerHardware,
     pub thread: MetricThread,
     pub target_hole_radial_clearance: NonNegativeLength,
     pub grip_length: PositiveLength,
-    pub head_side: FastenerHeadSide,
     pub tolerance: EngineeringTolerance,
 }
 
@@ -164,8 +157,8 @@ impl AssemblyRelation {
             Self::Fastened(joint) => [
                 Some(erased(joint.first_hole, DatumKind::Cylinder)),
                 Some(erased(joint.second_hole, DatumKind::Cylinder)),
-                Some(erased(joint.first_seat, DatumKind::Plane)),
-                Some(erased(joint.second_seat, DatumKind::Plane)),
+                Some(erased(joint.head_seat, DatumKind::Plane)),
+                Some(erased(joint.nut_seat, DatumKind::Plane)),
             ],
             Self::CylindricalFit(fit) => [
                 Some(erased(fit.shaft, DatumKind::Cylinder)),

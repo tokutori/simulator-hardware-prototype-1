@@ -7,14 +7,15 @@ use alloc::vec::Vec;
 use core::f64::consts::{FRAC_PI_2, PI};
 
 use crate::{
-    Angle, Assembly, AssemblyError, AssemblyRelation, Axis3, Body, BooleanOperation,
+    Angle, Assembly, AssemblyError, AssemblyRelation, Axis3, AxisDatum, Body, BooleanOperation,
     ComponentDefinition, ComponentDefinitionId, ComponentIdentity, ComponentInstance,
-    ComponentLocation, ComponentRole, CoordinateExpr, DatumEndpoint, DatumId, DatumSet,
-    EngineeringTolerance, ExternalGearPair, FeatureBuilder, FeatureError, FeatureGraph, FrameGraph,
-    FrameId, GearSector, InternalGearPair, Joint, Kinematics, Length, LongitudinalEnd,
-    Manufacturing, NonNegativeAngle, NonNegativeLength, PlaneDatum, Point2, Point3, PositiveArea,
-    Primitive3, RigidTransform, Rotation3, Side, SolidId, SpurGear, SurfaceContact, Translation3,
-    UnitVector3, VerticalEnd,
+    ComponentLocation, ComponentRole, CoordinateExpr, CylinderDatum, DatumEndpoint, DatumId,
+    DatumSet, EngineeringTolerance, ExternalGearPair, FastenedJoint, FastenerHardware,
+    FeatureBuilder, FeatureError, FeatureGraph, FrameGraph, FrameId, GearSector, InternalGearPair,
+    Joint, Kinematics, Length, LongitudinalEnd, Manufacturing, MetricThread, NonNegativeAngle,
+    NonNegativeLength, PlaneDatum, Point2, Point3, PositiveArea, PositiveLength, Primitive3,
+    RigidTransform, Rotation3, Side, SolidId, SpurGear, SurfaceContact, Translation3, UnitVector3,
+    VerticalEnd,
 };
 
 #[derive(Clone, Debug)]
@@ -390,13 +391,27 @@ struct BoxPlaneDatums {
 }
 
 #[derive(Clone, Copy)]
+struct FastenerMemberDatums {
+    hole: DatumId<CylinderDatum>,
+    negative_y_seat: DatumId<PlaneDatum>,
+    positive_y_seat: DatumId<PlaneDatum>,
+}
+
+#[derive(Clone, Copy)]
+struct PostFastenerDatums {
+    hole: DatumId<CylinderDatum>,
+}
+
+#[derive(Clone, Copy)]
 struct Definitions {
     sector: ComponentDefinitionId,
     sector_mount_face: DatumId<PlaneDatum>,
+    sector_post_fasteners: [FastenerMemberDatums; 2],
     carrier_rail: ComponentDefinitionId,
     carrier_rail_faces: BoxPlaneDatums,
     carrier_post: ComponentDefinitionId,
     carrier_post_faces: BoxPlaneDatums,
+    carrier_post_fasteners: [PostFastenerDatums; 2],
     crossmember: ComponentDefinitionId,
     crossmember_faces: BoxPlaneDatums,
     pitch_cradle_longitudinal_rail: ComponentDefinitionId,
@@ -439,11 +454,12 @@ struct Definitions {
     roll_gearbox_plate: ComponentDefinitionId,
     roll_gearbox_plate_negative_x: DatumId<PlaneDatum>,
     roll_gearbox_plate_positive_x: DatumId<PlaneDatum>,
-    roll_gearbox_mount: ComponentDefinitionId,
-    roll_gearbox_mount_faces: BoxPlaneDatums,
     moving_drive_mount_arm: ComponentDefinitionId,
     moving_drive_mount_arm_carrier_face: DatumId<PlaneDatum>,
-    moving_drive_mount_arm_mount_face: DatumId<PlaneDatum>,
+    moving_drive_mount_arm_plate_face: DatumId<PlaneDatum>,
+    m3x20_bolt: ComponentDefinitionId,
+    m3_nut: ComponentDefinitionId,
+    m3_washer: ComponentDefinitionId,
 }
 
 fn build_definitions(
@@ -460,6 +476,7 @@ fn build_definitions(
         [sector_spine_inner_x(p), 0.0, 0.0],
         [-1.0, 0.0, 0.0],
     );
+    let sector_post_fasteners = sector_post_fastener_datums(&mut sector_datums, p);
     let sector = assembly.add_definition(ComponentDefinition {
         name: "pitch_dual_gear_sector".to_string(),
         role: ComponentRole::PitchSector,
@@ -479,19 +496,8 @@ fn build_definitions(
     )?;
     let carrier_post_height = p.frame.upper_rail_height.mm() + p.frame.lower_rail_depth.mm()
         - p.frame.fixed_rail_depth.mm();
-    let (carrier_post, carrier_post_faces) = add_box_definition_with_faces(
-        builder,
-        assembly,
-        "pitch_carrier_post",
-        ComponentRole::FixedCarrierPost,
-        [
-            p.frame.fixed_crossmember_width.mm(),
-            p.frame.sheet_thickness.mm(),
-            carrier_post_height,
-        ],
-        fdm,
-        [0.58, 0.35, 0.16, 1.0],
-    );
+    let (carrier_post, carrier_post_faces, carrier_post_fasteners) =
+        carrier_post_definition(builder, assembly, p, carrier_post_height)?;
     let (crossmember, crossmember_faces) = add_box_definition_with_faces(
         builder,
         assembly,
@@ -874,15 +880,6 @@ fn build_definitions(
         [0.20, 0.22, 0.27, 1.0],
         roll_gearbox_plate_datums,
     );
-    let (roll_gearbox_mount, roll_gearbox_mount_faces) = add_box_definition_with_faces(
-        builder,
-        assembly,
-        "roll_gearbox_carrier_mount",
-        ComponentRole::RollGearboxMount,
-        [8.0, 8.0, 20.0],
-        fdm,
-        [0.34, 0.24, 0.16, 1.0],
-    );
     let mut moving_arm_datums = DatumSet::new();
     let moving_drive_mount_arm_carrier_face = add_plane_datum(
         &mut moving_arm_datums,
@@ -890,15 +887,15 @@ fn build_definitions(
         [p.frame.moving_carrier_member_width.mm() * 0.5, 0.0, 0.0],
         [-1.0, 0.0, 0.0],
     );
-    let moving_drive_mount_arm_mount_face = add_plane_datum(
+    let moving_drive_mount_arm_plate_face = add_plane_datum(
         &mut moving_arm_datums,
-        "mount_contact_face",
+        "gearbox_plate_contact_face",
         [
-            roll_gearbox_mount_local_x(p),
+            roll_gearbox_arm_center_local_x(p) - roll_gearbox_arm_width_x() * 0.5,
             0.0,
-            roll_gearbox_mount_local_z(p) + 10.0,
+            roll_gearbox_support_z(p) - p.frame.moving_carrier_height.mm(),
         ],
-        [0.0, 0.0, -1.0],
+        [-1.0, 0.0, 0.0],
     );
     let moving_drive_mount_arm = add_solid_definition_with_datums(
         assembly,
@@ -909,13 +906,39 @@ fn build_definitions(
         [0.34, 0.24, 0.16, 1.0],
         moving_arm_datums,
     );
+    let m3x20_bolt = add_solid_definition(
+        assembly,
+        "m3x20_pan_head_bolt",
+        ComponentRole::M3Bolt,
+        m3x20_pan_head_bolt_solid(builder)?,
+        Manufacturing::Purchased,
+        [0.68, 0.71, 0.74, 1.0],
+    );
+    let m3_nut = add_solid_definition(
+        assembly,
+        "m3_hex_nut",
+        ComponentRole::M3Nut,
+        m3_hex_nut_solid(builder)?,
+        Manufacturing::Purchased,
+        [0.60, 0.63, 0.66, 1.0],
+    );
+    let m3_washer = add_solid_definition(
+        assembly,
+        "m3_plain_washer",
+        ComponentRole::M3Washer,
+        m3_washer_solid(builder)?,
+        Manufacturing::Purchased,
+        [0.72, 0.75, 0.78, 1.0],
+    );
     Ok(Definitions {
         sector,
         sector_mount_face,
+        sector_post_fasteners,
         carrier_rail,
         carrier_rail_faces,
         carrier_post,
         carrier_post_faces,
+        carrier_post_fasteners,
         crossmember,
         crossmember_faces,
         pitch_cradle_longitudinal_rail,
@@ -958,11 +981,12 @@ fn build_definitions(
         roll_gearbox_plate,
         roll_gearbox_plate_negative_x,
         roll_gearbox_plate_positive_x,
-        roll_gearbox_mount,
-        roll_gearbox_mount_faces,
         moving_drive_mount_arm,
         moving_drive_mount_arm_carrier_face,
-        moving_drive_mount_arm_mount_face,
+        moving_drive_mount_arm_plate_face,
+        m3x20_bolt,
+        m3_nut,
+        m3_washer,
     })
 }
 
@@ -1085,8 +1109,9 @@ fn build_crossmembers(
 fn build_fixed_frame_contacts(
     assembly: &mut Assembly,
     d: &Definitions,
-    _p: &PrototypeParameters,
+    p: &PrototypeParameters,
 ) -> Result<(), PrototypeError> {
+    let mut fastener_ordinal = 0_u16;
     let floor = required_instance(
         assembly,
         ComponentRole::InstallationFloor,
@@ -1153,6 +1178,20 @@ fn build_fixed_frame_contacts(
                 post_sector_face,
                 600.0,
             )?;
+            for sector_hole_index in 0..2 {
+                fastener_ordinal += 1;
+                add_sector_post_fastener(
+                    assembly,
+                    d,
+                    p,
+                    sector,
+                    post,
+                    side,
+                    end,
+                    sector_hole_index,
+                    fastener_ordinal,
+                )?;
+            }
             add_surface_contact(
                 assembly,
                 post,
@@ -1245,6 +1284,135 @@ fn add_surface_contact(
                 linear: NonNegativeLength::mm(0.02).expect("fixed tolerance is non-negative"),
                 angular: NonNegativeAngle::degrees(0.1)
                     .expect("fixed angular tolerance is non-negative"),
+            },
+        }))
+        .map_err(PrototypeError::Assembly)?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_sector_post_fastener(
+    assembly: &mut Assembly,
+    d: &Definitions,
+    p: &PrototypeParameters,
+    sector: crate::ComponentInstanceId,
+    post: crate::ComponentInstanceId,
+    side: Side,
+    end: LongitudinalEnd,
+    sector_hole_index: usize,
+    fastener_ordinal: u16,
+) -> Result<(), PrototypeError> {
+    const WASHER_THICKNESS: f64 = 0.5;
+    const NUT_THICKNESS: f64 = 2.4;
+    let frame = assembly
+        .instance(sector)
+        .expect("required sector instance exists")
+        .frame;
+    let longitudinal_sign = match end {
+        LongitudinalEnd::Front => 1.0,
+        LongitudinalEnd::Rear => -1.0,
+    };
+    let y = match side {
+        Side::Left => -p.pitch_sector.carrier_spacing.mm() * 0.5,
+        Side::Right => p.pitch_sector.carrier_spacing.mm() * 0.5,
+    };
+    let local_sector_z = sector_post_hole_zs(p)[sector_hole_index];
+    let world_z = longitudinal_sign * local_sector_z;
+    let vertical_end = if world_z > 0.0 {
+        VerticalEnd::Upper
+    } else {
+        VerticalEnd::Lower
+    };
+    let post_hole_index = match end {
+        LongitudinalEnd::Front => sector_hole_index,
+        LongitudinalEnd::Rear => 1 - sector_hole_index,
+    };
+    let sector_datums = d.sector_post_fasteners[sector_hole_index];
+    let post_datums = d.carrier_post_fasteners[post_hole_index];
+    let outward_sign = match side {
+        Side::Left => -1.0,
+        Side::Right => 1.0,
+    };
+    let local_outward_sign = outward_sign * longitudinal_sign;
+    let (head_seat, nut_seat) = if local_outward_sign > 0.0 {
+        (sector_datums.positive_y_seat, sector_datums.negative_y_seat)
+    } else {
+        (sector_datums.negative_y_seat, sector_datums.positive_y_seat)
+    };
+    let seat_half_span = p.frame.sheet_thickness.mm() * 0.5 + 3.0;
+    let x = longitudinal_sign * p.frame.fixed_crossmember_station.mm();
+    let first_washer_y = y + outward_sign * (seat_half_span + WASHER_THICKNESS * 0.5);
+    let bolt_under_head_y = y + outward_sign * (seat_half_span + WASHER_THICKNESS);
+    let second_washer_y = y - outward_sign * (seat_half_span + WASHER_THICKNESS * 0.5);
+    let nut_y = y - outward_sign * (seat_half_span + WASHER_THICKNESS + NUT_THICKNESS * 0.5);
+    let hardware_rotation = outward_sign * FRAC_PI_2;
+    let base_location = ComponentLocation::new()
+        .with_side(side)
+        .with_longitudinal_end(end)
+        .with_vertical_end(vertical_end);
+    let stem = format!(
+        "pitch_sector_post_{}_{}_{}",
+        side.as_str(),
+        end.as_str(),
+        vertical_end.as_str()
+    );
+    let bolt = add_located_instance(
+        assembly,
+        &format!("{stem}_m3x20_bolt"),
+        d.m3x20_bolt,
+        frame,
+        RigidTransform::translated(x, bolt_under_head_y, world_z)
+            .compose(RigidTransform::rotated(Axis3::Z, hardware_rotation)),
+        base_location.with_ordinal(fastener_ordinal),
+    );
+    let nut = add_located_instance(
+        assembly,
+        &format!("{stem}_m3_nut"),
+        d.m3_nut,
+        frame,
+        RigidTransform::translated(x, nut_y, world_z)
+            .compose(RigidTransform::rotated(Axis3::Z, hardware_rotation)),
+        base_location.with_ordinal(fastener_ordinal),
+    );
+    let first_washer = add_located_instance(
+        assembly,
+        &format!("{stem}_head_washer"),
+        d.m3_washer,
+        frame,
+        RigidTransform::translated(x, first_washer_y, world_z)
+            .compose(RigidTransform::rotated(Axis3::Z, hardware_rotation)),
+        base_location.with_ordinal(fastener_ordinal * 2 - 1),
+    );
+    let second_washer = add_located_instance(
+        assembly,
+        &format!("{stem}_nut_washer"),
+        d.m3_washer,
+        frame,
+        RigidTransform::translated(x, second_washer_y, world_z)
+            .compose(RigidTransform::rotated(Axis3::Z, hardware_rotation)),
+        base_location.with_ordinal(fastener_ordinal * 2),
+    );
+    assembly
+        .add_relation(AssemblyRelation::Fastened(FastenedJoint {
+            first_hole: DatumEndpoint::new(sector, sector_datums.hole),
+            second_hole: DatumEndpoint::new(post, post_datums.hole),
+            head_seat: DatumEndpoint::new(sector, head_seat),
+            nut_seat: DatumEndpoint::new(sector, nut_seat),
+            hardware: FastenerHardware {
+                bolt,
+                nut,
+                first_washer: Some(first_washer),
+                second_washer: Some(second_washer),
+            },
+            thread: MetricThread::M3,
+            target_hole_radial_clearance: NonNegativeLength::mm(0.2)
+                .expect("M3 clearance is non-negative"),
+            grip_length: PositiveLength::mm(seat_half_span * 2.0)
+                .expect("sector clevis grip is positive"),
+            tolerance: EngineeringTolerance {
+                linear: NonNegativeLength::mm(0.05).expect("fastener tolerance is non-negative"),
+                angular: NonNegativeAngle::degrees(0.1)
+                    .expect("fastener angular tolerance is non-negative"),
             },
         }))
         .map_err(PrototypeError::Assembly)?;
@@ -1692,9 +1860,6 @@ fn build_roll_assembly(
             * (p.frame.moving_carrier_half_span.mm()
                 + p.frame.moving_carrier_member_width.mm() * 0.5);
         let carrier_z = p.frame.moving_carrier_height.mm();
-        let far_plate_center_x = gear_x + outward * 16.5;
-        let gearbox_support_x = far_plate_center_x + outward * (1.5 + 4.0);
-        let gearbox_support_z = roll_gearbox_support_z(p);
         add_located_instance(
             assembly,
             &format!("roll_bearing_carrier_end_{end}"),
@@ -1838,14 +2003,6 @@ fn build_roll_assembly(
         {
             add_located_instance(
                 assembly,
-                &format!("roll_gearbox_{end}_carrier_mount_{}", index + 1),
-                d.roll_gearbox_mount,
-                pitch_frame,
-                RigidTransform::translated(gearbox_support_x, y, gearbox_support_z),
-                location.with_ordinal((index + 1) as u16),
-            );
-            add_located_instance(
-                assembly,
                 &format!("roll_gearbox_{end}_mount_arm_{}", index + 1),
                 d.moving_drive_mount_arm,
                 pitch_frame,
@@ -1929,7 +2086,6 @@ fn build_moving_carrier_contacts(
             let arm_location = end_location.with_ordinal(ordinal);
             let arm =
                 required_instance(assembly, ComponentRole::MovingDriveMountArm, arm_location)?;
-            let mount = required_instance(assembly, ComponentRole::RollGearboxMount, arm_location)?;
             add_surface_contact(
                 assembly,
                 carrier_end,
@@ -1938,31 +2094,23 @@ fn build_moving_carrier_contacts(
                 d.moving_drive_mount_arm_carrier_face,
                 100.0,
             )?;
-            add_surface_contact(
-                assembly,
-                arm,
-                d.moving_drive_mount_arm_mount_face,
-                mount,
-                d.roll_gearbox_mount_faces.positive_z,
-                60.0,
-            )?;
-
             let plate = required_instance(
                 assembly,
                 ComponentRole::RollGearboxPlate,
                 end_location.with_ordinal(2),
             )?;
-            let (mount_face, plate_face) = match end {
-                LongitudinalEnd::Front => (
-                    d.roll_gearbox_mount_faces.negative_x,
-                    d.roll_gearbox_plate_positive_x,
-                ),
-                LongitudinalEnd::Rear => (
-                    d.roll_gearbox_mount_faces.positive_x,
-                    d.roll_gearbox_plate_negative_x,
-                ),
+            let plate_face = match end {
+                LongitudinalEnd::Front => d.roll_gearbox_plate_positive_x,
+                LongitudinalEnd::Rear => d.roll_gearbox_plate_negative_x,
             };
-            add_surface_contact(assembly, mount, mount_face, plate, plate_face, 40.0)?;
+            add_surface_contact(
+                assembly,
+                arm,
+                d.moving_drive_mount_arm_plate_face,
+                plate,
+                plate_face,
+                40.0,
+            )?;
         }
     }
     Ok(())
@@ -1982,11 +2130,11 @@ fn roll_gearbox_plate_solid(
     let supports = [
         [
             -p.roll_axis.gearbox_support_half_span.mm() - stage_distance * 0.5,
-            -32.2,
+            roll_gearbox_plate_support_offset_z(),
         ],
         [
             p.roll_axis.gearbox_support_half_span.mm() - stage_distance * 0.5,
-            -32.2,
+            roll_gearbox_plate_support_offset_z(),
         ],
     ];
     let mut plate = cylinder_x(builder, 5.5, 3.0)?;
@@ -2045,17 +2193,21 @@ fn roll_gearbox_support_z(p: &PrototypeParameters) -> f64 {
     let output_z = -(p.roll_axis.driven_gear.pitch_radius() + p.roll_axis.pinion.pitch_radius());
     let stage_distance =
         p.pitch_gearbox.small_gear.pitch_radius() + p.pitch_gearbox.large_gear.pitch_radius();
-    output_z - stage_distance * 0.5 - 32.2
+    output_z - stage_distance * 0.5 + roll_gearbox_plate_support_offset_z()
+}
+
+const fn roll_gearbox_plate_support_offset_z() -> f64 {
+    -24.0
 }
 
 fn moving_drive_mount_arm_solid(
     builder: &mut FeatureBuilder,
     p: &PrototypeParameters,
 ) -> Result<SolidId, PrototypeError> {
-    let dx = roll_gearbox_mount_local_x(p);
-    let dz = roll_gearbox_mount_local_z(p);
+    let dx = roll_gearbox_arm_center_local_x(p);
+    let dz = roll_gearbox_plate_support_local_z(p);
     let tie_half = p.frame.moving_carrier_member_width.mm() * 0.5;
-    let vertical_x = 8.0;
+    let vertical_x = roll_gearbox_arm_width_x();
     let arm_y = 10.0;
     let horizontal_depth = 14.0;
     let horizontal_end = dx + vertical_x * 0.5;
@@ -2072,14 +2224,17 @@ fn moving_drive_mount_arm_solid(
         },
     )?;
     let vertical_top = -horizontal_depth * 0.5 + 1.0;
-    let mount_top = dz + 10.0;
-    let vertical = centered_box(builder, [vertical_x, arm_y, vertical_top - mount_top]);
+    let plate_tab_bottom = dz - 3.0;
+    let vertical = centered_box(
+        builder,
+        [vertical_x, arm_y, vertical_top - plate_tab_bottom],
+    );
     let vertical = builder.translate(
         vertical,
         Translation3 {
             x: dx,
             y: 0.0,
-            z: (vertical_top + mount_top) * 0.5,
+            z: (vertical_top + plate_tab_bottom) * 0.5,
         },
     )?;
     builder
@@ -2087,12 +2242,16 @@ fn moving_drive_mount_arm_solid(
         .map_err(PrototypeError::Feature)
 }
 
-fn roll_gearbox_mount_local_x(p: &PrototypeParameters) -> f64 {
+const fn roll_gearbox_arm_width_x() -> f64 {
+    8.0
+}
+
+fn roll_gearbox_arm_center_local_x(p: &PrototypeParameters) -> f64 {
     p.roll_axis.drive_station.mm() + 16.5 + 1.5 + 4.0
         - (p.frame.moving_carrier_half_span.mm() + p.frame.moving_carrier_member_width.mm() * 0.5)
 }
 
-fn roll_gearbox_mount_local_z(p: &PrototypeParameters) -> f64 {
+fn roll_gearbox_plate_support_local_z(p: &PrototypeParameters) -> f64 {
     roll_gearbox_support_z(p) - p.frame.moving_carrier_height.mm()
 }
 
@@ -2686,6 +2845,38 @@ fn dual_sector_solid(
         )?;
         supported_sector = builder.boolean(BooleanOperation::Union, supported_sector, support)?;
     }
+    let clevis_post_x = p.frame.fixed_crossmember_station.mm();
+    let clevis_outer_x = support_x0 + support_width;
+    let clevis_inner_x = clevis_post_x - p.frame.fixed_crossmember_width.mm() * 0.5;
+    let clevis_length = clevis_outer_x - clevis_inner_x;
+    let clevis_thickness = 3.0;
+    let clevis_half_height = 8.0;
+    let post_half_depth = p.frame.sheet_thickness.mm() * 0.5;
+    for z in sector_post_hole_zs(p) {
+        for side_sign in [-1.0, 1.0] {
+            let cheek = centered_box(
+                builder,
+                [clevis_length, clevis_thickness, clevis_half_height * 2.0],
+            );
+            let cheek = builder.translate(
+                cheek,
+                Translation3 {
+                    x: (clevis_inner_x + clevis_outer_x) * 0.5,
+                    y: side_sign * (post_half_depth + clevis_thickness * 0.5),
+                    z,
+                },
+            )?;
+            supported_sector = builder.boolean(BooleanOperation::Union, supported_sector, cheek)?;
+        }
+        supported_sector = subtract_y_bore(
+            builder,
+            supported_sector,
+            m3_clearance_radius_mm(),
+            (post_half_depth + clevis_thickness) * 2.0 + 2.0,
+            clevis_post_x,
+            z,
+        )?;
+    }
     Ok(supported_sector)
 }
 
@@ -2695,6 +2886,58 @@ fn sector_spine_inner_x(p: &PrototypeParameters) -> f64 {
 
 const fn sector_support_keep_out_half_height() -> f64 {
     40.0
+}
+
+fn sector_post_hole_zs(p: &PrototypeParameters) -> [f64; 2] {
+    let upper_support_end = p.frame.upper_rail_height.mm() - p.frame.fixed_rail_depth.mm() * 0.5;
+    let positive_z = (sector_support_keep_out_half_height() + upper_support_end) * 0.5;
+    [positive_z, -positive_z]
+}
+
+const fn m3_clearance_radius_mm() -> f64 {
+    1.7
+}
+
+fn sector_post_fastener_datums(
+    datums: &mut DatumSet,
+    p: &PrototypeParameters,
+) -> [FastenerMemberDatums; 2] {
+    let post_half_depth = p.frame.sheet_thickness.mm() * 0.5;
+    let clevis_thickness = 3.0;
+    let seat_y = post_half_depth + clevis_thickness;
+    sector_post_hole_zs(p).map(|z| FastenerMemberDatums {
+        hole: add_cylinder_datum(
+            datums,
+            if z > 0.0 {
+                "sector_post_upper_m3_hole"
+            } else {
+                "sector_post_lower_m3_hole"
+            },
+            [p.frame.fixed_crossmember_station.mm(), 0.0, z],
+            [0.0, 1.0, 0.0],
+            m3_clearance_radius_mm(),
+        ),
+        negative_y_seat: add_plane_datum(
+            datums,
+            if z > 0.0 {
+                "sector_post_upper_negative_y_m3_seat"
+            } else {
+                "sector_post_lower_negative_y_m3_seat"
+            },
+            [p.frame.fixed_crossmember_station.mm(), -seat_y, z],
+            [0.0, -1.0, 0.0],
+        ),
+        positive_y_seat: add_plane_datum(
+            datums,
+            if z > 0.0 {
+                "sector_post_upper_positive_y_m3_seat"
+            } else {
+                "sector_post_lower_positive_y_m3_seat"
+            },
+            [p.frame.fixed_crossmember_station.mm(), seat_y, z],
+            [0.0, 1.0, 0.0],
+        ),
+    })
 }
 
 fn sector_wedge_points(tip_radius: f64, half_angle: f64) -> Vec<Point2> {
@@ -2871,6 +3114,106 @@ fn annulus_definition_x(
     ))
 }
 
+fn carrier_post_definition(
+    builder: &mut FeatureBuilder,
+    assembly: &mut Assembly,
+    p: &PrototypeParameters,
+    height: f64,
+) -> Result<
+    (
+        ComponentDefinitionId,
+        BoxPlaneDatums,
+        [PostFastenerDatums; 2],
+    ),
+    PrototypeError,
+> {
+    let width = p.frame.fixed_crossmember_width.mm();
+    let depth = p.frame.sheet_thickness.mm();
+    let mut solid = centered_box(builder, [width, depth, height]);
+    let post_center_z = (p.frame.upper_rail_height.mm() - p.frame.lower_rail_depth.mm()) * 0.5;
+    let world_hole_zs = sector_post_hole_zs(p);
+    let local_hole_zs = world_hole_zs.map(|world_z| world_z - post_center_z);
+    for local_z in local_hole_zs {
+        solid = subtract_y_bore(
+            builder,
+            solid,
+            m3_clearance_radius_mm(),
+            depth + 2.0,
+            0.0,
+            local_z,
+        )?;
+    }
+
+    let (mut datums, faces) = box_plane_datums([width, depth, height]);
+    let fasteners = local_hole_zs.map(|z| PostFastenerDatums {
+        hole: add_cylinder_datum(
+            &mut datums,
+            if z > 0.0 {
+                "post_upper_m3_hole"
+            } else {
+                "post_lower_m3_hole"
+            },
+            [0.0, 0.0, z],
+            [0.0, 1.0, 0.0],
+            m3_clearance_radius_mm(),
+        ),
+    });
+    let id = assembly.add_definition(ComponentDefinition {
+        name: "pitch_carrier_post".to_string(),
+        role: ComponentRole::FixedCarrierPost,
+        body: Body::Solid(solid),
+        manufacturing: Manufacturing::Fdm,
+        color_rgba: [0.58, 0.35, 0.16, 1.0],
+        datums,
+    });
+    Ok((id, faces, fasteners))
+}
+
+fn m3x20_pan_head_bolt_solid(builder: &mut FeatureBuilder) -> Result<SolidId, PrototypeError> {
+    const SHANK_LENGTH: f64 = 20.0;
+    const HEAD_THICKNESS: f64 = 2.4;
+    let shank = cylinder_x(builder, 1.5, SHANK_LENGTH)?;
+    let shank = builder.translate(
+        shank,
+        Translation3 {
+            x: -SHANK_LENGTH * 0.5,
+            y: 0.0,
+            z: 0.0,
+        },
+    )?;
+    let head = cylinder_x(builder, 2.75, HEAD_THICKNESS)?;
+    let head = builder.translate(
+        head,
+        Translation3 {
+            x: HEAD_THICKNESS * 0.5,
+            y: 0.0,
+            z: 0.0,
+        },
+    )?;
+    builder
+        .boolean(BooleanOperation::Union, shank, head)
+        .map_err(PrototypeError::Feature)
+}
+
+fn m3_hex_nut_solid(builder: &mut FeatureBuilder) -> Result<SolidId, PrototypeError> {
+    const THICKNESS: f64 = 2.4;
+    // 3.175 mm circumradius gives approximately 5.5 mm across flats.
+    let outer = cylinder_x_segments(builder, 3.175, THICKNESS, 6)?;
+    let bore = cylinder_x(builder, 1.6, THICKNESS + 2.0)?;
+    builder
+        .boolean(BooleanOperation::Difference, outer, bore)
+        .map_err(PrototypeError::Feature)
+}
+
+fn m3_washer_solid(builder: &mut FeatureBuilder) -> Result<SolidId, PrototypeError> {
+    const THICKNESS: f64 = 0.5;
+    let outer = cylinder_x(builder, 3.5, THICKNESS)?;
+    let bore = cylinder_x(builder, m3_clearance_radius_mm(), THICKNESS + 2.0)?;
+    builder
+        .boolean(BooleanOperation::Difference, outer, bore)
+        .map_err(PrototypeError::Feature)
+}
+
 fn sheet_box_definition_with_faces(
     builder: &mut FeatureBuilder,
     assembly: &mut Assembly,
@@ -2994,6 +3337,26 @@ fn add_plane_datum(
     )
 }
 
+fn add_cylinder_datum(
+    datums: &mut DatumSet,
+    name: &str,
+    origin: [f64; 3],
+    direction: [f64; 3],
+    radius: f64,
+) -> DatumId<CylinderDatum> {
+    datums.add(
+        name.to_string(),
+        CylinderDatum {
+            axis: AxisDatum {
+                origin: Point3::from_mm(origin).expect("cylinder origin is finite"),
+                direction: UnitVector3::new(direction)
+                    .expect("cylinder axis direction is non-zero"),
+            },
+            radius: PositiveLength::mm(radius).expect("cylinder radius is positive"),
+        },
+    )
+}
+
 fn cylinder_y(
     builder: &mut FeatureBuilder,
     radius: f64,
@@ -3022,10 +3385,19 @@ fn cylinder_x(
     radius: f64,
     height: f64,
 ) -> Result<SolidId, PrototypeError> {
+    cylinder_x_segments(builder, radius, height, 64)
+}
+
+fn cylinder_x_segments(
+    builder: &mut FeatureBuilder,
+    radius: f64,
+    height: f64,
+    segments: u16,
+) -> Result<SolidId, PrototypeError> {
     let solid = builder.primitive(Primitive3::Cylinder {
         height: length(height),
         radius: length(radius),
-        segments: 64,
+        segments,
         centered: true,
     });
     builder
@@ -3111,14 +3483,14 @@ fn add_located_instance(
     frame: FrameId,
     local_pose: RigidTransform,
     location: ComponentLocation,
-) {
+) -> crate::ComponentInstanceId {
     assembly.add_instance(ComponentInstance {
         name: name.to_string(),
         definition,
         frame,
         local_pose,
         location,
-    });
+    })
 }
 
 fn revolute_frame(

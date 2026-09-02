@@ -734,6 +734,8 @@ mod tests {
         ComponentLocation, ComponentRole, LongitudinalEnd, PrototypeDesign, RigidTransform, Side,
         VerticalEnd,
     };
+    use gimbal_kernel_manifold::GeometryEvaluationMode;
+    use std::collections::HashMap;
 
     fn load_configuration() -> config::LoadedConfig {
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -1039,7 +1041,7 @@ mod tests {
             }
             checked += 1;
         }
-        assert_eq!(checked, 44);
+        assert_eq!(checked, 40);
         assert!(
             overlaps.is_empty(),
             "structural surface contacts must not use solid overlap: {overlaps:#?}"
@@ -1113,7 +1115,7 @@ mod tests {
             .iter()
             .filter(|relation| matches!(relation, AssemblyRelation::SurfaceContact(_)))
             .count();
-        assert_eq!(contacts, 44);
+        assert_eq!(contacts, 40);
 
         for side in [Side::Left, Side::Right] {
             for end in [LongitudinalEnd::Front, LongitudinalEnd::Rear] {
@@ -1133,9 +1135,7 @@ mod tests {
                         AssemblyRelation::SurfaceContact(contact) => {
                             contact.first.instance == post || contact.second.instance == post
                         }
-                        AssemblyRelation::Fastened(joint) => {
-                            joint.first_hole.instance == post || joint.second_hole.instance == post
-                        }
+                        AssemblyRelation::Fastened(_) => false,
                         AssemblyRelation::CylindricalFit(fit) => {
                             fit.shaft.instance == post || fit.bore.instance == post
                         }
@@ -1145,6 +1145,79 @@ mod tests {
                     })
                     .count();
                 assert_eq!(relation_count, 3);
+            }
+        }
+    }
+
+    #[test]
+    fn sector_post_m3_joints_have_real_clearance_and_valid_datums() {
+        let design = load_design();
+        let joints = design
+            .assembly
+            .relations()
+            .iter()
+            .filter_map(|relation| match relation {
+                AssemblyRelation::Fastened(joint) => Some(*joint),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            joints.len(),
+            8,
+            "each of four sector/post joints needs two bolts"
+        );
+
+        let report = validate_assembly(&design, ValidationScope::StructuralFast)
+            .expect("fast assembly validation succeeds");
+        assert!(
+            report.issues.iter().all(|issue| !matches!(
+                issue.kind,
+                ValidationIssueKind::FastenerHoleAxisSeparation { .. }
+                    | ValidationIssueKind::FastenerHoleAxisMismatch { .. }
+                    | ValidationIssueKind::FastenerHoleRadiusMismatch { .. }
+                    | ValidationIssueKind::FastenerSeatNormalMismatch { .. }
+                    | ValidationIssueKind::FastenerGripLengthMismatch { .. }
+            )),
+            "all sector/post fastener datums must satisfy the typed M3 relation"
+        );
+
+        let mut evaluator = Evaluator::new(&design.graph);
+        for joint in joints {
+            let participants = [
+                joint.first_hole.instance,
+                joint.second_hole.instance,
+                joint.hardware.bolt,
+                joint.hardware.nut,
+                joint.hardware.first_washer.expect("head washer exists"),
+                joint.hardware.second_washer.expect("nut washer exists"),
+            ];
+            for first_index in 0..participants.len() {
+                for second_index in first_index + 1..participants.len() {
+                    let first_id = participants[first_index];
+                    let second_id = participants[second_index];
+                    let volume = evaluator
+                        .intersection_volume_transformed(
+                            instance_solid_by_id(&design, first_id),
+                            instance_pose_by_id(&design, first_id, 0.0, 0.0),
+                            instance_solid_by_id(&design, second_id),
+                            instance_pose_by_id(&design, second_id, 0.0, 0.0),
+                        )
+                        .expect("M3 joint intersection query succeeds");
+                    let first_name = &design
+                        .assembly
+                        .instance(first_id)
+                        .expect("participant exists")
+                        .name;
+                    let second_name = &design
+                        .assembly
+                        .instance(second_id)
+                        .expect("participant exists")
+                        .name;
+                    assert!(
+                        volume <= 1.0e-7,
+                        "M3 joint participants {first_name} and {second_name} overlap by {volume} mm^3"
+                    );
+                }
             }
         }
     }
@@ -1474,90 +1547,63 @@ mod tests {
     fn moving_assembly_clears_the_floor_over_the_command_envelope() {
         let design = load_design();
         let floor = singleton(ComponentRole::InstallationFloor);
-        let floor_solid = instance_solid(&design, floor);
         let floor_pose = instance_pose(&design, floor, 0.0, 0.0);
-        let watched = [
-            singleton(ComponentRole::Cockpit),
-            located(
-                ComponentRole::RollGearboxPlate,
-                ComponentLocation::new()
-                    .with_longitudinal_end(LongitudinalEnd::Front)
-                    .with_ordinal(1),
-            ),
-            located(
-                ComponentRole::RollGearboxPlate,
-                ComponentLocation::new()
-                    .with_longitudinal_end(LongitudinalEnd::Front)
-                    .with_ordinal(2),
-            ),
-            located(
-                ComponentRole::RollGearboxPlate,
-                ComponentLocation::new()
-                    .with_longitudinal_end(LongitudinalEnd::Rear)
-                    .with_ordinal(1),
-            ),
-            located(
-                ComponentRole::RollGearboxPlate,
-                ComponentLocation::new()
-                    .with_longitudinal_end(LongitudinalEnd::Rear)
-                    .with_ordinal(2),
-            ),
-            located(
-                ComponentRole::MovingDriveMountArm,
-                ComponentLocation::new()
-                    .with_longitudinal_end(LongitudinalEnd::Front)
-                    .with_ordinal(1),
-            ),
-            located(
-                ComponentRole::MovingDriveMountArm,
-                ComponentLocation::new()
-                    .with_longitudinal_end(LongitudinalEnd::Front)
-                    .with_ordinal(2),
-            ),
-            located(
-                ComponentRole::MovingDriveMountArm,
-                ComponentLocation::new()
-                    .with_longitudinal_end(LongitudinalEnd::Rear)
-                    .with_ordinal(1),
-            ),
-            located(
-                ComponentRole::MovingDriveMountArm,
-                ComponentLocation::new()
-                    .with_longitudinal_end(LongitudinalEnd::Rear)
-                    .with_ordinal(2),
-            ),
-            located(
-                ComponentRole::PitchCradleLongitudinalRail,
-                ComponentLocation::new().with_ordinal(1),
-            ),
-            located(
-                ComponentRole::PitchCradleLongitudinalRail,
-                ComponentLocation::new().with_ordinal(2),
-            ),
-            located(
-                ComponentRole::RollBearingCarrierEnd,
-                ComponentLocation::new().with_longitudinal_end(LongitudinalEnd::Front),
-            ),
-            located(
-                ComponentRole::RollBearingCarrierEnd,
-                ComponentLocation::new().with_longitudinal_end(LongitudinalEnd::Rear),
-            ),
-        ];
-        let mut evaluator = Evaluator::new(&design.graph);
+        let mut evaluator =
+            Evaluator::with_mode(&design.graph, GeometryEvaluationMode::StructuralProxy);
+        let floor_mesh = evaluator
+            .mesh(instance_solid(&design, floor))
+            .expect("floor mesh evaluates");
+        let floor_top_z = floor_mesh
+            .vertices
+            .iter()
+            .map(|vertex| floor_pose.transform_point(*vertex)[2])
+            .fold(f64::NEG_INFINITY, f64::max);
+
+        let moving_instances = design
+            .assembly
+            .instances_with_ids()
+            .filter_map(|(id, instance)| {
+                let definition = design
+                    .assembly
+                    .definition(instance.definition)
+                    .expect("instance definition exists");
+                if definition.role.has_high_detail_gear_geometry() {
+                    return None;
+                }
+                let zero = instance_pose_by_id(&design, id, 0.0, 0.0);
+                let pitched = instance_pose_by_id(&design, id, 1.0, 0.0);
+                let rolled = instance_pose_by_id(&design, id, 0.0, 1.0);
+                (zero != pitched || zero != rolled).then_some((id, instance))
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            !moving_instances.is_empty(),
+            "the mechanism must contain moving instances"
+        );
+
+        let mut meshes = HashMap::new();
+        for (instance_id, _) in &moving_instances {
+            let solid = instance_solid_by_id(&design, *instance_id);
+            if let std::collections::hash_map::Entry::Vacant(entry) = meshes.entry(solid) {
+                entry.insert(evaluator.mesh(solid).expect("moving mesh evaluates"));
+            }
+        }
+
+        let required_clearance_mm = 5.0;
         for pitch in [-20.0, 0.0, 20.0] {
             for roll in [-35.0, 0.0, 35.0] {
-                for component in watched {
-                    let volume = evaluator
-                        .intersection_volume_transformed(
-                            floor_solid,
-                            floor_pose,
-                            instance_solid(&design, component),
-                            instance_pose(&design, component, pitch, roll),
-                        )
-                        .expect("floor interference query succeeds");
+                for (instance_id, instance) in &moving_instances {
+                    let pose = instance_pose_by_id(&design, *instance_id, pitch, roll);
+                    let minimum_z = meshes[&instance_solid_by_id(&design, *instance_id)]
+                        .vertices
+                        .iter()
+                        .map(|vertex| pose.transform_point(*vertex)[2])
+                        .fold(f64::INFINITY, f64::min);
+                    let clearance_mm = minimum_z - floor_top_z;
                     assert!(
-                        volume <= 1.0e-7,
-                        "{component:?} intersects the floor by {volume} mm^3 at pitch={pitch}, roll={roll}"
+                        clearance_mm >= required_clearance_mm - 1.0e-7,
+                        "{} has only {clearance_mm} mm floor clearance at pitch={pitch}, roll={roll}; required {required_clearance_mm} mm",
+                        instance.name
                     );
                 }
             }
@@ -1565,7 +1611,7 @@ mod tests {
     }
 
     #[test]
-    fn obsolete_overlapping_sector_reinforcement_is_absent() {
+    fn central_pinion_keepout_has_no_obsolete_16_mm_sector_backbone() {
         let design = load_design();
         let mut evaluator = Evaluator::new(&design.graph);
         let sector = located(
@@ -1577,13 +1623,20 @@ mod tests {
         let sector_mesh = evaluator
             .mesh(instance_solid(&design, sector))
             .expect("unreinforced sector evaluates to a manifold mesh");
-        let minimum_y = sector_mesh
+        let keepout_vertices = sector_mesh
             .vertices
+            .iter()
+            .filter(|vertex| vertex[2].abs() < 39.0)
+            .collect::<Vec<_>>();
+        assert!(
+            !keepout_vertices.is_empty(),
+            "sector mesh must cross the central pinion keep-out"
+        );
+        let minimum_y = keepout_vertices
             .iter()
             .map(|vertex| vertex[1])
             .fold(f64::INFINITY, f64::min);
-        let maximum_y = sector_mesh
-            .vertices
+        let maximum_y = keepout_vertices
             .iter()
             .map(|vertex| vertex[1])
             .fold(f64::NEG_INFINITY, f64::max);
@@ -1606,30 +1659,6 @@ mod tests {
             located(
                 ComponentRole::RollBearingCarrierEnd,
                 ComponentLocation::new().with_longitudinal_end(LongitudinalEnd::Rear),
-            ),
-            located(
-                ComponentRole::RollGearboxMount,
-                ComponentLocation::new()
-                    .with_longitudinal_end(LongitudinalEnd::Front)
-                    .with_ordinal(1),
-            ),
-            located(
-                ComponentRole::RollGearboxMount,
-                ComponentLocation::new()
-                    .with_longitudinal_end(LongitudinalEnd::Front)
-                    .with_ordinal(2),
-            ),
-            located(
-                ComponentRole::RollGearboxMount,
-                ComponentLocation::new()
-                    .with_longitudinal_end(LongitudinalEnd::Rear)
-                    .with_ordinal(1),
-            ),
-            located(
-                ComponentRole::RollGearboxMount,
-                ComponentLocation::new()
-                    .with_longitudinal_end(LongitudinalEnd::Rear)
-                    .with_ordinal(2),
             ),
             located(
                 ComponentRole::MovingDriveMountArm,

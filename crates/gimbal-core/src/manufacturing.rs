@@ -83,11 +83,32 @@ pub enum ComponentRole {
     RollGearboxShaft,
     RollBearing,
     RollGearboxPlate,
-    RollGearboxMount,
     MovingDriveMountArm,
     M3Bolt,
     M3Nut,
     M3Washer,
+}
+
+impl ComponentRole {
+    /// Components whose exact involute tooth meshes are intentionally omitted
+    /// from fast, whole-assembly structural checks. Their envelopes and
+    /// mechanical surroundings must still be checked independently of the
+    /// expensive tooth-to-tooth validation route.
+    pub const fn has_high_detail_gear_geometry(self) -> bool {
+        matches!(
+            self,
+            Self::PitchSector
+                | Self::PitchDrivePinion
+                | Self::PitchRetentionPinion
+                | Self::PitchGearboxSmallGear
+                | Self::PitchGearboxDistributionGear
+                | Self::PitchGearboxLargeGear
+                | Self::RollDrivenGear
+                | Self::RollInputPinion
+                | Self::RollGearboxSmallGear
+                | Self::RollGearboxLargeGear
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]

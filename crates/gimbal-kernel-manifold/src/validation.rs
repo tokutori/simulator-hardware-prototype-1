@@ -36,49 +36,7 @@ impl ValidationScope {
     const fn includes(self, role: ComponentRole) -> bool {
         match self {
             Self::Full => true,
-            Self::StructuralFast => match role {
-                ComponentRole::PitchSector
-                | ComponentRole::PitchDrivePinion
-                | ComponentRole::PitchRetentionPinion
-                | ComponentRole::PitchGearboxSmallGear
-                | ComponentRole::PitchGearboxDistributionGear
-                | ComponentRole::PitchGearboxLargeGear
-                | ComponentRole::RollDrivenGear
-                | ComponentRole::RollInputPinion
-                | ComponentRole::RollGearboxSmallGear
-                | ComponentRole::RollGearboxLargeGear => false,
-                ComponentRole::FixedCarrierRail
-                | ComponentRole::FixedCarrierPost
-                | ComponentRole::FixedCrossmember
-                | ComponentRole::PitchCradleLongitudinalRail
-                | ComponentRole::RollBearingCarrierEnd
-                | ComponentRole::InstallationFloor
-                | ComponentRole::PitchDriveFlange
-                | ComponentRole::PitchRetentionFlange
-                | ComponentRole::PitchDriveShaft
-                | ComponentRole::PitchRetentionShaft
-                | ComponentRole::PitchContactOutboardPlate
-                | ComponentRole::PitchContactCarriagePlate
-                | ComponentRole::PitchGearboxFarPlate
-                | ComponentRole::PitchGearboxShaft
-                | ComponentRole::PitchGearboxTieRod
-                | ComponentRole::RetentionLeafSpring
-                | ComponentRole::RetentionBearingBlock
-                | ComponentRole::Cockpit
-                | ComponentRole::CockpitHanger
-                | ComponentRole::CockpitShaftKey
-                | ComponentRole::RollShaft
-                | ComponentRole::RollDrivenHub
-                | ComponentRole::RollDrivenKey
-                | ComponentRole::RollGearboxShaft
-                | ComponentRole::RollBearing
-                | ComponentRole::RollGearboxPlate
-                | ComponentRole::RollGearboxMount
-                | ComponentRole::MovingDriveMountArm
-                | ComponentRole::M3Bolt
-                | ComponentRole::M3Nut
-                | ComponentRole::M3Washer => true,
-            },
+            Self::StructuralFast => !role.has_high_detail_gear_geometry(),
         }
     }
 }
@@ -665,8 +623,8 @@ impl<'a> AssemblyValidator<'a> {
                     },
                 });
             }
-            let first_seat = world_plane(joint.first_seat, self.assembly, instances);
-            let second_seat = world_plane(joint.second_seat, self.assembly, instances);
+            let first_seat = world_plane(joint.head_seat, self.assembly, instances);
+            let second_seat = world_plane(joint.nut_seat, self.assembly, instances);
             let first_axis_error = dot(first_seat.normal, first_hole.direction)
                 .abs()
                 .clamp(-1.0, 1.0)
@@ -917,8 +875,8 @@ mod tests {
     use gimbal_core::{
         Angle, AssemblyRelation, AxisDatum, Body, ComponentDefinition, ComponentInstance,
         ComponentLocation, ComponentRole, CylinderDatum, DatumEndpoint, DatumSet,
-        EngineeringTolerance, FastenedJoint, FastenerHardware, FastenerHeadSide, FeatureBuilder,
-        FrameGraph, Kinematics, Manufacturing, MetricThread, NonNegativeAngle, NonNegativeLength,
+        EngineeringTolerance, FastenedJoint, FastenerHardware, FeatureBuilder, FrameGraph,
+        Kinematics, Manufacturing, MetricThread, NonNegativeAngle, NonNegativeLength,
         PitchRollCommand, PlaneDatum, Point3, PositiveArea, PositiveLength, PositiveVolume,
         Primitive3, RigidTransform, SurfaceContact, UnitVector3,
     };
@@ -1242,8 +1200,8 @@ mod tests {
                 .add_relation(AssemblyRelation::Fastened(FastenedJoint {
                     first_hole: DatumEndpoint::new(first, first_hole),
                     second_hole: DatumEndpoint::new(second, second_hole),
-                    first_seat: DatumEndpoint::new(first, first_seat),
-                    second_seat: DatumEndpoint::new(second, second_seat),
+                    head_seat: DatumEndpoint::new(first, first_seat),
+                    nut_seat: DatumEndpoint::new(second, second_seat),
                     hardware: FastenerHardware {
                         bolt,
                         nut,
@@ -1254,7 +1212,6 @@ mod tests {
                     target_hole_radial_clearance: NonNegativeLength::mm(0.2)
                         .expect("non-negative clearance"),
                     grip_length: PositiveLength::mm(4.0).expect("positive grip"),
-                    head_side: FastenerHeadSide::First,
                     tolerance: EngineeringTolerance {
                         linear: NonNegativeLength::mm(0.05).expect("valid tolerance"),
                         angular: NonNegativeAngle::degrees(0.1).expect("valid tolerance"),

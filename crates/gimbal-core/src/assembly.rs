@@ -92,9 +92,10 @@ pub enum AssemblyError {
         actual: DatumKind,
     },
     SelfRelation(ComponentInstanceId),
-    RelationEndpointInstanceMismatch {
-        first: ComponentInstanceId,
-        second: ComponentInstanceId,
+    RelationSeatInstanceMismatch {
+        seat: ComponentInstanceId,
+        first_member: ComponentInstanceId,
+        second_member: ComponentInstanceId,
     },
     RelationParticipantRoleMismatch {
         instance: ComponentInstanceId,
@@ -339,14 +340,12 @@ impl Assembly {
         relation: AssemblyRelation,
     ) -> Result<AssemblyRelationId, AssemblyError> {
         if let AssemblyRelation::Fastened(joint) = relation {
-            for (hole, seat) in [
-                (joint.first_hole.instance, joint.first_seat.instance),
-                (joint.second_hole.instance, joint.second_seat.instance),
-            ] {
-                if hole != seat {
-                    return Err(AssemblyError::RelationEndpointInstanceMismatch {
-                        first: hole,
-                        second: seat,
+            for seat in [joint.head_seat.instance, joint.nut_seat.instance] {
+                if seat != joint.first_hole.instance && seat != joint.second_hole.instance {
+                    return Err(AssemblyError::RelationSeatInstanceMismatch {
+                        seat,
+                        first_member: joint.first_hole.instance,
+                        second_member: joint.second_hole.instance,
                     });
                 }
             }
@@ -622,9 +621,9 @@ mod tests {
     use super::*;
     use crate::{
         AxisDatum, CylinderDatum, DatumEndpoint, EngineeringTolerance, FastenedJoint,
-        FastenerHardware, FastenerHeadSide, FeatureBuilder, Manufacturing, MetricThread,
-        NonNegativeAngle, NonNegativeLength, PlaneDatum, Point3, PositiveArea, PositiveLength,
-        Primitive3, SurfaceContact, UnitVector3,
+        FastenerHardware, FeatureBuilder, Manufacturing, MetricThread, NonNegativeAngle,
+        NonNegativeLength, PlaneDatum, Point3, PositiveArea, PositiveLength, Primitive3,
+        SurfaceContact, UnitVector3,
     };
 
     #[test]
@@ -878,6 +877,7 @@ mod tests {
         let bolt = add_hardware("m3_bolt", ComponentRole::M3Bolt);
         let nut = add_hardware("m3_nut", ComponentRole::M3Nut);
         let wrong_nut = add_hardware("wrong_nut", ComponentRole::M3Bolt);
+        let third = add_hardware("unrelated_seat", ComponentRole::M3Washer);
         let tolerance = EngineeringTolerance {
             linear: NonNegativeLength::mm(0.05).expect("non-negative tolerance"),
             angular: NonNegativeAngle::degrees(0.2).expect("non-negative tolerance"),
@@ -885,8 +885,8 @@ mod tests {
         let relation = AssemblyRelation::Fastened(FastenedJoint {
             first_hole: DatumEndpoint::new(first, hole),
             second_hole: DatumEndpoint::new(second, hole),
-            first_seat: DatumEndpoint::new(first, seat),
-            second_seat: DatumEndpoint::new(second, seat),
+            head_seat: DatumEndpoint::new(first, seat),
+            nut_seat: DatumEndpoint::new(second, seat),
             hardware: FastenerHardware {
                 bolt,
                 nut,
@@ -897,7 +897,6 @@ mod tests {
             target_hole_radial_clearance: NonNegativeLength::mm(0.2)
                 .expect("non-negative clearance"),
             grip_length: PositiveLength::mm(6.0).expect("positive grip"),
-            head_side: FastenerHeadSide::First,
             tolerance,
         });
         assembly
@@ -908,13 +907,14 @@ mod tests {
             unreachable!();
         };
         let mut mismatched = joint;
-        mismatched.first_seat = DatumEndpoint::new(second, seat);
+        mismatched.head_seat = DatumEndpoint::new(third, seat);
         assert!(matches!(
             assembly.add_relation(AssemblyRelation::Fastened(mismatched)),
-            Err(AssemblyError::RelationEndpointInstanceMismatch {
-                first: actual_first,
-                second: actual_second,
-            }) if actual_first == first && actual_second == second
+            Err(AssemblyError::RelationSeatInstanceMismatch {
+                seat: actual_seat,
+                first_member: actual_first,
+                second_member: actual_second,
+            }) if actual_seat == third && actual_first == first && actual_second == second
         ));
         let mut aliased = joint;
         aliased.hardware.nut = bolt;
