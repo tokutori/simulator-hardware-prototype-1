@@ -61,7 +61,7 @@ gimbal-export -> gimbal-core
 | A2 | CLI integration testの外部化 | 完了 | Phase 5前 |
 | A3 | CLIをcommand/generate/validate/manifestへ分割 | 完了 | Phase 5前 |
 | A4 | kernel validationをreport/interference/relationsへ分割 | 完了 | Phase 5前 |
-| A5 | prototypeをsubsystem別moduleへ分割しDefinitionsをgroup化 | 未着手 | Phase 5前 |
+| A5 | prototypeをsubsystem別moduleへ分割しDefinitionsをgroup化 | 完了 | Phase 5前 |
 | A6 | `geared-gimbal-design` crateを追加し固有設計を移す | 未着手 | Phase 6前 |
 | A7 | generic identity、coordinateおよびmodule依存方向を整理 | 未着手 | Phase 6と並行 |
 | A8 | export/renderer境界をsemantic metadataとencoderへ変更 | 未着手 | Assembly Phase 8–9前 |
@@ -231,4 +231,6 @@ Exit criteria:
 - `ValidationPlan`を`plan.rs`へ追加し、検査対象definition集合をcallerが明示する構造へ変更した。kernel validatorから`ComponentRole::has_high_detail_gear_geometry()`への依存を撤去し、CLI composition rootだけが既定prototypeの高精細gear除外policyを組み立てる。
 - report、plan、instance world geometry、interference、proximity、relation検証およびtestの変更理由をmodule境界へ反映し、A4のexit criteriaを満たしたため完了とした。
 - A5の最初のcheckpointとして、単一の`prototype.rs`を`parameters`、`validation`、`definitions`、`fixed_frame`、`pitch_unit`、`pitch_geometry`、`roll`、`component_geometry`および`tests`へ振舞いを変えず分割した。`mod.rs`は設計構築順序を示すcomposition rootだけを主に保持する。
-- 平坦だった`Definitions`をfixed frame、pitch unit、rollおよびhardwareへgroup化し、datumを持つdefinitionは`Defined<D>`でdefinition IDとdatum bundleを一体にした。各subsystemへdefinition構築自体を移す作業が残るため、A5は引き続き進行中とする。
+- 平坦だった`Definitions`をfixed frame、pitch unit、rollおよびhardwareへgroup化し、datumを持つdefinitionは`Defined<D>`でdefinition IDとdatum bundleを一体にした。
+- definition IDの決定順を一箇所で明示するためdefinition生成は`definitions.rs`に集約し、instanceとrelationは`fixed_frame.rs`、`pitch_unit.rs`、`roll.rs`が所有する構成を採用した。分散したbuilderから暗黙のID順序を復元するより変更経路が明確であるため、当初案の「各subsystemがdefinitionも構築する」は採用しない。
+- 分割後も既定設計のdefinition/instance/relation数、主要pose、床clearance、exact solid回帰を含むworkspace 54 testsが成功した。fmt、warning-as-error Clippy、native/wasm `no_std` checkも成功したためA5を完了とした。
