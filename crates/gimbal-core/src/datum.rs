@@ -4,7 +4,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use crate::PositiveLength;
+use crate::{ComponentDefinitionId, PositiveLength};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Point3 {
@@ -47,6 +47,7 @@ pub enum DatumError {
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DatumId<T> {
+    owner: Option<ComponentDefinitionId>,
     index: u32,
     marker: PhantomData<fn() -> T>,
 }
@@ -83,6 +84,7 @@ pub struct NamedDatum {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DatumSet {
+    owner: Option<ComponentDefinitionId>,
     datums: Vec<NamedDatum>,
 }
 
@@ -137,21 +139,36 @@ impl<T> DatumId<T> {
         self.index as usize
     }
 
-    fn new(index: usize) -> Self {
+    fn new(owner: Option<ComponentDefinitionId>, index: usize) -> Self {
         Self {
+            owner,
             index: index as u32,
             marker: PhantomData,
         }
+    }
+
+    pub(crate) const fn owner(self) -> Option<ComponentDefinitionId> {
+        self.owner
     }
 }
 
 impl DatumSet {
     pub const fn new() -> Self {
-        Self { datums: Vec::new() }
+        Self {
+            owner: None,
+            datums: Vec::new(),
+        }
+    }
+
+    pub const fn for_definition(owner: ComponentDefinitionId) -> Self {
+        Self {
+            owner: Some(owner),
+            datums: Vec::new(),
+        }
     }
 
     pub fn add<T: DatumType>(&mut self, name: String, datum: T) -> DatumId<T> {
-        let id = DatumId::new(self.datums.len());
+        let id = DatumId::new(self.owner, self.datums.len());
         self.datums.push(NamedDatum {
             name,
             geometry: datum.into_geometry(),
@@ -160,6 +177,9 @@ impl DatumSet {
     }
 
     pub fn get<T: DatumType>(&self, id: DatumId<T>) -> Option<T> {
+        if id.owner != self.owner {
+            return None;
+        }
         self.datums
             .get(id.index())
             .and_then(|datum| T::from_geometry(datum.geometry))
@@ -175,6 +195,10 @@ impl DatumSet {
 
     pub fn is_empty(&self) -> bool {
         self.datums.is_empty()
+    }
+
+    pub(crate) const fn owner(&self) -> Option<ComponentDefinitionId> {
+        self.owner
     }
 }
 

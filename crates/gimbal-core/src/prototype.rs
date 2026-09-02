@@ -473,7 +473,7 @@ fn build_definitions(
 ) -> Result<Definitions, PrototypeError> {
     let fdm = Manufacturing::Fdm;
     let sector_solid = dual_sector_solid(builder, p)?;
-    let mut sector_datums = DatumSet::new();
+    let mut sector_datums = DatumSet::for_definition(assembly.next_definition_id());
     let sector_mount_face = add_plane_datum(
         &mut sector_datums,
         "mounting_spine_inner_face",
@@ -642,7 +642,7 @@ fn build_definitions(
         fdm,
         [0.20, 0.22, 0.27, 1.0],
     );
-    let mut contact_carriage_datums = DatumSet::new();
+    let mut contact_carriage_datums = DatumSet::for_definition(assembly.next_definition_id());
     let contact_carriage_negative_y = add_plane_datum(
         &mut contact_carriage_datums,
         "negative_y",
@@ -669,7 +669,7 @@ fn build_definitions(
         [0.20, 0.22, 0.27, 1.0],
         contact_carriage_datums,
     );
-    let mut far_plate_datums = DatumSet::new();
+    let mut far_plate_datums = DatumSet::for_definition(assembly.next_definition_id());
     let pitch_gearbox_far_plate_fasteners = pitch_gearbox_plate_fastener_datums(
         &mut far_plate_datums,
         p.pitch_gearbox.side_plate_thickness.mm(),
@@ -720,7 +720,8 @@ fn build_definitions(
         p.cockpit.width.mm(),
         p.cockpit.height.mm(),
     ];
-    let (cockpit_datums, cockpit_faces) = box_plane_datums(cockpit_size);
+    let (cockpit_datums, cockpit_faces) =
+        box_plane_datums(assembly.next_definition_id(), cockpit_size);
     let cockpit = add_solid_definition_with_datums(
         assembly,
         "cockpit_body",
@@ -730,7 +731,7 @@ fn build_definitions(
         [0.86, 0.20, 0.18, 1.0],
         cockpit_datums,
     );
-    let mut cockpit_hanger_datums = DatumSet::new();
+    let mut cockpit_hanger_datums = DatumSet::for_definition(assembly.next_definition_id());
     let cockpit_hanger_cockpit_face = add_plane_datum(
         &mut cockpit_hanger_datums,
         "cockpit_mount_face",
@@ -827,7 +828,7 @@ fn build_definitions(
         Manufacturing::Purchased,
         [0.62, 0.66, 0.70, 1.0],
     );
-    let mut carrier_end_datums = DatumSet::new();
+    let mut carrier_end_datums = DatumSet::for_definition(assembly.next_definition_id());
     let tie_center_x = roll_bearing_carrier_tie_center_x(p);
     let tie_half = p.frame.moving_carrier_member_width.mm() * 0.5;
     let roll_bearing_carrier_end_rail_face = add_plane_datum(
@@ -868,7 +869,7 @@ fn build_definitions(
         p.frame.bearing_pedestal_thickness.mm(),
         definition_style(ComponentRole::RollBearing, [0.48, 0.52, 0.56, 1.0]),
     )?;
-    let mut roll_gearbox_plate_datums = DatumSet::new();
+    let mut roll_gearbox_plate_datums = DatumSet::for_definition(assembly.next_definition_id());
     let roll_gearbox_plate_negative_x = add_plane_datum(
         &mut roll_gearbox_plate_datums,
         "negative_x",
@@ -890,7 +891,7 @@ fn build_definitions(
         [0.20, 0.22, 0.27, 1.0],
         roll_gearbox_plate_datums,
     );
-    let mut moving_arm_datums = DatumSet::new();
+    let mut moving_arm_datums = DatumSet::for_definition(assembly.next_definition_id());
     let moving_drive_mount_arm_carrier_face = add_plane_datum(
         &mut moving_arm_datums,
         "carrier_contact_face",
@@ -3342,7 +3343,8 @@ fn carrier_post_definition(
         )?;
     }
 
-    let (mut datums, faces) = box_plane_datums([width, depth, height]);
+    let (mut datums, faces) =
+        box_plane_datums(assembly.next_definition_id(), [width, depth, height]);
     let fasteners = local_hole_zs.map(|z| PostFastenerDatums {
         hole: add_cylinder_datum(
             &mut datums,
@@ -3433,7 +3435,10 @@ fn sheet_box_definition_with_faces(
             z: -thickness.mm() * 0.5,
         },
     )?;
-    let (datums, faces) = box_plane_datums([width, height, thickness.mm()]);
+    let (datums, faces) = box_plane_datums(
+        assembly.next_definition_id(),
+        [width, height, thickness.mm()],
+    );
     let id = assembly.add_definition(ComponentDefinition {
         name: name.to_string(),
         role: style.role,
@@ -3459,7 +3464,7 @@ fn add_box_definition_with_faces(
     manufacturing: Manufacturing,
     color_rgba: [f32; 4],
 ) -> (ComponentDefinitionId, BoxPlaneDatums) {
-    let (datums, faces) = box_plane_datums(size);
+    let (datums, faces) = box_plane_datums(assembly.next_definition_id(), size);
     let id = assembly.add_definition(ComponentDefinition {
         name: name.to_string(),
         role,
@@ -3471,8 +3476,8 @@ fn add_box_definition_with_faces(
     (id, faces)
 }
 
-fn box_plane_datums(size: [f64; 3]) -> (DatumSet, BoxPlaneDatums) {
-    let mut datums = DatumSet::new();
+fn box_plane_datums(owner: ComponentDefinitionId, size: [f64; 3]) -> (DatumSet, BoxPlaneDatums) {
+    let mut datums = DatumSet::for_definition(owner);
     let negative_x = add_plane_datum(
         &mut datums,
         "negative_x",

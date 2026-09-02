@@ -85,6 +85,11 @@ pub enum AssemblyError {
         instance: ComponentInstanceId,
         datum_index: usize,
     },
+    DatumOwnerMismatch {
+        instance: ComponentInstanceId,
+        expected: ComponentDefinitionId,
+        actual: Option<ComponentDefinitionId>,
+    },
     DatumKindMismatch {
         instance: ComponentInstanceId,
         datum_index: usize,
@@ -320,9 +325,20 @@ impl Assembly {
     }
 
     pub fn add_definition(&mut self, definition: ComponentDefinition) -> ComponentDefinitionId {
-        let id = ComponentDefinitionId(self.definitions.len() as u32);
+        let id = self.next_definition_id();
+        match definition.datums.owner() {
+            Some(owner) => assert_eq!(owner, id, "datum set owner must match its definition"),
+            None => assert!(
+                definition.datums.is_empty(),
+                "a definition with datums must use DatumSet::for_definition"
+            ),
+        }
         self.definitions.push(definition);
         id
+    }
+
+    pub fn next_definition_id(&self) -> ComponentDefinitionId {
+        ComponentDefinitionId(self.definitions.len() as u32)
     }
 
     pub fn add_instance(&mut self, instance: ComponentInstance) -> ComponentInstanceId {
@@ -551,6 +567,13 @@ impl Assembly {
         let instance = self
             .instance(endpoint.instance)
             .ok_or(AssemblyError::InvalidInstance(endpoint.instance))?;
+        if endpoint.datum_owner != Some(instance.definition) {
+            return Err(AssemblyError::DatumOwnerMismatch {
+                instance: endpoint.instance,
+                expected: instance.definition,
+                actual: endpoint.datum_owner,
+            });
+        }
         let definition = self
             .definition(instance.definition)
             .expect("instance definition was validated when inserted");
@@ -664,12 +687,9 @@ mod tests {
             origin: Point3::from_mm([0.0, 0.0, 0.0]).expect("finite point"),
             normal: UnitVector3::new([0.0, 0.0, 1.0]).expect("valid normal"),
         };
-        let mut first_datums = DatumSet::new();
-        let first_plane = first_datums.add("mounting_plane".to_string(), plane);
-        let mut second_datums = DatumSet::new();
-        let second_plane = second_datums.add("mounting_plane".to_string(), plane);
-
         let mut assembly = Assembly::new();
+        let mut first_datums = DatumSet::for_definition(assembly.next_definition_id());
+        let first_plane = first_datums.add("mounting_plane".to_string(), plane);
         let first_definition = assembly.add_definition(ComponentDefinition {
             name: "first".to_string(),
             role: ComponentRole::FixedCrossmember,
@@ -678,6 +698,8 @@ mod tests {
             color_rgba: [1.0; 4],
             datums: first_datums,
         });
+        let mut second_datums = DatumSet::for_definition(assembly.next_definition_id());
+        let second_plane = second_datums.add("mounting_plane".to_string(), plane);
         let second_definition = assembly.add_definition(ComponentDefinition {
             name: "second".to_string(),
             role: ComponentRole::FixedCrossmember,
@@ -738,7 +760,8 @@ mod tests {
             centered: true,
         });
         let point = Point3::from_mm([0.0, 0.0, 0.0]).expect("finite point");
-        let mut plane_datums = DatumSet::new();
+        let mut assembly = Assembly::new();
+        let mut plane_datums = DatumSet::for_definition(assembly.next_definition_id());
         let plane_id = plane_datums.add(
             "mounting_plane".to_string(),
             PlaneDatum {
@@ -746,15 +769,6 @@ mod tests {
                 normal: UnitVector3::new([0.0, 0.0, 1.0]).expect("valid normal"),
             },
         );
-        let mut wrong_datums = DatumSet::new();
-        wrong_datums.add(
-            "shaft_axis".to_string(),
-            crate::AxisDatum {
-                origin: point,
-                direction: UnitVector3::new([1.0, 0.0, 0.0]).expect("valid direction"),
-            },
-        );
-        let mut assembly = Assembly::new();
         let plane_definition = assembly.add_definition(ComponentDefinition {
             name: "plane".to_string(),
             role: ComponentRole::FixedCrossmember,
@@ -763,8 +777,16 @@ mod tests {
             color_rgba: [1.0; 4],
             datums: plane_datums,
         });
+        let mut wrong_datums = DatumSet::for_definition(assembly.next_definition_id());
+        wrong_datums.add(
+            "other_mounting_plane".to_string(),
+            PlaneDatum {
+                origin: point,
+                normal: UnitVector3::new([0.0, 0.0, 1.0]).expect("valid normal"),
+            },
+        );
         let wrong_definition = assembly.add_definition(ComponentDefinition {
-            name: "axis".to_string(),
+            name: "other_plane".to_string(),
             role: ComponentRole::RollShaft,
             body: Body::Solid(solid),
             manufacturing: Manufacturing::Purchased,
@@ -796,12 +818,13 @@ mod tests {
         });
         assert!(matches!(
             assembly.add_relation(relation),
-            Err(AssemblyError::DatumKindMismatch {
+            Err(AssemblyError::DatumOwnerMismatch {
                 instance,
-                datum_index: 0,
-                expected: DatumKind::Plane,
-                actual: DatumKind::Axis,
+                expected,
+                actual: Some(actual),
             }) if instance == second
+                && expected == wrong_definition
+                && actual == plane_definition
         ));
     }
 
@@ -819,7 +842,8 @@ mod tests {
             origin,
             direction: UnitVector3::new([0.0, 0.0, 1.0]).expect("valid direction"),
         };
-        let mut member_datums = DatumSet::new();
+        let mut assembly = Assembly::new();
+        let mut member_datums = DatumSet::for_definition(assembly.next_definition_id());
         let hole = member_datums.add(
             "m3_clearance_hole".to_string(),
             CylinderDatum {
@@ -834,7 +858,6 @@ mod tests {
                 normal: UnitVector3::new([0.0, 0.0, 1.0]).expect("valid normal"),
             },
         );
-        let mut assembly = Assembly::new();
         let member_definition = assembly.add_definition(ComponentDefinition {
             name: "member".to_string(),
             role: ComponentRole::FixedCrossmember,

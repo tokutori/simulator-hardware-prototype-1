@@ -1007,7 +1007,8 @@ mod tests {
             .expect("zero pose");
 
         let report_for_offset = |offset: f64, minimum_contact_area_mm2: f64| {
-            let mut first_datums = DatumSet::new();
+            let mut assembly = Assembly::new();
+            let mut first_datums = DatumSet::for_definition(assembly.next_definition_id());
             let first_plane = first_datums.add(
                 "contact_plane".into(),
                 PlaneDatum {
@@ -1015,15 +1016,6 @@ mod tests {
                     normal: UnitVector3::new([1.0, 0.0, 0.0]).expect("valid normal"),
                 },
             );
-            let mut second_datums = DatumSet::new();
-            let second_plane = second_datums.add(
-                "contact_plane".into(),
-                PlaneDatum {
-                    origin: Point3::from_mm([-5.0, 0.0, 0.0]).expect("finite point"),
-                    normal: UnitVector3::new([-1.0, 0.0, 0.0]).expect("valid normal"),
-                },
-            );
-            let mut assembly = Assembly::new();
             let first_definition = assembly.add_definition(ComponentDefinition {
                 name: "first_cube".into(),
                 role: ComponentRole::FixedCrossmember,
@@ -1032,6 +1024,14 @@ mod tests {
                 color_rgba: [1.0; 4],
                 datums: first_datums,
             });
+            let mut second_datums = DatumSet::for_definition(assembly.next_definition_id());
+            let second_plane = second_datums.add(
+                "contact_plane".into(),
+                PlaneDatum {
+                    origin: Point3::from_mm([-5.0, 0.0, 0.0]).expect("finite point"),
+                    normal: UnitVector3::new([-1.0, 0.0, 0.0]).expect("valid normal"),
+                },
+            );
             let second_definition = assembly.add_definition(ComponentDefinition {
                 name: "second_cube".into(),
                 role: ComponentRole::FixedCarrierRail,
@@ -1122,8 +1122,8 @@ mod tests {
         .expect("zero pose");
 
         let report_for_offset = |second_x: f64, second_radius: f64| {
-            let member_datums = |seat_z: f64, seat_normal: [f64; 3], radius: f64| {
-                let mut datums = DatumSet::new();
+            let member_datums = |owner, seat_z: f64, seat_normal: [f64; 3], radius: f64| {
+                let mut datums = DatumSet::for_definition(owner);
                 let hole = datums.add(
                     "m3_clearance_hole".into(),
                     CylinderDatum {
@@ -1143,10 +1143,9 @@ mod tests {
                 );
                 (datums, hole, seat)
             };
-            let (first_datums, first_hole, first_seat) = member_datums(-1.0, [0.0, 0.0, -1.0], 1.7);
-            let (second_datums, second_hole, second_seat) =
-                member_datums(1.0, [0.0, 0.0, 1.0], second_radius);
             let mut assembly = Assembly::new();
+            let (first_datums, first_hole, first_seat) =
+                member_datums(assembly.next_definition_id(), -1.0, [0.0, 0.0, -1.0], 1.7);
             let first_definition = assembly.add_definition(ComponentDefinition {
                 name: "first_member".into(),
                 role: ComponentRole::FixedCarrierPost,
@@ -1155,6 +1154,12 @@ mod tests {
                 color_rgba: [1.0; 4],
                 datums: first_datums,
             });
+            let (second_datums, second_hole, second_seat) = member_datums(
+                assembly.next_definition_id(),
+                1.0,
+                [0.0, 0.0, 1.0],
+                second_radius,
+            );
             let second_definition = assembly.add_definition(ComponentDefinition {
                 name: "second_member".into(),
                 role: ComponentRole::FixedCarrierRail,

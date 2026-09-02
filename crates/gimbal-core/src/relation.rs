@@ -2,7 +2,7 @@
 
 use core::marker::PhantomData;
 
-use crate::assembly::ComponentInstanceId;
+use crate::assembly::{ComponentDefinitionId, ComponentInstanceId};
 use crate::datum::{AxisDatum, CylinderDatum, DatumId, DatumKind, DatumType, PlaneDatum};
 use crate::{
     Angle, NonNegativeAngle, NonNegativeLength, PositiveAngle, PositiveArea, PositiveLength,
@@ -121,6 +121,7 @@ pub enum AssemblyRelation {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct RelationEndpointRef {
     pub instance: ComponentInstanceId,
+    pub datum_owner: Option<ComponentDefinitionId>,
     pub datum_index: usize,
     pub kind: DatumKind,
 }
@@ -205,6 +206,7 @@ impl AssemblyRelation {
 fn erased<T: DatumType>(endpoint: DatumEndpoint<T>, kind: DatumKind) -> RelationEndpointRef {
     RelationEndpointRef {
         instance: endpoint.instance,
+        datum_owner: endpoint.datum.owner(),
         datum_index: endpoint.datum.index(),
         kind,
     }

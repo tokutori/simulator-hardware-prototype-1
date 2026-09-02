@@ -96,6 +96,8 @@ Frame / Joint       = kinematic motion
 | A-28 | Low | pitch入力対carrier比の文書値が約175:1 | 現parameterから導かれる169:1と不一致 | 0 |
 | A-29 | High | 旧構成のinstanceまたはfeatureが、現在の接続相手・荷重経路・保持機能を失った後も残り得る | 不要部品、干渉、誤った組立意図および加工点数を増やす | 4–6 |
 | A-30 | High | floor clearance testが手書きした一部instanceだけを対象とし、`RollGearboxMount`を漏らしていた | pitch端での床干渉を成功扱いする | 4, 7 |
+| A-31 | High | `DatumId<T>`が発行元definitionを保持せず、同kind・同indexの別definition datumを誤受理し得る | relationが意図しない接続面・軸を参照する | 1 |
+| A-32 | High | relation validatorが未対応relationを黙って通過し、reportが`complete: true`になり得る | 未検証jointを検証済みと誤表示する | 2, 5, 6 |
 
 この一覧は完了条件ではない。Phase 2以降の全instance監査で新たに発見した問題も、この表へ追加する。
 
@@ -286,6 +288,7 @@ Exit criteria:
 - prototype builderからside/end文字列分岐を除去する。
 - `PointDatum`、`AxisDatum`、`PlaneDatum`、`CylinderDatum`等のstable semantic datumを導入する。
 - datumをkernel face番号ではなくcomponent local geometryへ結び付ける。
+- `DatumId<T>`へ発行元`ComponentDefinitionId`を保持し、別definitionから借用したdatumをrelation endpointとして拒否する。
 - engineering toleranceとnumerical toleranceを別の型として導入する。
 - `AssemblyRelation`とrelationごとのdatum/engineering toleranceを導入する。
 - kinematic constraintをratioとreference phaseを持つedgeとして表現できる基礎型を導入する。
@@ -298,6 +301,7 @@ Exit criteria:
 - 機械的意味の判定に自由文字列を使用しない。
 - relationが存在しないinstance pairと、relationで結ばれたpairを列挙できる。
 - relationがstable datumを参照し、Feature DAGのnode追加やkernel評価順に依存しない。
+- relation endpointのdatumが、そのinstanceのcomponent definitionから発行されたことを検査できる。
 - engineering toleranceを変えてもnumerical epsilonが暗黙に変化しない。
 - constraint graphの閉路を列挙できる。
 - `gimbal-core`の`no_std + alloc`を維持する。
@@ -628,8 +632,9 @@ Exit criteria:
 - 必要な`CockpitHanger`内部に残っていたcockpit内への2 mm延長をfeature単位で削除した。hanger下面とcockpit上面へstable plane datumを付け、2箇所の`SurfaceContact`を登録した。全42件のstructural contactについてexact solid overlapが0であり、高速floor sweepも維持されることを確認した。
 - `PitchGearboxTieRod`という名称だけM3だった12本の円柱を削除し、既存の両plate実穴をstable cylinder datumとして公開した。4 unitそれぞれをM3x25 bolt 3本、nut、両washerおよび計12件の`FastenedJoint`で締結する構成へ置換し、全joint participant pairのexact intersection volumeが0であることを確認した。
 - commit `5e98bc1`から旧outputを全消去してpreviewを再生成した。40 definition、251 instanceのassembly、静止画8枚、`.blend`、`gimbal-motion.mp4`およびpitch/roll gearbox動画を同じglTFから生成し、manifest記載18 artifactのSHA-256が全件一致した。正式加工可否は引き続き`preview_only=true`、`validation.valid=false`である。
+- 2026-09-03の追加監査で、`DatumId<T>`が発行元definitionを保持しないため、同kind・同indexのforeign datumを誤受理できることを確認した。`DatumSet`をdefinition IDに所有させ、relation endpoint検証でinstance definitionとの一致を必須にした。異なるdefinitionの`PlaneDatum[0]`を借用する回帰testで`DatumOwnerMismatch`を確認した。空のdatum setだけはdatumを発行できないためunownedを許容する。
 
-次の作業はPhase 4として、残る全instanceとdefinition内featureの存在理由監査を行い、不要形状を削除した上で、FDM前提の固定frame接合をM3通しbolt、実穴、washer/nut座面および工具空間を持つ実jointへ置換することである。LaserCutの`Body::Sheet` hole表現とDXF経路は次prototype向けに維持するが、現prototypeのcustom partはFDMを前提とする。
+次の作業はPhase 4として、M3 hardware自身へ軸・座面・thread engagement datumを追加し、bolt、washer、nutの実配置を共通validatorで検査する。その後、残る全instanceとdefinition内featureの存在理由監査を行い、不要形状を削除した上で、FDM前提の固定frame接合をM3通しbolt、実穴、washer/nut座面および工具空間を持つ実jointへ置換する。LaserCutの`Body::Sheet` hole表現とDXF経路は次prototype向けに維持するが、現prototypeのcustom partはFDMを前提とする。
 
 ## 9. 完成の定義
 
