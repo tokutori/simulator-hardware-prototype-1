@@ -1041,7 +1041,7 @@ mod tests {
             }
             checked += 1;
         }
-        assert_eq!(checked, 40);
+        assert_eq!(checked, 42);
         assert!(
             overlaps.is_empty(),
             "structural surface contacts must not use solid overlap: {overlaps:#?}"
@@ -1115,7 +1115,7 @@ mod tests {
             .iter()
             .filter(|relation| matches!(relation, AssemblyRelation::SurfaceContact(_)))
             .count();
-        assert_eq!(contacts, 40);
+        assert_eq!(contacts, 42);
 
         for side in [Side::Left, Side::Right] {
             for end in [LongitudinalEnd::Front, LongitudinalEnd::Rear] {

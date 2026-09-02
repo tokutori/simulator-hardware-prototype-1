@@ -440,7 +440,9 @@ struct Definitions {
     leaf_spring: ComponentDefinitionId,
     bearing_block: ComponentDefinitionId,
     cockpit: ComponentDefinitionId,
+    cockpit_top_face: DatumId<PlaneDatum>,
     cockpit_hanger: ComponentDefinitionId,
+    cockpit_hanger_cockpit_face: DatumId<PlaneDatum>,
     cockpit_shaft_key: ComponentDefinitionId,
     roll_shaft: ComponentDefinitionId,
     roll_driven: ComponentDefinitionId,
@@ -713,28 +715,36 @@ fn build_definitions(
         fdm,
         [0.16, 0.52, 0.26, 1.0],
     );
-    let cockpit = add_solid_definition(
+    let cockpit_size = [
+        p.cockpit.length.mm(),
+        p.cockpit.width.mm(),
+        p.cockpit.height.mm(),
+    ];
+    let (cockpit_datums, cockpit_faces) = box_plane_datums(cockpit_size);
+    let cockpit = add_solid_definition_with_datums(
         assembly,
         "cockpit_body",
         ComponentRole::Cockpit,
-        centered_box(
-            builder,
-            [
-                p.cockpit.length.mm(),
-                p.cockpit.width.mm(),
-                p.cockpit.height.mm(),
-            ],
-        ),
+        centered_box(builder, cockpit_size),
         fdm,
         [0.86, 0.20, 0.18, 1.0],
+        cockpit_datums,
     );
-    let cockpit_hanger = add_solid_definition(
+    let mut cockpit_hanger_datums = DatumSet::new();
+    let cockpit_hanger_cockpit_face = add_plane_datum(
+        &mut cockpit_hanger_datums,
+        "cockpit_mount_face",
+        [0.0, 0.0, cockpit_top_z(p)],
+        [0.0, 0.0, -1.0],
+    );
+    let cockpit_hanger = add_solid_definition_with_datums(
         assembly,
         "cockpit_roll_shaft_clamp_hanger",
         ComponentRole::CockpitHanger,
         cockpit_hanger_solid(builder, p)?,
         fdm,
         [0.72, 0.25, 0.20, 1.0],
+        cockpit_hanger_datums,
     );
     let cockpit_shaft_key = add_solid_definition(
         assembly,
@@ -967,7 +977,9 @@ fn build_definitions(
         leaf_spring,
         bearing_block,
         cockpit,
+        cockpit_top_face: cockpit_faces.positive_z,
         cockpit_hanger,
+        cockpit_hanger_cockpit_face,
         cockpit_shaft_key,
         roll_shaft,
         roll_driven,
@@ -2032,6 +2044,23 @@ fn build_moving_carrier_contacts(
     assembly: &mut Assembly,
     d: &Definitions,
 ) -> Result<(), PrototypeError> {
+    let cockpit = required_instance(assembly, ComponentRole::Cockpit, ComponentLocation::new())?;
+    for ordinal in [1, 2] {
+        let hanger = required_instance(
+            assembly,
+            ComponentRole::CockpitHanger,
+            ComponentLocation::new().with_ordinal(ordinal),
+        )?;
+        add_surface_contact(
+            assembly,
+            cockpit,
+            d.cockpit_top_face,
+            hanger,
+            d.cockpit_hanger_cockpit_face,
+            100.0,
+        )?;
+    }
+
     for end in [LongitudinalEnd::Front, LongitudinalEnd::Rear] {
         let end_location = ComponentLocation::new().with_longitudinal_end(end);
         let carrier_end =
@@ -2317,8 +2346,8 @@ fn cockpit_hanger_solid(
     builder: &mut FeatureBuilder,
     p: &PrototypeParameters,
 ) -> Result<SolidId, PrototypeError> {
-    let cockpit_top = -p.cockpit.suspension_drop.mm() + p.cockpit.height.mm() * 0.5;
-    let web_height = -cockpit_top + 2.0;
+    let cockpit_top = cockpit_top_z(p);
+    let web_height = -cockpit_top;
     let web = centered_box(builder, [12.0, 14.0, web_height]);
     let web = builder.translate(
         web,
@@ -2334,6 +2363,10 @@ fn cockpit_hanger_solid(
     builder
         .boolean(BooleanOperation::Difference, hanger, bore)
         .map_err(PrototypeError::Feature)
+}
+
+fn cockpit_top_z(p: &PrototypeParameters) -> f64 {
+    -p.cockpit.suspension_drop.mm() + p.cockpit.height.mm() * 0.5
 }
 
 #[derive(Clone, Copy)]
