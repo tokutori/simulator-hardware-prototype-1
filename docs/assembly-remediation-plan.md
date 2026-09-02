@@ -542,6 +542,18 @@ Exit criteria:
 - integration testからinstance名、prefixおよび`starts_with`による機械的対象選択を撤去し、`ComponentRole + ComponentLocation`による一意なselectorへ移行した。
 - structured selectorへ移行後も、可動域、床clearanceおよびgearbox plate干渉を含むworkspace test 35件が成功し、失敗0件だった。
 - Phase 1のexit criteriaを満たしたためPhase 1を完了し、Phase 2を進行中へ変更した。
+- Phase 2の最初のcheckpointとして、definition metrics、全instance pair broad phase、kernel-backed exact intersectionおよびstructured issueを持つ`AssemblyValidator`/`ValidationReport`を実装した。
+- 別instanceの面接触は干渉とせず、正の交差体積だけをerrorとするcube fixtureを追加した。
+- `gimbal validate`と通常の`gimbal generate`を同じvalidatorへ接続した。validationに失敗したassemblyから通常artifactは生成できない。
+- inspection用途に限り、fabrication outputを更新せず未検証であることをmanifestへ明記する`generate-preview`を追加した。これは通常のvalidation gateを緩和するものではない。
+- 現行prototypeをzero poseで全pair検査した結果、全24,753 pair中637 pairがbroad-phase候補となり、410 pairでnumerical toleranceを超える正の交差体積を確認した。reportは`output/validation-report.json`へ出力した。
+- 大きな既知干渉にはpitch unit lower/upper frame arm間約8,298 mm³、pitch end upper tie/roll bearing pedestal間約2,818 mm³およびroll driven gear/hub間約1,558 mm³が含まれる。M3 fastener、flange、plate、gear mesh等にも多数の干渉があり、局所修正ではなくPhase 3–6の再設計が必要であることを確認した。
+- Manifoldの既定Booleanでnon-manifold edge panicが発生したため、pair検査をrobust Booleanへ統一し、panic時にinstance pairを含むerrorへ変換する境界を追加した。
+- 637候補の逐次exact checkが日常gateとして遅すぎることを確認し、kernel adapter内だけでManifold parallel featureと決定的な32-pair chunk評価を有効化した。高速fixture gateとfull assembly gateは実行頻度を分ける。
+- `generate-preview`とBlender adapterを用いて、現在の中間モデルから静止画、`.blend`、`gimbal-motion.mp4`、pitch gearbox動画およびroll gearbox動画を再生成した。manifestは`preview_only: true`かつmechanically invalid/unvalidatedと明記する。
+- `SurfaceContact`について、stableな`PlaneDatum`をworld座標へ変換し、engineering linear/angular toleranceに基づく面間距離と対向法線を検証するrelation validatorを追加した。接触面積検証は引き続きPhase 2の未完了項目である。
+- Phase 2 checkpoint時点でworkspace test 37件、format、workspace check、warning-as-errorのClippy、native/wasm32の`gimbal-core no_std` checkが成功した。
+- 再生成後のpreview-only manifestに`.blend`、静止画8枚、MP4 3本、inspection model、animationおよびvalidation reportを含む19 artifactを記録し、全SHA-256が実ファイルと一致することを確認した。
 
 次の作業はPhase 2の共通`AssemblyValidator`とstructured `ValidationReport`である。実joint relationの登録は未成立形状を正当化しないよう、Phase 3–6の再設計と同時に行う。
 

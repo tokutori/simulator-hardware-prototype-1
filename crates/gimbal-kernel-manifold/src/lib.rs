@@ -9,6 +9,14 @@ use manifold_rust::manifold::Manifold;
 use manifold_rust::types::{BooleanEngine, Error as ManifoldStatus};
 use thiserror::Error;
 
+mod validation;
+
+pub use validation::{
+    AssemblyValidator, DefinitionValidation, PairValidation, ValidationError, ValidationIssue,
+    ValidationIssueKind, ValidationProgress, ValidationReport, ValidationSeverity,
+    ValidatorSettings,
+};
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SolidMetrics {
     pub volume_mm3: f64,
@@ -154,7 +162,7 @@ impl<'a> Evaluator<'a> {
     }
 }
 
-fn transform(solid: Manifold, pose: RigidTransform) -> Manifold {
+pub(crate) fn transform(solid: Manifold, pose: RigidTransform) -> Manifold {
     let [x, y, z, w] = pose.rotation;
     let xx = x * x;
     let yy = y * y;

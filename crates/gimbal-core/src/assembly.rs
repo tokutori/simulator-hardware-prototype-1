@@ -199,6 +199,10 @@ impl RigidTransform {
             rotated[2] + self.translation[2],
         ]
     }
+
+    pub fn transform_vector(self, vector: [f64; 3]) -> [f64; 3] {
+        rotate_vector(self.rotation, vector)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -349,12 +353,39 @@ impl Assembly {
         &self.definitions
     }
 
+    pub fn definitions_with_ids(
+        &self,
+    ) -> impl Iterator<Item = (ComponentDefinitionId, &ComponentDefinition)> {
+        self.definitions
+            .iter()
+            .enumerate()
+            .map(|(index, definition)| (ComponentDefinitionId(index as u32), definition))
+    }
+
     pub fn instances(&self) -> &[ComponentInstance] {
         &self.instances
     }
 
+    pub fn instances_with_ids(
+        &self,
+    ) -> impl Iterator<Item = (ComponentInstanceId, &ComponentInstance)> {
+        self.instances
+            .iter()
+            .enumerate()
+            .map(|(index, instance)| (ComponentInstanceId(index as u32), instance))
+    }
+
     pub fn relations(&self) -> &[AssemblyRelation] {
         &self.relations
+    }
+
+    pub fn relations_with_ids(
+        &self,
+    ) -> impl Iterator<Item = (AssemblyRelationId, &AssemblyRelation)> {
+        self.relations
+            .iter()
+            .enumerate()
+            .map(|(index, relation)| (AssemblyRelationId::new(index), relation))
     }
 
     pub fn instance_pairs(&self) -> impl Iterator<Item = ComponentInstancePair> + '_ {

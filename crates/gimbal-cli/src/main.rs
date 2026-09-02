@@ -8,13 +8,17 @@ use std::path::Path;
 
 use config::LoadedConfig;
 use gimbal_core::{
-    Angle, Body, Manufacturing, PitchRollCommand, RegionNode, TriangleMesh, build_prototype,
+    Angle, Body, Manufacturing, NumericalTolerance, PitchRollCommand, PositiveLength,
+    PositiveVolume, PrototypeDesign, RegionNode, TriangleMesh, build_prototype,
 };
 use gimbal_export::{
     AnimationParameters, ExportPart, sha256_file, write_3mf, write_animated_gltf, write_binary_stl,
     write_dxf_profile, write_mesh_3mf, write_obj,
 };
-use gimbal_kernel_manifold::Evaluator;
+use gimbal_kernel_manifold::{
+    AssemblyValidator, Evaluator, ValidationIssueKind, ValidationProgress, ValidationReport,
+    ValidatorSettings,
+};
 use serde_json::{Value, json};
 
 fn main() {
@@ -34,41 +38,65 @@ fn run() -> Result<(), Box<dyn Error>> {
         &workspace.join("fabrication.toml"),
     )?;
     match command.as_str() {
-        "generate" => generate(&workspace, &loaded),
-        "validate" => validate(&loaded),
+        "generate" => generate(&workspace, &loaded, GenerationMode::Validated),
+        "generate-preview" => generate(&workspace, &loaded, GenerationMode::PreviewOnly),
+        "validate" => validate(&workspace, &loaded),
         "clean-output" => clean_output(&workspace),
         unknown => Err(format!(
-            "unknown command {unknown:?}; expected generate, validate, or clean-output"
+            "unknown command {unknown:?}; expected generate, generate-preview, validate, or clean-output"
         )
         .into()),
     }
 }
 
-fn validate(loaded: &LoadedConfig) -> Result<(), Box<dyn Error>> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GenerationMode {
+    Validated,
+    PreviewOnly,
+}
+
+fn validate(workspace: &Path, loaded: &LoadedConfig) -> Result<(), Box<dyn Error>> {
     let design = build_prototype(&loaded.parameters)
         .map_err(|error| format!("prototype design rejected: {error:?}"))?;
-    let mut evaluator = Evaluator::new(&design.graph);
-    for definition in design.assembly.definitions() {
-        let metrics = evaluator.metrics(definition.body.assembly_solid())?;
+    let report = validate_assembly(&design)?;
+    write_validation_report(workspace, &design, &report)?;
+    for validated in &report.definitions {
+        let definition = design
+            .assembly
+            .definition(validated.definition)
+            .ok_or("validation report referenced an unknown definition")?;
         println!(
             "validated definition {:<38} {:>8} triangles {:>12.2} mm^3",
-            definition.name, metrics.triangles, metrics.volume_mm3
+            definition.name, validated.metrics.triangles, validated.metrics.volume_mm3
         );
     }
     println!(
-        "validation complete: {} definitions, {} instances, pitch drive {:.3}:1, gearbox {:.3}:1/stage, roll {:.3}:1",
+        "validation complete: {} definitions, {} instances, {} pair candidates, {} errors, {} warnings",
         design.assembly.definitions().len(),
         design.assembly.instances().len(),
-        design.pitch_drive_pair.ratio(),
-        design.pitch_gearbox_pair.ratio(),
-        design.roll_pair.ratio(),
+        report.broad_phase_candidates,
+        report.error_count(),
+        report.warning_count(),
     );
+    require_valid_assembly(&report)?;
     Ok(())
 }
 
-fn generate(workspace: &Path, loaded: &LoadedConfig) -> Result<(), Box<dyn Error>> {
+fn generate(
+    workspace: &Path,
+    loaded: &LoadedConfig,
+    mode: GenerationMode,
+) -> Result<(), Box<dyn Error>> {
     let design = build_prototype(&loaded.parameters)
         .map_err(|error| format!("prototype design rejected: {error:?}"))?;
+    let validation_report = if mode == GenerationMode::Validated {
+        let report = validate_assembly(&design)?;
+        write_validation_report(workspace, &design, &report)?;
+        require_valid_assembly(&report)?;
+        Some(report)
+    } else {
+        None
+    };
     let output = workspace.join("output");
     let model_dir = output.join("model");
     let animation_dir = output.join("animation");
@@ -110,13 +138,14 @@ fn generate(workspace: &Path, loaded: &LoadedConfig) -> Result<(), Box<dyn Error
             "volume_mm3": metrics.volume_mm3,
             "surface_area_mm2": metrics.surface_area_mm2
         }));
-        match definition.manufacturing {
-            Manufacturing::Fdm { .. } => {
+        match (mode, definition.manufacturing) {
+            (GenerationMode::PreviewOnly, _) => {}
+            (GenerationMode::Validated, Manufacturing::Fdm { .. }) => {
                 let path = fdm_dir.join(format!("{}.3mf", definition.name));
                 write_mesh_3mf(&definition.name, &mesh, &path)?;
                 fabrication_artifacts.push(path);
             }
-            Manufacturing::LaserCut => {
+            (GenerationMode::Validated, Manufacturing::LaserCut) => {
                 let Body::Sheet { profile, .. } = definition.body else {
                     return Err(format!(
                         "laser definition {:?} does not retain a nominal 2D profile",
@@ -131,7 +160,7 @@ fn generate(workspace: &Path, loaded: &LoadedConfig) -> Result<(), Box<dyn Error
                 write_dxf_profile(points, &path)?;
                 fabrication_artifacts.push(path);
             }
-            Manufacturing::Purchased => {}
+            (GenerationMode::Validated, Manufacturing::Purchased) => {}
         }
         definition_meshes.push(mesh);
     }
@@ -219,9 +248,11 @@ fn generate(workspace: &Path, loaded: &LoadedConfig) -> Result<(), Box<dyn Error
         output.join("preview/drive-unit-detail.png"),
         output.join("preview/pitch-gearbox-detail.png"),
         output.join("preview/roll-gearbox-detail.png"),
+        output.join("preview/pitch-sector-reinforcement-detail.png"),
         output.join("preview/gimbal-motion.mp4"),
         output.join("preview/pitch-gearbox-motion.mp4"),
         output.join("preview/roll-gearbox-motion.mp4"),
+        output.join("validation-report.json"),
     ] {
         if optional.is_file() {
             artifact_paths.push(optional);
@@ -240,11 +271,27 @@ fn generate(workspace: &Path, loaded: &LoadedConfig) -> Result<(), Box<dyn Error
         .collect::<Result<Vec<Value>, Box<dyn Error>>>()?;
     let sector = &loaded.parameters.pitch_sector.sector;
     let gearbox_stage_ratio = design.pitch_gearbox_pair.ratio();
+    let validation_json = validation_report
+        .as_ref()
+        .map(|report| validation_report_json(&design, report))
+        .unwrap_or_else(|| {
+            json!({
+                "valid": false,
+                "complete": false,
+                "preview_only": true,
+                "reason": "mechanical assembly validation was intentionally not run for intermediate visualization"
+            })
+        });
     let manifest = json!({
         "schema_version": 3,
         "project": "pitch-roll cockpit attitude simulator prototype",
         "units": "millimeter",
-        "status": "unpowered concept geometry only; not load-rated",
+        "status": if mode == GenerationMode::Validated {
+            "validated unpowered concept geometry only; not load-rated"
+        } else {
+            "intermediate preview only; mechanically invalid or unvalidated; not for fabrication"
+        },
+        "preview_only": mode == GenerationMode::PreviewOnly,
         "geometry": {
             "reference_outside_diameter_mm": sector.external_reference().outside_diameter(),
             "external_reference_teeth": sector.external_reference().teeth(),
@@ -287,6 +334,7 @@ fn generate(workspace: &Path, loaded: &LoadedConfig) -> Result<(), Box<dyn Error
             "roll_limit_deg": loaded.parameters.motion.roll_limit.as_degrees(),
             "yaw_degrees_of_freedom": 0
         },
+        "validation": validation_json,
         "process_profiles": {
             "fdm_material": loaded.fdm_material,
             "fdm_hole_compensation_mm": loaded.fdm_hole_compensation_mm,
@@ -310,12 +358,149 @@ fn generate(workspace: &Path, loaded: &LoadedConfig) -> Result<(), Box<dyn Error
         serde_json::to_vec_pretty(&manifest)?,
     )?;
     println!(
-        "generated {} component definitions and {} instances in {}",
+        "generated {} component definitions and {} instances in {} ({mode:?})",
         design.assembly.definitions().len(),
         export_parts.len(),
         output.display()
     );
     Ok(())
+}
+
+fn validate_assembly(design: &PrototypeDesign) -> Result<ValidationReport, Box<dyn Error>> {
+    let zero_pose = design
+        .kinematics
+        .pose(PitchRollCommand {
+            pitch: Angle::degrees(0.0).expect("zero angle is valid"),
+            roll: Angle::degrees(0.0).expect("zero angle is valid"),
+        })
+        .map_err(|error| format!("zero pose rejected: {error:?}"))?;
+    let settings = ValidatorSettings {
+        numerical_tolerance: NumericalTolerance {
+            linear_epsilon: PositiveLength::mm(1.0e-6).expect("validator epsilon is positive"),
+            volume_epsilon: PositiveVolume::cubic_mm(1.0e-7)
+                .expect("validator epsilon is positive"),
+        },
+    };
+    AssemblyValidator::new(&design.graph, &design.assembly, &zero_pose, settings)
+        .validate_with_progress(|progress| match progress {
+            ValidationProgress::BroadPhaseComplete { candidates } => {
+                eprintln!("assembly validation: {candidates} broad-phase pair candidates");
+            }
+            ValidationProgress::PairCheck {
+                current,
+                total,
+                pair,
+            } if current == 1 || current % 10 == 0 || current == total => {
+                eprintln!(
+                    "assembly validation: checking pair {current}/{total} ({:?}, {:?})",
+                    pair.first, pair.second
+                );
+            }
+            ValidationProgress::PairCheck { .. } => {}
+        })
+        .map_err(Into::into)
+}
+
+fn require_valid_assembly(report: &ValidationReport) -> Result<(), Box<dyn Error>> {
+    if report.is_valid() {
+        Ok(())
+    } else {
+        Err(format!(
+            "assembly validation failed with {} errors; see output/validation-report.json",
+            report.error_count()
+        )
+        .into())
+    }
+}
+
+fn write_validation_report(
+    workspace: &Path,
+    design: &PrototypeDesign,
+    report: &ValidationReport,
+) -> Result<(), Box<dyn Error>> {
+    let output = workspace.join("output");
+    fs::create_dir_all(&output)?;
+    fs::write(
+        output.join("validation-report.json"),
+        serde_json::to_vec_pretty(&validation_report_json(design, report))?,
+    )?;
+    Ok(())
+}
+
+fn validation_report_json(design: &PrototypeDesign, report: &ValidationReport) -> Value {
+    let pair_json = |pair: gimbal_core::ComponentInstancePair| {
+        let identity_json = |id: gimbal_core::ComponentInstanceId| {
+            let identity = design
+                .assembly
+                .component_identity(id)
+                .expect("validation pair references an inserted instance");
+            json!({
+                "instance_id": id.index(),
+                "role": format!("{:?}", identity.role),
+                "location": {
+                    "side": identity.location.side.map(|value| value.as_str()),
+                    "longitudinal_end": identity.location.longitudinal_end.map(|value| value.as_str()),
+                    "vertical_end": identity.location.vertical_end.map(|value| value.as_str()),
+                    "ordinal": identity.location.ordinal,
+                }
+            })
+        };
+        json!({
+            "first": identity_json(pair.first),
+            "second": identity_json(pair.second),
+        })
+    };
+    let issues = report
+        .issues
+        .iter()
+        .map(|issue| {
+            let (code, measurement) = match issue.kind {
+                ValidationIssueKind::DuplicateComponentIdentity { .. } => {
+                    ("duplicate_component_identity", Value::Null)
+                }
+                ValidationIssueKind::UnexpectedInterference {
+                    intersection_volume_mm3,
+                } => (
+                    "unexpected_interference",
+                    json!({ "intersection_volume_mm3": intersection_volume_mm3 }),
+                ),
+                ValidationIssueKind::SurfaceContactSeparation {
+                    distance_mm,
+                    allowed_mm,
+                } => (
+                    "surface_contact_separation",
+                    json!({ "distance_mm": distance_mm, "allowed_mm": allowed_mm }),
+                ),
+                ValidationIssueKind::SurfaceContactNormalMismatch {
+                    error_radians,
+                    allowed_radians,
+                } => (
+                    "surface_contact_normal_mismatch",
+                    json!({
+                        "error_radians": error_radians,
+                        "allowed_radians": allowed_radians
+                    }),
+                ),
+            };
+            json!({
+                "severity": format!("{:?}", issue.severity).to_lowercase(),
+                "code": code,
+                "pair": issue.pair.map(pair_json),
+                "relation_id": issue.relation.map(|relation| relation.index()),
+                "measurement": measurement,
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "valid": report.is_valid(),
+        "definition_count": report.definitions.len(),
+        "total_instance_pairs": report.total_instance_pairs,
+        "broad_phase_candidates": report.broad_phase_candidates,
+        "exact_pair_checks": report.exact_pair_checks.len(),
+        "error_count": report.error_count(),
+        "warning_count": report.warning_count(),
+        "issues": issues,
+    })
 }
 
 fn clean_output(workspace: &Path) -> Result<(), Box<dyn Error>> {
