@@ -627,6 +627,7 @@ Exit criteria:
 - `RollGearboxMount`は上側armとgearbox plateの間を埋めるだけで独立部品としての機械的役割がなかったため、role、definitionおよび4 instanceを削除した。armをplateの実接触面まで延長し、plate側support tabを8.2 mm上げた。変更後は自動列挙された全可動structural instanceが9 sample姿勢で床上5 mm以上を満たした。
 - 必要な`CockpitHanger`内部に残っていたcockpit内への2 mm延長をfeature単位で削除した。hanger下面とcockpit上面へstable plane datumを付け、2箇所の`SurfaceContact`を登録した。全42件のstructural contactについてexact solid overlapが0であり、高速floor sweepも維持されることを確認した。
 - `PitchGearboxTieRod`という名称だけM3だった12本の円柱を削除し、既存の両plate実穴をstable cylinder datumとして公開した。4 unitそれぞれをM3x25 bolt 3本、nut、両washerおよび計12件の`FastenedJoint`で締結する構成へ置換し、全joint participant pairのexact intersection volumeが0であることを確認した。
+- commit `5e98bc1`から旧outputを全消去してpreviewを再生成した。40 definition、251 instanceのassembly、静止画8枚、`.blend`、`gimbal-motion.mp4`およびpitch/roll gearbox動画を同じglTFから生成し、manifest記載18 artifactのSHA-256が全件一致した。正式加工可否は引き続き`preview_only=true`、`validation.valid=false`である。
 
 次の作業はPhase 4として、残る全instanceとdefinition内featureの存在理由監査を行い、不要形状を削除した上で、FDM前提の固定frame接合をM3通しbolt、実穴、washer/nut座面および工具空間を持つ実jointへ置換することである。LaserCutの`Body::Sheet` hole表現とDXF経路は次prototype向けに維持するが、現prototypeのcustom partはFDMを前提とする。
 
