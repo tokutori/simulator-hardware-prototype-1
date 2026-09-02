@@ -12,6 +12,6 @@ pub use gear::{
     DoubleHelicalGear, DoubleHelicalGearPair, GearError, GearHand, GearPose, GearProfile, Point2,
     SpurGear, TriangleMesh,
 };
-pub use prototype::{Prototype, PrototypeError};
+pub use prototype::{Prototype, PrototypeError, PrototypeMotion};
 pub use rack::{DoubleHelicalRack, NormalGearSystem};
 pub use units::{Angle, Length, UnitError};

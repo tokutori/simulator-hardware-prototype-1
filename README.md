@@ -35,7 +35,10 @@ cargo run -p double-helical-cli
 `output/assembly/`（組立・確認用）:
 
 - `prototype-assembly.obj` / `.mtl`: Blenderなどで開く色付き組立モデル
-- `prototype-assembly.blend`: 部品別オブジェクト、mm単位、カメラ、照明を設定したBlenderモデル
+- `prototype-assembly.blend`: 部品別オブジェクト、mm単位、カメラ、照明、連動モーションを設定したBlenderモデル
+- `prototype-animation.toml`: Rust側の歯数比から生成したアニメーション運動量
+- `prototype-motion.mp4`: ハンドル、全ギヤ、ラックが連動して往復するH.264動画
+- `prototype-motion-frames/`: MP4生成元のPNG連番
 - `prototype-blender.png`: Blenderで検証レンダーした画像
 - `prototype-compounds.png`: D/B/C複合ギヤを積層方向の側面から見た印刷性確認画像
 - `prototype-case-fit.png`: 下プレート一体軸／支柱と、反転した上プレート嵌合穴の確認画像
@@ -57,8 +60,11 @@ Steam版Blenderから `.blend` と検証レンダーを再生成する場合:
   .\output\assembly\prototype-blender.png `
   .\output\assembly\prototype-compounds.png `
   .\output\assembly\prototype-case-fit.png `
-  .\output\assembly\prototype-handle.png
+  .\output\assembly\prototype-handle.png `
+  .\output\assembly\prototype-motion.mp4
 ```
+
+`.blend`のタイムラインは1～121 frame、24 fpsである。中央frame 61で、ハンドルが-600°、Dが+232.258°、B/Cが-99.539°、受動Aが+99.539°回転し、ラックが+35.971 mm移動する。frame 121で初期位置へ戻る。MP4は2frameごとの61枚を12 fpsで約5.08秒にまとめる。BlenderはPNG連番を生成し、PATH上のFFmpegでH.264へ変換する。
 
 OpenSCADがPATH上にある場合、確認画像は次のように生成できます。
 

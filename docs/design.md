@@ -104,10 +104,11 @@ B/CはDから同期駆動され、同じラックにも噛み合うため閉じ�
 
 ## ソフトウェア構成
 
-- `double-helical-core`: 単位、normal/transverse変換、インボリュート断面、ラック断面、部品配置を保持する。I/OやCADカーネルには依存しない。
+- `double-helical-core`: 単位、normal/transverse変換、インボリュート断面、ラック断面、部品配置、歯数比から導く運動関係を保持する。I/OやCADカーネルには依存しない。
 - `double-helical-kernel-manifold`: twist/shear extrusion、中央body、軸穴、プレート、スペーサーを閉じたメッシュへ変換する。
 - `double-helical-export`: STL、3MF、OBJ/MTLを直列化する。
-- `double-helical-cli`: TOML入力、干渉検査、全出力の生成を行う。
+- `double-helical-cli`: TOML入力、干渉検査、全出力およびBlender用animation metadataの生成を行う。
+- `scripts/export_blend.py`: Rust生成の運動量をキーフレームへ変換し、アニメーション付き`.blend`、PNG連番、H.264 MP4を生成する。
 
 ## 現在の検証範囲
 
@@ -116,6 +117,7 @@ B/CはDから同期駆動され、同じラックにも噛み合うため閉じ�
 - normal/transverse寸法変換
 - インボリュート断面範囲
 - 2段の設定減速比、B–D–C対称配置と各中心距離
+- ハンドル、D、B/C、A、ラックのアニメーション運動比と移動方向
 - 閉じた非空のダブルヘリカルメッシュ
 - handle/D-large、D-small/B、D-small/C、B/rack、C/rack、A/rackの配置時体積干渉
 - STL triangle countと決定的な3MF出力

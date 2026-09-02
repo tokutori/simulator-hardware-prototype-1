@@ -36,6 +36,15 @@ pub struct Prototype {
     top_socket_diameter_clearance: Length,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PrototypeMotion {
+    pub handle_rotation_deg: f64,
+    pub reduction_rotation_deg: f64,
+    pub driven_rotation_deg: f64,
+    pub idler_rotation_deg: f64,
+    pub rack_translation_x_mm: f64,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PrototypeError {
     IncompatibleSpurModule,
@@ -331,6 +340,25 @@ impl Prototype {
 
     pub fn reduction_ratio(&self) -> f64 {
         self.primary_reduction_ratio() * self.secondary_reduction_ratio()
+    }
+
+    pub fn motion_from_handle_rotation_deg(&self, handle_rotation_deg: f64) -> PrototypeMotion {
+        let reduction_rotation_deg = -handle_rotation_deg * f64::from(self.handle_spur.teeth())
+            / f64::from(self.reduction_large_spur.teeth());
+        let driven_rotation_deg = -reduction_rotation_deg
+            * f64::from(self.reduction_small_spur.teeth())
+            / f64::from(self.output_spur.teeth());
+        let rack_translation_x_mm =
+            -driven_rotation_deg.to_radians() * self.driven_pinion.spur().pitch_radius();
+        let idler_rotation_deg =
+            (rack_translation_x_mm / self.idler_pinion.spur().pitch_radius()).to_degrees();
+        PrototypeMotion {
+            handle_rotation_deg,
+            reduction_rotation_deg,
+            driven_rotation_deg,
+            idler_rotation_deg,
+            rack_translation_x_mm,
+        }
     }
 
     pub fn primary_spur_center_distance(&self) -> f64 {

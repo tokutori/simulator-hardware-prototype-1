@@ -19,6 +19,7 @@ use thiserror::Error;
 const DEFAULT_CONFIG: &str = "parameters.toml";
 const DEFAULT_OUTPUT_DIR: &str = "output";
 const INTERFERENCE_TOLERANCE_MM3: f64 = 1.0e-6;
+const ANIMATION_HANDLE_ROTATION_DEG: f64 = -600.0;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -454,6 +455,8 @@ fn write_outputs(
         "prototype-assembly.obj",
         "prototype-assembly.mtl",
         "prototype-assembly.blend",
+        "prototype-animation.toml",
+        "prototype-motion.mp4",
         "prototype-preview.scad",
         "prototype-preview.png",
         "prototype-blender.png",
@@ -693,7 +696,23 @@ fn write_outputs(
         assembly_dir.join("prototype-preview.scad"),
         openscad_preview_scene(prototype),
     )?;
+    fs::write(
+        assembly_dir.join("prototype-animation.toml"),
+        animation_metadata(prototype),
+    )?;
     Ok(())
+}
+
+fn animation_metadata(prototype: &Prototype) -> String {
+    let motion = prototype.motion_from_handle_rotation_deg(ANIMATION_HANDLE_ROTATION_DEG);
+    format!(
+        "version = 1\n\n[timeline]\nframe_start = 1\nframe_mid = 61\nframe_end = 121\nfps = 24\nsamples = 25\n\n[motion]\nhandle_delta_deg = {:.9}\nreduction_delta_deg = {:.9}\ndriven_delta_deg = {:.9}\nidler_delta_deg = {:.9}\nrack_delta_x_mm = {:.9}\n",
+        motion.handle_rotation_deg,
+        motion.reduction_rotation_deg,
+        motion.driven_rotation_deg,
+        motion.idler_rotation_deg,
+        motion.rack_translation_x_mm
+    )
 }
 
 fn openscad_preview_scene(prototype: &Prototype) -> String {
@@ -1022,6 +1041,17 @@ fn report(
         prototype.handle_crank_radius().mm()
     )
     .unwrap();
+    let animation = prototype.motion_from_handle_rotation_deg(ANIMATION_HANDLE_ROTATION_DEG);
+    writeln!(
+        output,
+        "animation: handle {:.6} deg, D {:.6} deg, B/C {:.6} deg, A {:.6} deg, rack +{:.6} mm, frames 1..121 at 24 fps",
+        animation.handle_rotation_deg,
+        animation.reduction_rotation_deg,
+        animation.driven_rotation_deg,
+        animation.idler_rotation_deg,
+        animation.rack_translation_x_mm
+    )
+    .unwrap();
     writeln!(
         output,
         "triangles: handle spur {}, handle shaft {}, compound D {}, compound B {}, compound C {}, idler {}, rack {}",
@@ -1175,6 +1205,28 @@ mod tests {
         assert!(
             prototype.output_spur().root_radius() >= prototype.driven_pinion().spur().tip_radius()
         );
+
+        let motion = prototype.motion_from_handle_rotation_deg(-600.0);
+        assert_eq!(motion.handle_rotation_deg, -600.0);
+        assert!((motion.reduction_rotation_deg - 7200.0 / 31.0).abs() < 1.0e-12);
+        assert!((motion.driven_rotation_deg + 21600.0 / 217.0).abs() < 1.0e-12);
+        assert!((motion.idler_rotation_deg + motion.driven_rotation_deg).abs() < 1.0e-12);
+        assert!((35.0..36.0).contains(&motion.rack_translation_x_mm));
+        let animation_document: toml::Value =
+            toml::from_str(&animation_metadata(&prototype)).unwrap();
+        assert_eq!(
+            animation_document["timeline"]["frame_start"].as_integer(),
+            Some(1)
+        );
+        assert_eq!(
+            animation_document["timeline"]["frame_mid"].as_integer(),
+            Some(61)
+        );
+        assert_eq!(
+            animation_document["timeline"]["frame_end"].as_integer(),
+            Some(121)
+        );
+        assert_eq!(animation_document["timeline"]["fps"].as_integer(), Some(24));
 
         let meshes = build_prototype(&prototype).unwrap();
         assert!(meshes.bottom_plate.triangles.len() > meshes.top_plate.triangles.len());

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 import sys
-from math import pi
+import tomllib
+from math import cos, pi, radians
 from pathlib import Path
 
 import bpy
@@ -15,7 +18,7 @@ def command_arguments() -> list[str]:
         raise SystemExit(
             "expected: blender --background --python export_blend.py -- "
             "INPUT.obj OUTPUT.blend "
-            "[ASSEMBLY.png [COMPOUNDS.png [CASE.png [HANDLE.png]]]]"
+            "[ASSEMBLY.png [COMPOUNDS.png [CASE.png [HANDLE.png [MOTION.mp4]]]]]"
         )
     return sys.argv[sys.argv.index("--") + 1 :]
 
@@ -42,12 +45,167 @@ def add_area_light(
     aim_at(light, target)
 
 
+def bounds_center(obj: bpy.types.Object) -> Vector:
+    corners = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
+    lower = Vector(tuple(min(point[index] for point in corners) for index in range(3)))
+    upper = Vector(tuple(max(point[index] for point in corners) for index in range(3)))
+    return (lower + upper) * 0.5
+
+
+def set_origin_at(obj: bpy.types.Object, pivot: Vector) -> None:
+    bpy.ops.object.select_all(action="DESELECT")
+    bpy.context.scene.cursor.location = pivot
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+    bpy.ops.object.origin_set(type="ORIGIN_CURSOR", center="MEDIAN")
+    obj.select_set(False)
+
+
+def configure_motion(
+    meshes: list[bpy.types.Object], metadata_path: Path
+) -> dict[str, object]:
+    if not metadata_path.is_file():
+        raise SystemExit(f"animation metadata does not exist: {metadata_path}")
+    with metadata_path.open("rb") as source:
+        metadata = tomllib.load(source)
+    if metadata.get("version") != 1:
+        raise SystemExit(f"unsupported animation metadata version: {metadata.get('version')}")
+
+    timeline = metadata["timeline"]
+    motion = metadata["motion"]
+    frame_start = int(timeline["frame_start"])
+    frame_mid = int(timeline["frame_mid"])
+    frame_end = int(timeline["frame_end"])
+    fps = int(timeline["fps"])
+    samples = int(timeline["samples"])
+    if not (frame_start < frame_mid < frame_end and fps > 0 and samples >= 3):
+        raise SystemExit("invalid animation timeline")
+
+    by_name = {obj.name: obj for obj in meshes}
+    required = {
+        "handle-shaft",
+        "handle-spur",
+        "handle-crank",
+        "handle-knob",
+        "reduction-d-large-plus-small",
+        "driven-b-output-plus-pinion",
+        "driven-c-output-plus-pinion",
+        "idler-20t",
+        "rack",
+    }
+    missing = sorted(required - by_name.keys())
+    if missing:
+        raise SystemExit(f"animation objects are missing: {', '.join(missing)}")
+
+    handle_center = bounds_center(by_name["handle-shaft"])
+    animated_rotations = {
+        "handle-shaft": float(motion["handle_delta_deg"]),
+        "handle-spur": float(motion["handle_delta_deg"]),
+        "handle-crank": float(motion["handle_delta_deg"]),
+        "reduction-d-large-plus-small": float(motion["reduction_delta_deg"]),
+        "driven-b-output-plus-pinion": float(motion["driven_delta_deg"]),
+        "driven-c-output-plus-pinion": float(motion["driven_delta_deg"]),
+        "idler-20t": float(motion["idler_delta_deg"]),
+    }
+    for name in animated_rotations:
+        obj = by_name[name]
+        center = bounds_center(obj)
+        pivot = (
+            Vector((handle_center.x, handle_center.y, center.z))
+            if name == "handle-crank"
+            else center
+        )
+        set_origin_at(obj, pivot)
+        obj.rotation_mode = "XYZ"
+
+    crank = by_name["handle-crank"]
+    knob = by_name["handle-knob"]
+    knob_world = knob.matrix_world.copy()
+    knob.parent = crank
+    knob.matrix_world = knob_world
+
+    initial_rotations = {
+        name: by_name[name].rotation_euler.z for name in animated_rotations
+    }
+    rack = by_name["rack"]
+    initial_rack_x = rack.location.x
+    rack_delta = float(motion["rack_delta_x_mm"])
+    for index in range(samples):
+        phase = index / (samples - 1)
+        frame = round(frame_start + phase * (frame_end - frame_start))
+        travel_fraction = (1.0 - cos(2.0 * pi * phase)) * 0.5
+        for name, delta_deg in animated_rotations.items():
+            obj = by_name[name]
+            obj.rotation_euler.z = initial_rotations[name] + radians(delta_deg * travel_fraction)
+            obj.keyframe_insert(data_path="rotation_euler", index=2, frame=frame)
+        rack.location.x = initial_rack_x + rack_delta * travel_fraction
+        rack.keyframe_insert(data_path="location", index=0, frame=frame)
+
+    scene = bpy.context.scene
+    scene.frame_start = frame_start
+    scene.frame_end = frame_end
+    scene.render.fps = fps
+    scene["animation_description"] = "handle drives D, B/C, rack, and passive A out and back"
+    scene["animation_handle_delta_deg"] = float(motion["handle_delta_deg"])
+    scene["animation_rack_delta_x_mm"] = rack_delta
+    scene.timeline_markers.new("CENTER", frame=frame_start)
+    scene.timeline_markers.new("EXTENDED", frame=frame_mid)
+    scene.timeline_markers.new("LOOP", frame=frame_end)
+    scene.frame_set(frame_start)
+    bpy.context.view_layer.update()
+    return metadata
+
+
+def render_motion(scene: bpy.types.Scene, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    frames_directory = destination.parent / "prototype-motion-frames"
+    frames_directory.mkdir(parents=True, exist_ok=True)
+    for old_frame in frames_directory.glob("frame_*.png"):
+        old_frame.unlink()
+    scene.render.resolution_x = 720
+    scene.render.resolution_y = 540
+    scene.render.resolution_percentage = 100
+    scene.render.image_settings.file_format = "PNG"
+    source_frames = list(range(scene.frame_start, scene.frame_end + 1, 2))
+    if source_frames[-1] != scene.frame_end:
+        source_frames.append(scene.frame_end)
+    for output_index, source_frame in enumerate(source_frames):
+        scene.frame_set(source_frame)
+        scene.render.filepath = str(frames_directory / f"frame_{output_index:04d}.png")
+        bpy.ops.render.render(write_still=True)
+        print(f"animation frame {output_index + 1}/{len(source_frames)}")
+
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        raise SystemExit("FFmpeg is required to encode prototype-motion.mp4")
+    subprocess.run(
+        [
+            ffmpeg,
+            "-y",
+            "-framerate",
+            str(max(scene.render.fps // 2, 1)),
+            "-i",
+            str(frames_directory / "frame_%04d.png"),
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            str(destination),
+        ],
+        check=True,
+    )
+    scene.frame_set(scene.frame_start)
+    print(f"rendered {destination}")
+
+
 def main() -> None:
     arguments = command_arguments()
-    if len(arguments) not in (2, 3, 4, 5, 6):
+    if len(arguments) not in (2, 3, 4, 5, 6, 7):
         raise SystemExit(
             "expected INPUT.obj OUTPUT.blend "
-            "[ASSEMBLY.png [COMPOUNDS.png [CASE.png [HANDLE.png]]]]"
+            "[ASSEMBLY.png [COMPOUNDS.png [CASE.png [HANDLE.png [MOTION.mp4]]]]]"
         )
 
     obj_path = Path(arguments[0]).resolve()
@@ -55,7 +213,8 @@ def main() -> None:
     render_path = Path(arguments[2]).resolve() if len(arguments) >= 3 else None
     compounds_path = Path(arguments[3]).resolve() if len(arguments) >= 4 else None
     case_path = Path(arguments[4]).resolve() if len(arguments) >= 5 else None
-    handle_path = Path(arguments[5]).resolve() if len(arguments) == 6 else None
+    handle_path = Path(arguments[5]).resolve() if len(arguments) >= 6 else None
+    motion_path = Path(arguments[6]).resolve() if len(arguments) == 7 else None
     if not obj_path.is_file():
         raise SystemExit(f"OBJ does not exist: {obj_path}")
 
@@ -117,12 +276,17 @@ def main() -> None:
             obj.hide_render = True
             obj.display_type = "WIRE"
 
+    motion_metadata_path = obj_path.with_name("prototype-animation.toml")
+    motion_metadata = configure_motion(imported_meshes, motion_metadata_path)
+
     blend_path.parent.mkdir(parents=True, exist_ok=True)
     if render_path is not None:
         render_path.parent.mkdir(parents=True, exist_ok=True)
         scene.render.filepath = str(render_path)
         bpy.ops.render.render(write_still=True)
     bpy.ops.wm.save_as_mainfile(filepath=str(blend_path), check_existing=False)
+    if motion_path is not None:
+        render_motion(scene, motion_path)
 
     if compounds_path is not None:
         compound_names = {
@@ -227,10 +391,13 @@ def main() -> None:
 
     print(
         f"saved {blend_path} with {len(imported_meshes)} mesh objects"
+        + f", animation metadata {motion_metadata_path}"
+        + f", rack travel {motion_metadata['motion']['rack_delta_x_mm']:.6f} mm"
         + (f", rendered {render_path}" if render_path is not None else "")
         + (f", rendered {compounds_path}" if compounds_path is not None else "")
         + (f", rendered {case_path}" if case_path is not None else "")
         + (f", and rendered {handle_path}" if handle_path is not None else "")
+        + (f", rendered {motion_path}" if motion_path is not None else "")
     )
 
 
