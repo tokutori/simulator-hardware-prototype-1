@@ -2,7 +2,13 @@
 
 use alloc::vec::Vec;
 
-use crate::{Angle, Length, Point2};
+use crate::{Angle, Length};
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Point2 {
+    pub x: f64,
+    pub y: f64,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TriangleMesh {

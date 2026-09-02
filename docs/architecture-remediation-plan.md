@@ -63,7 +63,7 @@ gimbal-export -> gimbal-core
 | A4 | kernel validationをreport/interference/relationsへ分割 | 完了 | Phase 5前 |
 | A5 | prototypeをsubsystem別moduleへ分割しDefinitionsをgroup化 | 完了 | Phase 5前 |
 | A6 | `geared-gimbal-design` crateを追加し固有設計を移す | 進行中 | Phase 6前 |
-| A7 | generic identity、coordinateおよびmodule依存方向を整理 | 未着手 | Phase 6と並行 |
+| A7 | generic identity、coordinateおよびmodule依存方向を整理 | 進行中 | Phase 6と並行 |
 | A8 | export/renderer境界をsemantic metadataとencoderへ変更 | 進行中 | Assembly Phase 8–9前 |
 | A9 | rustdoc、最小README、CIおよび公開前gateを同期 | 進行中 | Assembly Phase 10 |
 
@@ -241,3 +241,4 @@ Exit criteria:
 - glTF nodeの`extras`へrole、side、longitudinal end、vertical endおよびordinalを出力し、Blender adapterのdetail対象選択をobject名prefixからsemantic custom propertyへ移行した。撤去済み部品名がadapterに残って別物を選ぶ経路を廃止した。全233 nodeへのmetadata出力、Rust unit testおよびBlender 5.1.2によるcustom property選択・静止画8枚・動画3本の再生成を確認した。
 - 最初のLinux CIでRust 1.98の新しいClippy lintを検出し、MSRV 1.88でstableな`slice::as_chunks`へ修正した。Node.js 20非推奨のcheckout v4も公式v7.0.1のcommit SHA固定へ更新した。再run `33681538072`ではRust quality gatesとRustSec auditの両jobが成功した。
 - relation dispatcherの次の実装として`CylindricalFit`を追加し、datum origin、軸方向およびtarget radial clearanceをengineering toleranceで検証するようにした。正常、0.2 mm偏心、軸傾斜およびclearance不一致fixtureを追加し、未実装relationのcoverage testは`GearMesh`へ移した。
+- A7の最初のbehavior-preserving checkpointとして、汎用2D座標型`Point2`を`gear`から`geometry`へ移した。gear profileは下位のgeometry primitiveを利用する依存方向となり、generic geometryがgear domainへ意味上依存する逆転を解消した。ID moduleとgeneric coordinateへの整理は残るためA7は進行中とする。

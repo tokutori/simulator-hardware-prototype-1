@@ -4,13 +4,8 @@ use alloc::vec::Vec;
 use core::f64::consts::{PI, TAU};
 use core::fmt;
 
+use crate::geometry::Point2;
 use crate::{Angle, Length};
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Point2 {
-    pub x: f64,
-    pub y: f64,
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct GearProfile {

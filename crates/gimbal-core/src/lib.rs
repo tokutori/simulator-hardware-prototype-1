@@ -27,12 +27,11 @@ pub use datum::{
     NamedDatum, PlaneDatum, Point3, PointDatum, UnitVector3,
 };
 pub use gear::{
-    ExternalGearPair, GearError, GearProfile, GearSector, InternalGear, InternalGearPair, Point2,
-    SpurGear,
+    ExternalGearPair, GearError, GearProfile, GearSector, InternalGear, InternalGearPair, SpurGear,
 };
 pub use geometry::{
-    BooleanOperation, FeatureBuilder, FeatureError, FeatureGraph, Primitive3, RegionId, RegionNode,
-    Rotation3, SolidId, SolidNode, Translation3, TriangleMesh,
+    BooleanOperation, FeatureBuilder, FeatureError, FeatureGraph, Point2, Primitive3, RegionId,
+    RegionNode, Rotation3, SolidId, SolidNode, Translation3, TriangleMesh,
 };
 pub use kinematics::{AssemblyPose, KinematicError, Kinematics, PitchRollCommand};
 pub use manufacturing::{
