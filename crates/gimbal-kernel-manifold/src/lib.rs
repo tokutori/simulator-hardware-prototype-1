@@ -14,8 +14,8 @@ mod validation;
 pub use validation::{
     AssemblyValidator, DefinitionValidation, GeometryFidelity, MotionCoverage, PairCheckMethod,
     PairValidation, RelationValidation, RelationValidationStatus, UnrelatedProximityPolicy,
-    ValidationError, ValidationIssue, ValidationIssueKind, ValidationProfile, ValidationProgress,
-    ValidationReport, ValidationSeverity, ValidatorSettings,
+    ValidationError, ValidationIssue, ValidationIssueKind, ValidationPlan, ValidationProfile,
+    ValidationProgress, ValidationReport, ValidationSeverity, ValidatorSettings,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]

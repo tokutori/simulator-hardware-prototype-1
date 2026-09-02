@@ -35,7 +35,7 @@ impl<'a> AssemblyValidator<'a> {
         &self,
         mut progress: impl FnMut(ValidationProgress),
     ) -> Result<ValidationReport, ValidationError> {
-        let evaluation_mode = match self.settings.profile.geometry {
+        let evaluation_mode = match self.settings.plan.profile.geometry {
             GeometryFidelity::StructuralProxy => GeometryEvaluationMode::StructuralProxy,
             GeometryFidelity::Exact => GeometryEvaluationMode::Robust,
         };
@@ -43,7 +43,7 @@ impl<'a> AssemblyValidator<'a> {
         let mut definitions = Vec::new();
         let mut skipped_definitions = Vec::new();
         for (definition_id, definition) in self.assembly.definitions_with_ids() {
-            if self.settings.profile.geometry.includes(definition.role) {
+            if self.settings.plan.includes_definition(definition_id) {
                 definitions.push(DefinitionValidation {
                     definition: definition_id,
                     metrics: evaluator.metrics(definition.body.assembly_solid())?,
@@ -79,7 +79,7 @@ impl<'a> AssemblyValidator<'a> {
                     .assembly
                     .definition(instance.definition)
                     .expect("inserted instance references a validated definition");
-                if !self.settings.profile.geometry.includes(definition.role) {
+                if !self.settings.plan.includes_definition(instance.definition) {
                     skipped_instances.push(id);
                     return Ok(None);
                 }
@@ -143,7 +143,7 @@ impl<'a> AssemblyValidator<'a> {
         let mut pair_checks = Vec::new();
         const PAIR_CHUNK_SIZE: usize = 32;
         for (chunk_index, chunk) in candidate_pairs.chunks(PAIR_CHUNK_SIZE).enumerate() {
-            let evaluated = match self.settings.profile.geometry {
+            let evaluated = match self.settings.plan.profile.geometry {
                 GeometryFidelity::StructuralProxy => chunk
                     .iter()
                     .map(|pair| {
@@ -193,7 +193,7 @@ impl<'a> AssemblyValidator<'a> {
                     .relations_between(pair)
                     .map(|(id, _)| id)
                     .collect::<Vec<_>>();
-                let method = match self.settings.profile.geometry {
+                let method = match self.settings.plan.profile.geometry {
                     GeometryFidelity::StructuralProxy => PairCheckMethod::StructuralProxyAabb,
                     GeometryFidelity::Exact => PairCheckMethod::ExactSolid,
                 };
@@ -203,7 +203,7 @@ impl<'a> AssemblyValidator<'a> {
                     method,
                     intersection_volume_mm3,
                 });
-                let kind = match self.settings.profile.geometry {
+                let kind = match self.settings.plan.profile.geometry {
                     GeometryFidelity::StructuralProxy => {
                         ValidationIssueKind::PotentialStructuralInterference {
                             proxy_aabb_overlap_mm3: intersection_volume_mm3,
@@ -233,7 +233,7 @@ impl<'a> AssemblyValidator<'a> {
             self.validate_unrelated_proximity(&instances, linear_epsilon, &mut issues);
 
         Ok(ValidationReport {
-            profile: self.settings.profile,
+            profile: self.settings.plan.profile,
             definitions,
             skipped_definitions,
             skipped_instances,

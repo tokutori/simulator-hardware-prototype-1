@@ -10,12 +10,14 @@ use crate::KernelError;
 
 mod instance;
 mod interference;
+mod plan;
 mod proximity;
 mod relations;
 mod report;
 
 use instance::{Aabb3, InstanceGeometry};
 
+pub use plan::*;
 pub use report::*;
 
 #[derive(Debug, Error)]

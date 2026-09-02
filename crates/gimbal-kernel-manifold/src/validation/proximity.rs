@@ -35,7 +35,7 @@ impl AssemblyValidator<'_> {
                 continue;
             }
             checks += 1;
-            let gap_mm = match self.settings.profile.geometry {
+            let gap_mm = match self.settings.plan.profile.geometry {
                 GeometryFidelity::StructuralProxy => first.bounds.minimum_gap(second.bounds),
                 GeometryFidelity::Exact => first.solid.min_gap(&second.solid, search_length),
             };

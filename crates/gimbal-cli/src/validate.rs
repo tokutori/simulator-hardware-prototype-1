@@ -7,8 +7,8 @@ use gimbal_core::{
 };
 use gimbal_kernel_manifold::{
     AssemblyValidator, GeometryFidelity, MotionCoverage, RelationValidationStatus,
-    UnrelatedProximityPolicy, ValidationIssueKind, ValidationProfile, ValidationProgress,
-    ValidationReport, ValidatorSettings,
+    UnrelatedProximityPolicy, ValidationIssueKind, ValidationPlan, ValidationProfile,
+    ValidationProgress, ValidationReport, ValidatorSettings,
 };
 use serde_json::{Value, json};
 use std::error::Error;
@@ -58,8 +58,20 @@ pub fn validate_assembly(
             roll: Angle::degrees(0.0).expect("zero angle is valid"),
         })
         .map_err(|error| format!("zero pose rejected: {error:?}"))?;
+    let plan = match profile.geometry {
+        GeometryFidelity::Exact => ValidationPlan::all(profile),
+        GeometryFidelity::StructuralProxy => ValidationPlan::include_only(
+            profile,
+            design
+                .assembly
+                .definitions_with_ids()
+                .filter_map(|(id, definition)| {
+                    (!definition.role.has_high_detail_gear_geometry()).then_some(id)
+                }),
+        ),
+    };
     let settings = ValidatorSettings {
-        profile,
+        plan,
         numerical_tolerance: NumericalTolerance {
             linear_epsilon: PositiveLength::mm(1.0e-6).expect("validator epsilon is positive"),
             area_epsilon: PositiveArea::square_mm(1.0e-8).expect("validator epsilon is positive"),

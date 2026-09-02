@@ -2,60 +2,16 @@
 
 use gimbal_core::{
     AssemblyRelationId, ComponentDefinitionId, ComponentIdentity, ComponentInstanceId,
-    ComponentInstancePair, ComponentRole, NonNegativeLength, NumericalTolerance,
+    ComponentInstancePair,
 };
 
+use super::ValidationProfile;
 use crate::SolidMetrics;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ValidationSeverity {
     Warning,
     Error,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum UnrelatedProximityPolicy {
-    Ignore,
-    Warning,
-    Error,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum GeometryFidelity {
-    StructuralProxy,
-    Exact,
-}
-
-impl GeometryFidelity {
-    pub(super) const fn includes(self, role: ComponentRole) -> bool {
-        match self {
-            Self::Exact => true,
-            Self::StructuralProxy => !role.has_high_detail_gear_geometry(),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MotionCoverage {
-    StaticPose,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ValidationProfile {
-    pub geometry: GeometryFidelity,
-    pub motion: MotionCoverage,
-}
-
-impl ValidationProfile {
-    pub const STRUCTURAL_STATIC: Self = Self {
-        geometry: GeometryFidelity::StructuralProxy,
-        motion: MotionCoverage::StaticPose,
-    };
-
-    pub const EXACT_STATIC: Self = Self {
-        geometry: GeometryFidelity::Exact,
-        motion: MotionCoverage::StaticPose,
-    };
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -227,14 +183,6 @@ impl ValidationReport {
             .filter(|issue| issue.severity == ValidationSeverity::Warning)
             .count()
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ValidatorSettings {
-    pub profile: ValidationProfile,
-    pub numerical_tolerance: NumericalTolerance,
-    pub unrelated_proximity_threshold: NonNegativeLength,
-    pub unrelated_proximity_policy: UnrelatedProximityPolicy,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

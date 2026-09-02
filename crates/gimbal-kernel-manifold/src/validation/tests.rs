@@ -11,7 +11,7 @@ use super::*;
 
 fn settings() -> ValidatorSettings {
     ValidatorSettings {
-        profile: ValidationProfile::EXACT_STATIC,
+        plan: ValidationPlan::all(ValidationProfile::EXACT_STATIC),
         numerical_tolerance: NumericalTolerance {
             linear_epsilon: PositiveLength::mm(1.0e-6).expect("positive epsilon"),
             area_epsilon: PositiveArea::square_mm(1.0e-9).expect("positive epsilon"),
@@ -550,7 +550,7 @@ fn fastened_relation_validates_hole_axes_radii_seats_and_grip() {
 }
 
 #[test]
-fn structural_fast_skips_high_detail_gears_and_uses_proxy_checks() {
+fn explicit_structural_plan_skips_only_unselected_definitions_and_uses_proxy_checks() {
     let mut builder = FeatureBuilder::new();
     let cube = builder.primitive(Primitive3::Box {
         x: gimbal_core::Length::positive_mm(10.0).expect("positive length"),
@@ -606,7 +606,8 @@ fn structural_fast_skips_high_detail_gears_and_uses_proxy_checks() {
         });
     }
     let mut structural_settings = settings();
-    structural_settings.profile = ValidationProfile::STRUCTURAL_STATIC;
+    structural_settings.plan =
+        ValidationPlan::include_only(ValidationProfile::STRUCTURAL_STATIC, [structure]);
     let report = AssemblyValidator::new(&graph, &assembly, &pose, structural_settings)
         .validate()
         .expect("structural validation succeeds");

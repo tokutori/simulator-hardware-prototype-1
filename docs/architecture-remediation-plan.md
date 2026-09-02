@@ -60,7 +60,7 @@ gimbal-export -> gimbal-core
 | A1 | relation validationの網羅性とdispatcher分離 | 完了 | Phase 4完了前 |
 | A2 | CLI integration testの外部化 | 完了 | Phase 5前 |
 | A3 | CLIをcommand/generate/validate/manifestへ分割 | 完了 | Phase 5前 |
-| A4 | kernel validationをreport/interference/relationsへ分割 | 進行中 | Phase 5前 |
+| A4 | kernel validationをreport/interference/relationsへ分割 | 完了 | Phase 5前 |
 | A5 | prototypeをsubsystem別moduleへ分割しDefinitionsをgroup化 | 未着手 | Phase 5前 |
 | A6 | `geared-gimbal-design` crateを追加し固有設計を移す | 未着手 | Phase 6前 |
 | A7 | generic identity、coordinateおよびmodule依存方向を整理 | 未着手 | Phase 6と並行 |
@@ -228,4 +228,5 @@ Exit criteria:
 - command文字列を境界で`Command` enumへ一度だけ変換し、default command、全subcommand、helpおよびunknown commandをunit testで固定した。helpは各validation commandが`structural-proxy/static-pose`または`exact/static-pose`であることを明示する。
 - `generate.rs`はartifact生成、`validate.rs`はvalidator orchestrationとreport、`manifest.rs`はhash/refresh、`output.rs`は出力directoryの削除だけを担当する。A3を完了し、A4を進行中へ変更した。
 - A4のmodule分割checkpointとして、kernel validatorを`report.rs`、`instance.rs`、`interference.rs`、`proximity.rs`、`relations.rs`、`tests.rs`へ分離した。`mod.rs`はpublic error、validator contextおよびmodule wiringだけを保持する。
-- このcheckpointは振舞いを変更しない。`ValidationPlan`による検査対象の外部指定と、prototype固有の`ComponentRole`判定撤去が未完了であるため、A4は引き続き進行中とする。
+- `ValidationPlan`を`plan.rs`へ追加し、検査対象definition集合をcallerが明示する構造へ変更した。kernel validatorから`ComponentRole::has_high_detail_gear_geometry()`への依存を撤去し、CLI composition rootだけが既定prototypeの高精細gear除外policyを組み立てる。
+- report、plan、instance world geometry、interference、proximity、relation検証およびtestの変更理由をmodule境界へ反映し、A4のexit criteriaを満たしたため完了とした。
