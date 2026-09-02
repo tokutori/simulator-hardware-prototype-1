@@ -211,3 +211,12 @@ Exit criteria:
 
 先に直すのは、未対応relationを成功扱いし得る検証上の欠陥である。その後、振舞いを変えないmodule分割をPhase 5のshaft/bearing設計前に行う。`geared-gimbal-design` crateへの分離は、module境界が実装で確認できてから行い、巨大fileを巨大crateへ移すだけの変更にはしない。
 
+## 6. 進捗記録
+
+### 2026-09-03
+
+- A0として、現行の良いcrate DAGと、巨大module・prototype固有依存・renderer prefix依存を分けて記録した。
+- A1の最初のcheckpointとして、全relationへ`Validated`、`Failed`、`SkippedByScope`、`Unsupported`のstatusを必ず割り当てるcoverage reportを追加した。
+- `ValidationReport::is_complete()`をrelation statusから導出し、CLI JSONのhard-coded `complete: true`を撤去した。未実装の`CylindricalFit`または`GearMesh`を含むreportは`complete=false`かつ`valid=false`になる。
+- relation kindとstatusをCLI JSONへ列挙するようにし、未対応`CylindricalFit` fixture、成功する`FastenedJoint` fixtureおよび失敗する`FastenedJoint` fixtureでcoverage statusを回帰検査した。
+- A1の残作業は、現状一つの関数に残るSurfaceContact/Fastened処理をwildcardなしdispatcherと個別validator関数へ分離し、validation profileをgeometry fidelityとmotion coverageへ分けることである。

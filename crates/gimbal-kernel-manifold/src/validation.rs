@@ -147,6 +147,20 @@ pub enum PairCheckMethod {
     ExactSolid,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RelationValidationStatus {
+    Validated,
+    Failed,
+    SkippedByScope,
+    Unsupported,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RelationValidation {
+    pub relation: AssemblyRelationId,
+    pub status: RelationValidationStatus,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ValidationReport {
     pub scope: ValidationScope,
@@ -158,16 +172,29 @@ pub struct ValidationReport {
     pub broad_phase_candidates: usize,
     pub unrelated_proximity_checks: usize,
     pub skipped_relation_checks: usize,
+    pub relation_checks: Vec<RelationValidation>,
     pub pair_checks: Vec<PairValidation>,
     pub issues: Vec<ValidationIssue>,
 }
 
 impl ValidationReport {
+    pub fn is_complete(&self) -> bool {
+        self.relation_checks.iter().all(|check| {
+            matches!(
+                check.status,
+                RelationValidationStatus::Validated
+                    | RelationValidationStatus::Failed
+                    | RelationValidationStatus::SkippedByScope
+            )
+        })
+    }
+
     pub fn is_valid(&self) -> bool {
-        !self
-            .issues
-            .iter()
-            .any(|issue| issue.severity == ValidationSeverity::Error)
+        self.is_complete()
+            && !self
+                .issues
+                .iter()
+                .any(|issue| issue.severity == ValidationSeverity::Error)
     }
 
     pub fn error_count(&self) -> usize {
@@ -316,7 +343,12 @@ impl<'a> AssemblyValidator<'a> {
             })
             .collect::<Result<Vec<Option<InstanceGeometry>>, ValidationError>>()?;
 
-        let skipped_relation_checks = self.validate_surface_contacts(&instances, &mut issues);
+        self.validate_surface_contacts(&instances, &mut issues);
+        let relation_checks = self.relation_validation_statuses(&instances, &issues);
+        let skipped_relation_checks = relation_checks
+            .iter()
+            .filter(|check| check.status == RelationValidationStatus::SkippedByScope)
+            .count();
 
         let linear_epsilon = self.settings.numerical_tolerance.linear_epsilon.as_mm();
         let volume_epsilon = self
@@ -453,6 +485,7 @@ impl<'a> AssemblyValidator<'a> {
             broad_phase_candidates,
             unrelated_proximity_checks,
             skipped_relation_checks,
+            relation_checks,
             pair_checks,
             issues,
         })
@@ -504,6 +537,49 @@ impl<'a> AssemblyValidator<'a> {
             }
         }
         checks
+    }
+
+    fn relation_validation_statuses(
+        &self,
+        instances: &[Option<InstanceGeometry>],
+        issues: &[ValidationIssue],
+    ) -> Vec<RelationValidation> {
+        self.assembly
+            .relations_with_ids()
+            .map(|(relation_id, relation)| {
+                let (first, second, supported) = match *relation {
+                    AssemblyRelation::SurfaceContact(contact) => {
+                        (contact.first.instance, contact.second.instance, true)
+                    }
+                    AssemblyRelation::Fastened(joint) => {
+                        (joint.first_hole.instance, joint.second_hole.instance, true)
+                    }
+                    AssemblyRelation::CylindricalFit(fit) => {
+                        (fit.shaft.instance, fit.bore.instance, false)
+                    }
+                    AssemblyRelation::GearMesh(mesh) => {
+                        (mesh.first_axis.instance, mesh.second_axis.instance, false)
+                    }
+                };
+                let status =
+                    if instances[first.index()].is_none() || instances[second.index()].is_none() {
+                        RelationValidationStatus::SkippedByScope
+                    } else if !supported {
+                        RelationValidationStatus::Unsupported
+                    } else if issues.iter().any(|issue| {
+                        issue.relation == Some(relation_id)
+                            && issue.severity == ValidationSeverity::Error
+                    }) {
+                        RelationValidationStatus::Failed
+                    } else {
+                        RelationValidationStatus::Validated
+                    };
+                RelationValidation {
+                    relation: relation_id,
+                    status,
+                }
+            })
+            .collect()
     }
 
     fn validate_surface_contacts(
@@ -1149,11 +1225,11 @@ impl Aabb3 {
 mod tests {
     use gimbal_core::{
         Angle, AssemblyRelation, AxisDatum, Body, BoltHardware, ComponentDefinition,
-        ComponentInstance, ComponentLocation, ComponentRole, CylinderDatum, DatumEndpoint,
-        DatumSet, EngineeringTolerance, FastenedJoint, FastenerHardware, FeatureBuilder,
-        FrameGraph, Kinematics, Manufacturing, MetricThread, NonNegativeAngle, NonNegativeLength,
-        NutHardware, PitchRollCommand, PlaneDatum, Point3, PositiveArea, PositiveLength,
-        PositiveVolume, Primitive3, RigidTransform, SurfaceContact, UnitVector3,
+        ComponentInstance, ComponentLocation, ComponentRole, CylinderDatum, CylindricalFit,
+        DatumEndpoint, DatumSet, EngineeringTolerance, FastenedJoint, FastenerHardware,
+        FeatureBuilder, FrameGraph, Kinematics, Manufacturing, MetricThread, NonNegativeAngle,
+        NonNegativeLength, NutHardware, PitchRollCommand, PlaneDatum, Point3, PositiveArea,
+        PositiveLength, PositiveVolume, Primitive3, RigidTransform, SurfaceContact, UnitVector3,
     };
 
     use super::*;
@@ -1368,6 +1444,93 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_relation_prevents_a_complete_or_valid_report() {
+        let mut builder = FeatureBuilder::new();
+        let solid = builder.primitive(Primitive3::Box {
+            x: gimbal_core::Length::positive_mm(2.0).expect("positive length"),
+            y: gimbal_core::Length::positive_mm(2.0).expect("positive length"),
+            z: gimbal_core::Length::positive_mm(2.0).expect("positive length"),
+            centered: true,
+        });
+        let graph = builder.finish();
+        let frames = FrameGraph::new();
+        let world = frames.world();
+        let pose = Kinematics::new(
+            frames,
+            Angle::degrees(1.0).expect("finite limit"),
+            Angle::degrees(1.0).expect("finite limit"),
+        )
+        .pose(PitchRollCommand {
+            pitch: Angle::degrees(0.0).expect("finite angle"),
+            roll: Angle::degrees(0.0).expect("finite angle"),
+        })
+        .expect("zero pose");
+        let mut assembly = Assembly::new();
+        let add_definition = |assembly: &mut Assembly, name: &str, radius: f64| {
+            let mut datums = DatumSet::for_definition(assembly.next_definition_id());
+            let cylinder = datums.add(
+                format!("{name}_cylinder"),
+                CylinderDatum {
+                    axis: AxisDatum {
+                        origin: Point3::from_mm([0.0; 3]).expect("finite point"),
+                        direction: UnitVector3::new([0.0, 0.0, 1.0]).expect("valid direction"),
+                    },
+                    radius: PositiveLength::mm(radius).expect("positive radius"),
+                },
+            );
+            let definition = assembly.add_definition(ComponentDefinition {
+                name: name.into(),
+                role: ComponentRole::RollShaft,
+                body: Body::Solid(solid),
+                manufacturing: Manufacturing::Purchased,
+                color_rgba: [1.0; 4],
+                datums,
+            });
+            (definition, cylinder)
+        };
+        let (shaft_definition, shaft_datum) = add_definition(&mut assembly, "shaft", 1.0);
+        let (bore_definition, bore_datum) = add_definition(&mut assembly, "bore", 1.1);
+        let shaft = assembly.add_instance(ComponentInstance {
+            name: "shaft".into(),
+            definition: shaft_definition,
+            frame: world,
+            local_pose: RigidTransform::translated(-5.0, 0.0, 0.0),
+            location: ComponentLocation::new(),
+        });
+        let bore = assembly.add_instance(ComponentInstance {
+            name: "bore".into(),
+            definition: bore_definition,
+            frame: world,
+            local_pose: RigidTransform::translated(5.0, 0.0, 0.0),
+            location: ComponentLocation::new().with_ordinal(1),
+        });
+        assembly
+            .add_relation(AssemblyRelation::CylindricalFit(CylindricalFit {
+                shaft: DatumEndpoint::new(shaft, shaft_datum),
+                bore: DatumEndpoint::new(bore, bore_datum),
+                target_radial_clearance: NonNegativeLength::mm(0.1)
+                    .expect("non-negative clearance"),
+                tolerance: EngineeringTolerance {
+                    linear: NonNegativeLength::mm(0.05).expect("valid tolerance"),
+                    angular: NonNegativeAngle::degrees(0.1).expect("valid tolerance"),
+                },
+            }))
+            .expect("valid relation structure");
+
+        let report = AssemblyValidator::new(&graph, &assembly, &pose, settings())
+            .validate()
+            .expect("validation query succeeds");
+        assert_eq!(report.relation_checks.len(), 1);
+        assert_eq!(report.relation_checks[0].relation.index(), 0);
+        assert_eq!(
+            report.relation_checks[0].status,
+            RelationValidationStatus::Unsupported
+        );
+        assert!(!report.is_complete());
+        assert!(!report.is_valid());
+    }
+
+    #[test]
     fn fastened_relation_validates_hole_axes_radii_seats_and_grip() {
         let mut builder = FeatureBuilder::new();
         let member = builder.primitive(Primitive3::Box {
@@ -1577,7 +1740,15 @@ mod tests {
 
         let valid = report_for_offset(0.0, 1.7, 0.0, 8.0);
         assert!(valid.is_valid(), "{valid:#?}");
+        assert_eq!(
+            valid.relation_checks[0].status,
+            RelationValidationStatus::Validated
+        );
         let axis_error = report_for_offset(0.2, 1.7, 0.0, 8.0);
+        assert_eq!(
+            axis_error.relation_checks[0].status,
+            RelationValidationStatus::Failed
+        );
         assert!(axis_error.issues.iter().any(|issue| matches!(
             issue.kind,
             ValidationIssueKind::FastenerHoleAxisSeparation { distance_mm, .. }

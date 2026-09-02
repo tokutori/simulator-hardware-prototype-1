@@ -636,6 +636,7 @@ Exit criteria:
 - commit `5e98bc1`から旧outputを全消去してpreviewを再生成した。40 definition、251 instanceのassembly、静止画8枚、`.blend`、`gimbal-motion.mp4`およびpitch/roll gearbox動画を同じglTFから生成し、manifest記載18 artifactのSHA-256が全件一致した。正式加工可否は引き続き`preview_only=true`、`validation.valid=false`である。
 - 2026-09-03の追加監査で、`DatumId<T>`が発行元definitionを保持しないため、同kind・同indexのforeign datumを誤受理できることを確認した。`DatumSet`をdefinition IDに所有させ、relation endpoint検証でinstance definitionとの一致を必須にした。異なるdefinitionの`PlaneDatum[0]`を借用する回帰testで`DatumOwnerMismatch`を確認した。空のdatum setだけはdatumを発行できないためunownedを許容する。
 - `FastenerHardware`をinstance IDだけでなく、boltの軸・頭下面・shank先端、nutの軸・bearing面・外面、washerの軸・両面をtyped datumで参照する構造へ変更した。共通validatorは全hardware軸の同軸度、member–washer–bolt/nut間の座面接触、M3 nutの最小full-thread engagement 2.4 mmおよびbolt先端の1 pitch以上の突出を検査する。意図的にhardware軸を0.2 mmずらしたfixtureと短いbolt fixtureが失敗し、現prototypeのsector–post 8 jointとpitch gearbox 12 jointが新検査を通過した。
+- 全relationへ`Validated`、`Failed`、`SkippedByScope`、`Unsupported`のcoverage statusを割り当て、CLI reportの`complete`をstatusから導出するようにした。未実装の`CylindricalFit`または`GearMesh`を含むreportは、error issueが0件でも`complete=false`かつ`valid=false`になる。これによりA-32の誤成功経路を塞いだ。個別relation validatorへのmodule分割はarchitecture A1で継続する。
 
 次の作業はPhase 4として、残る全instanceとdefinition内featureの存在理由監査を行い、不要形状を削除した上で、FDM前提の固定frame接合をM3通しbolt、実穴、washer/nut座面および工具空間を持つ実jointへ置換する。並行して、未対応relationを黙って通過させないvalidation coverage reportへ改修する。LaserCutの`Body::Sheet` hole表現とDXF経路は次prototype向けに維持するが、現prototypeのcustom partはFDMを前提とする。
 

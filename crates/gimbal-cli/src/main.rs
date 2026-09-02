@@ -17,8 +17,8 @@ use gimbal_export::{
     write_dxf_sheet_profile, write_mesh_3mf, write_obj,
 };
 use gimbal_kernel_manifold::{
-    AssemblyValidator, Evaluator, UnrelatedProximityPolicy, ValidationIssueKind,
-    ValidationProgress, ValidationReport, ValidationScope, ValidatorSettings,
+    AssemblyValidator, Evaluator, RelationValidationStatus, UnrelatedProximityPolicy,
+    ValidationIssueKind, ValidationProgress, ValidationReport, ValidationScope, ValidatorSettings,
 };
 use serde_json::{Value, json};
 
@@ -652,8 +652,32 @@ fn validation_report_json(design: &PrototypeDesign, report: &ValidationReport) -
             })
         })
         .collect::<Vec<_>>();
+    let relation_checks = report
+        .relation_checks
+        .iter()
+        .map(|check| {
+            let relation = &design.assembly.relations()[check.relation.index()];
+            let kind = match relation {
+                gimbal_core::AssemblyRelation::SurfaceContact(_) => "surface-contact",
+                gimbal_core::AssemblyRelation::Fastened(_) => "fastened",
+                gimbal_core::AssemblyRelation::CylindricalFit(_) => "cylindrical-fit",
+                gimbal_core::AssemblyRelation::GearMesh(_) => "gear-mesh",
+            };
+            let status = match check.status {
+                RelationValidationStatus::Validated => "validated",
+                RelationValidationStatus::Failed => "failed",
+                RelationValidationStatus::SkippedByScope => "skipped-by-scope",
+                RelationValidationStatus::Unsupported => "unsupported",
+            };
+            json!({
+                "relation_id": check.relation.index(),
+                "kind": kind,
+                "status": status,
+            })
+        })
+        .collect::<Vec<_>>();
     json!({
-        "complete": true,
+        "complete": report.is_complete(),
         "preview_only": false,
         "valid": report.is_valid(),
         "scope": match report.scope {
@@ -669,6 +693,7 @@ fn validation_report_json(design: &PrototypeDesign, report: &ValidationReport) -
         "broad_phase_candidates": report.broad_phase_candidates,
         "unrelated_proximity_checks": report.unrelated_proximity_checks,
         "skipped_relation_checks": report.skipped_relation_checks,
+        "relation_checks": relation_checks,
         "pair_checks": report.pair_checks.len(),
         "error_count": report.error_count(),
         "warning_count": report.warning_count(),
