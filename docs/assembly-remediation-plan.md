@@ -533,7 +533,7 @@ Exit criteria:
 | `RollGearboxMount` 4個 | 削除 | 上側armとplateの隙間を埋めるだけの旧中継blockだったためrole/definition/instanceを撤去し、armをplateへ直接接続した |
 | sector上下support | 維持 | 歯面荷重をpostへ渡し、中央のpinion通過域を空ける現在の荷重経路である |
 | sector両側clevis cheek | 維持 | sector/postのface contactをM3で締結する現在のjoint形状である |
-| `PitchGearboxTieRod` | 置換 | 現在はhead/nut/washerのない円柱であり、実M3締結へ置換後に旧definitionを削除する |
+| `PitchGearboxTieRod` | 削除・置換済み | head/nut/washerのない仮円柱role/definition/12 instanceを撤去し、各gearbox 3本のM3x25 bolt、nut、両washer、実穴および`FastenedJoint`へ置換した |
 | outboard plateのretention軸boss/boreと別`RetentionBearingBlock` | 再設計 | rigid bossとspring支持を同時に置いた重複拘束である。可動bearing carrierとleaf-spring anchorへ一本化する |
 | `RetentionLeafSpring` | 再設計 | spring rate、固定端、可動端が未定義であり、現在のbox形状を完成部品扱いしない |
 | cockpit hangerのcockpit内2 mm延長 | 削除 | 接続をpenetrationで代用した旧featureを撤去し、cockpit上面とhanger下面を型付き`SurfaceContact`へ置換した。cockpit本体の実締結方式はPhase 5で確定する |
@@ -626,6 +626,7 @@ Exit criteria:
 - floor testの手書き`watched`配列を撤去し、高精細gearを除く全可動instanceをframe poseから自動抽出する0.05秒級のstructural routeへ置換した。これにより旧`roll_gearbox_*_carrier_mount_*`がpitch端で床へ3.28 mm干渉することを検出した。
 - `RollGearboxMount`は上側armとgearbox plateの間を埋めるだけで独立部品としての機械的役割がなかったため、role、definitionおよび4 instanceを削除した。armをplateの実接触面まで延長し、plate側support tabを8.2 mm上げた。変更後は自動列挙された全可動structural instanceが9 sample姿勢で床上5 mm以上を満たした。
 - 必要な`CockpitHanger`内部に残っていたcockpit内への2 mm延長をfeature単位で削除した。hanger下面とcockpit上面へstable plane datumを付け、2箇所の`SurfaceContact`を登録した。全42件のstructural contactについてexact solid overlapが0であり、高速floor sweepも維持されることを確認した。
+- `PitchGearboxTieRod`という名称だけM3だった12本の円柱を削除し、既存の両plate実穴をstable cylinder datumとして公開した。4 unitそれぞれをM3x25 bolt 3本、nut、両washerおよび計12件の`FastenedJoint`で締結する構成へ置換し、全joint participant pairのexact intersection volumeが0であることを確認した。
 
 次の作業はPhase 4として、残る全instanceとdefinition内featureの存在理由監査を行い、不要形状を削除した上で、FDM前提の固定frame接合をM3通しbolt、実穴、washer/nut座面および工具空間を持つ実jointへ置換することである。LaserCutの`Body::Sheet` hole表現とDXF経路は次prototype向けに維持するが、現prototypeのcustom partはFDMを前提とする。
 

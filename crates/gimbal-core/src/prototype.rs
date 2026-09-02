@@ -9,13 +9,13 @@ use core::f64::consts::{FRAC_PI_2, PI};
 use crate::{
     Angle, Assembly, AssemblyError, AssemblyRelation, Axis3, AxisDatum, Body, BooleanOperation,
     ComponentDefinition, ComponentDefinitionId, ComponentIdentity, ComponentInstance,
-    ComponentLocation, ComponentRole, CoordinateExpr, CylinderDatum, DatumEndpoint, DatumId,
-    DatumSet, EngineeringTolerance, ExternalGearPair, FastenedJoint, FastenerHardware,
-    FeatureBuilder, FeatureError, FeatureGraph, FrameGraph, FrameId, GearSector, InternalGearPair,
-    Joint, Kinematics, Length, LongitudinalEnd, Manufacturing, MetricThread, NonNegativeAngle,
-    NonNegativeLength, PlaneDatum, Point2, Point3, PositiveArea, PositiveLength, Primitive3,
-    RigidTransform, Rotation3, Side, SolidId, SpurGear, SurfaceContact, Translation3, UnitVector3,
-    VerticalEnd,
+    ComponentInstanceId, ComponentLocation, ComponentRole, CoordinateExpr, CylinderDatum,
+    DatumEndpoint, DatumId, DatumSet, EngineeringTolerance, ExternalGearPair, FastenedJoint,
+    FastenerHardware, FeatureBuilder, FeatureError, FeatureGraph, FrameGraph, FrameId, GearSector,
+    InternalGearPair, Joint, Kinematics, Length, LongitudinalEnd, Manufacturing, MetricThread,
+    NonNegativeAngle, NonNegativeLength, PlaneDatum, Point2, Point3, PositiveArea, PositiveLength,
+    Primitive3, RigidTransform, Rotation3, Side, SolidId, SpurGear, SurfaceContact, Translation3,
+    UnitVector3, VerticalEnd,
 };
 
 #[derive(Clone, Debug)]
@@ -434,9 +434,10 @@ struct Definitions {
     contact_carriage_plate: ComponentDefinitionId,
     contact_carriage_negative_y: DatumId<PlaneDatum>,
     contact_carriage_positive_y: DatumId<PlaneDatum>,
+    contact_carriage_fasteners: [FastenerMemberDatums; 3],
     pitch_gearbox_far_plate: ComponentDefinitionId,
+    pitch_gearbox_far_plate_fasteners: [FastenerMemberDatums; 3],
     pitch_gearbox_shaft: ComponentDefinitionId,
-    pitch_gearbox_tie_rod: ComponentDefinitionId,
     leaf_spring: ComponentDefinitionId,
     bearing_block: ComponentDefinitionId,
     cockpit: ComponentDefinitionId,
@@ -460,6 +461,7 @@ struct Definitions {
     moving_drive_mount_arm_carrier_face: DatumId<PlaneDatum>,
     moving_drive_mount_arm_plate_face: DatumId<PlaneDatum>,
     m3x20_bolt: ComponentDefinitionId,
+    m3x25_bolt: ComponentDefinitionId,
     m3_nut: ComponentDefinitionId,
     m3_washer: ComponentDefinitionId,
 }
@@ -653,6 +655,11 @@ fn build_definitions(
         [0.0, p.pitch_gearbox.side_plate_thickness.mm() * 0.5, 0.0],
         [0.0, 1.0, 0.0],
     );
+    let contact_carriage_fasteners = pitch_gearbox_plate_fastener_datums(
+        &mut contact_carriage_datums,
+        p.pitch_gearbox.side_plate_thickness.mm(),
+        "near",
+    );
     let contact_carriage_plate = add_solid_definition_with_datums(
         assembly,
         "pitch_contact_carriage_plate",
@@ -662,13 +669,20 @@ fn build_definitions(
         [0.20, 0.22, 0.27, 1.0],
         contact_carriage_datums,
     );
-    let pitch_gearbox_far_plate = add_solid_definition(
+    let mut far_plate_datums = DatumSet::new();
+    let pitch_gearbox_far_plate_fasteners = pitch_gearbox_plate_fastener_datums(
+        &mut far_plate_datums,
+        p.pitch_gearbox.side_plate_thickness.mm(),
+        "far",
+    );
+    let pitch_gearbox_far_plate = add_solid_definition_with_datums(
         assembly,
         "pitch_gearbox_far_plate",
         ComponentRole::PitchGearboxFarPlate,
         pitch_gearbox_far_plate_solid(builder, p)?,
         fdm,
         [0.20, 0.22, 0.27, 1.0],
+        far_plate_datums,
     );
     let pitch_gearbox_shaft = add_solid_definition(
         assembly,
@@ -684,20 +698,6 @@ fn build_definitions(
         )?,
         Manufacturing::Purchased,
         [0.62, 0.66, 0.70, 1.0],
-    );
-    let pitch_gearbox_tie_rod = add_solid_definition(
-        assembly,
-        "pitch_gearbox_m3_tie_rod",
-        ComponentRole::PitchGearboxTieRod,
-        cylinder_y(
-            builder,
-            1.5,
-            p.pitch_gearbox.far_plate_inboard_offset.mm()
-                - p.pitch_gearbox.near_plate_inboard_offset.mm()
-                + p.pitch_gearbox.side_plate_thickness.mm(),
-        )?,
-        Manufacturing::Purchased,
-        [0.70, 0.73, 0.76, 1.0],
     );
     let leaf_spring = add_solid_definition(
         assembly,
@@ -920,7 +920,15 @@ fn build_definitions(
         assembly,
         "m3x20_pan_head_bolt",
         ComponentRole::M3Bolt,
-        m3x20_pan_head_bolt_solid(builder)?,
+        m3_pan_head_bolt_solid(builder, 20.0)?,
+        Manufacturing::Purchased,
+        [0.68, 0.71, 0.74, 1.0],
+    );
+    let m3x25_bolt = add_solid_definition(
+        assembly,
+        "m3x25_pan_head_bolt",
+        ComponentRole::M3Bolt,
+        m3_pan_head_bolt_solid(builder, 25.0)?,
         Manufacturing::Purchased,
         [0.68, 0.71, 0.74, 1.0],
     );
@@ -971,9 +979,10 @@ fn build_definitions(
         contact_carriage_plate,
         contact_carriage_negative_y,
         contact_carriage_positive_y,
+        contact_carriage_fasteners,
         pitch_gearbox_far_plate,
+        pitch_gearbox_far_plate_fasteners,
         pitch_gearbox_shaft,
-        pitch_gearbox_tie_rod,
         leaf_spring,
         bearing_block,
         cockpit,
@@ -997,6 +1006,7 @@ fn build_definitions(
         moving_drive_mount_arm_carrier_face,
         moving_drive_mount_arm_plate_face,
         m3x20_bolt,
+        m3x25_bolt,
         m3_nut,
         m3_washer,
     })
@@ -1737,7 +1747,7 @@ fn build_contact_unit(
             .compose(RigidTransform::rotated(Axis3::Y, -end_angle)),
         base_location,
     );
-    add_located_instance(
+    let near_plate = add_located_instance(
         assembly,
         &format!("pitch_gearbox_{side}_{end}_contact_carriage_plate"),
         d.contact_carriage_plate,
@@ -1746,7 +1756,7 @@ fn build_contact_unit(
             .compose(RigidTransform::rotated(Axis3::Y, -end_angle)),
         base_location,
     );
-    add_located_instance(
+    let far_plate = add_located_instance(
         assembly,
         &format!("pitch_gearbox_{side}_{end}_far_plate"),
         d.pitch_gearbox_far_plate,
@@ -1760,23 +1770,23 @@ fn build_contact_unit(
         base_location,
     );
     for (index, tie) in pitch_gearbox_tie_points().into_iter().enumerate() {
-        add_located_instance(
+        add_pitch_gearbox_fastener(
             assembly,
-            &format!("pitch_gearbox_{side}_{end}_m3_tie_{}", index + 1),
-            d.pitch_gearbox_tie_rod,
+            d,
+            p,
             pitch_frame,
-            RigidTransform::translated(
-                plate_center[0],
-                y + inward_sign
-                    * (p.pitch_gearbox.near_plate_inboard_offset.mm()
-                        + p.pitch_gearbox.far_plate_inboard_offset.mm())
-                    * 0.5,
-                plate_center[1],
-            )
-            .compose(RigidTransform::rotated(Axis3::Y, -end_angle))
-            .compose(RigidTransform::translated(tie[0], 0.0, tie[1])),
-            base_location.with_ordinal((index + 1) as u16),
-        );
+            base_location,
+            near_plate,
+            far_plate,
+            plate_center,
+            tie,
+            index,
+            side_sign,
+            inward_sign,
+            end_angle,
+            side,
+            end,
+        )?;
     }
     for (shaft, ordinal, frame) in [
         ("distributor", 1, distributor_frame),
@@ -1800,6 +1810,127 @@ fn build_contact_unit(
             base_location.with_ordinal(ordinal),
         );
     }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_pitch_gearbox_fastener(
+    assembly: &mut Assembly,
+    d: &Definitions,
+    p: &PrototypeParameters,
+    frame: FrameId,
+    base_location: ComponentLocation,
+    near_plate: ComponentInstanceId,
+    far_plate: ComponentInstanceId,
+    plate_center: [f64; 2],
+    tie: [f64; 2],
+    index: usize,
+    outward_sign: f64,
+    inward_sign: f64,
+    end_angle: f64,
+    side_label: &str,
+    end_label: &str,
+) -> Result<(), PrototypeError> {
+    const WASHER_THICKNESS: f64 = 0.5;
+    const NUT_THICKNESS: f64 = 2.4;
+    let thickness = p.pitch_gearbox.side_plate_thickness.mm();
+    let near_center_y = if outward_sign < 0.0 {
+        -p.pitch_sector.carrier_spacing.mm() * 0.5
+    } else {
+        p.pitch_sector.carrier_spacing.mm() * 0.5
+    } + inward_sign * p.pitch_gearbox.near_plate_inboard_offset.mm();
+    let far_center_y = if outward_sign < 0.0 {
+        -p.pitch_sector.carrier_spacing.mm() * 0.5
+    } else {
+        p.pitch_sector.carrier_spacing.mm() * 0.5
+    } + inward_sign * p.pitch_gearbox.far_plate_inboard_offset.mm();
+    let head_seat_y = near_center_y + outward_sign * thickness * 0.5;
+    let nut_seat_y = far_center_y + inward_sign * thickness * 0.5;
+    let first_washer_y = head_seat_y + outward_sign * WASHER_THICKNESS * 0.5;
+    let bolt_under_head_y = head_seat_y + outward_sign * WASHER_THICKNESS;
+    let second_washer_y = nut_seat_y + inward_sign * WASHER_THICKNESS * 0.5;
+    let nut_y = nut_seat_y + inward_sign * (WASHER_THICKNESS + NUT_THICKNESS * 0.5);
+    let hardware_rotation = outward_sign * FRAC_PI_2;
+    let pose = |y, rotate_hardware: bool| {
+        let base = RigidTransform::translated(plate_center[0], y, plate_center[1])
+            .compose(RigidTransform::rotated(Axis3::Y, -end_angle))
+            .compose(RigidTransform::translated(tie[0], 0.0, tie[1]));
+        if rotate_hardware {
+            base.compose(RigidTransform::rotated(Axis3::Z, hardware_rotation))
+        } else {
+            base
+        }
+    };
+    let ordinal = (index + 1) as u16;
+    let stem = format!("pitch_gearbox_{side_label}_{end_label}_m3x25_{}", index + 1);
+    let bolt = add_located_instance(
+        assembly,
+        &format!("{stem}_bolt"),
+        d.m3x25_bolt,
+        frame,
+        pose(bolt_under_head_y, true),
+        base_location.with_ordinal(ordinal),
+    );
+    let nut = add_located_instance(
+        assembly,
+        &format!("{stem}_nut"),
+        d.m3_nut,
+        frame,
+        pose(nut_y, true),
+        base_location.with_ordinal(ordinal),
+    );
+    let first_washer = add_located_instance(
+        assembly,
+        &format!("{stem}_head_washer"),
+        d.m3_washer,
+        frame,
+        pose(first_washer_y, true),
+        base_location.with_ordinal(ordinal * 2 - 1),
+    );
+    let second_washer = add_located_instance(
+        assembly,
+        &format!("{stem}_nut_washer"),
+        d.m3_washer,
+        frame,
+        pose(second_washer_y, true),
+        base_location.with_ordinal(ordinal * 2),
+    );
+    let near_datums = d.contact_carriage_fasteners[index];
+    let far_datums = d.pitch_gearbox_far_plate_fasteners[index];
+    let head_seat = if outward_sign > 0.0 {
+        near_datums.positive_y_seat
+    } else {
+        near_datums.negative_y_seat
+    };
+    let nut_seat = if inward_sign > 0.0 {
+        far_datums.positive_y_seat
+    } else {
+        far_datums.negative_y_seat
+    };
+    assembly
+        .add_relation(AssemblyRelation::Fastened(FastenedJoint {
+            first_hole: DatumEndpoint::new(near_plate, near_datums.hole),
+            second_hole: DatumEndpoint::new(far_plate, far_datums.hole),
+            head_seat: DatumEndpoint::new(near_plate, head_seat),
+            nut_seat: DatumEndpoint::new(far_plate, nut_seat),
+            hardware: FastenerHardware {
+                bolt,
+                nut,
+                first_washer: Some(first_washer),
+                second_washer: Some(second_washer),
+            },
+            thread: MetricThread::M3,
+            target_hole_radial_clearance: NonNegativeLength::mm(0.2)
+                .expect("M3 clearance is non-negative"),
+            grip_length: PositiveLength::mm((nut_seat_y - head_seat_y).abs())
+                .expect("pitch gearbox grip is positive"),
+            tolerance: EngineeringTolerance {
+                linear: NonNegativeLength::mm(0.05).expect("fastener tolerance is non-negative"),
+                angular: NonNegativeAngle::degrees(0.1)
+                    .expect("fastener angular tolerance is non-negative"),
+            },
+        }))
+        .map_err(PrototypeError::Assembly)?;
     Ok(())
 }
 
@@ -2714,6 +2845,40 @@ const fn pitch_gearbox_tie_points() -> [[f64; 2]; 3] {
     [[-24.0, -24.0], [26.0, -18.0], [0.0, 38.0]]
 }
 
+fn pitch_gearbox_plate_fastener_datums(
+    datums: &mut DatumSet,
+    thickness: f64,
+    plate_label: &str,
+) -> [FastenerMemberDatums; 3] {
+    pitch_gearbox_tie_points().map(|point| FastenerMemberDatums {
+        hole: add_cylinder_datum(
+            datums,
+            &format!("{plate_label}_m3_hole_{:.0}_{:.0}", point[0], point[1]),
+            [point[0], 0.0, point[1]],
+            [0.0, 1.0, 0.0],
+            m3_clearance_radius_mm(),
+        ),
+        negative_y_seat: add_plane_datum(
+            datums,
+            &format!(
+                "{plate_label}_m3_negative_y_seat_{:.0}_{:.0}",
+                point[0], point[1]
+            ),
+            [point[0], -thickness * 0.5, point[1]],
+            [0.0, -1.0, 0.0],
+        ),
+        positive_y_seat: add_plane_datum(
+            datums,
+            &format!(
+                "{plate_label}_m3_positive_y_seat_{:.0}_{:.0}",
+                point[0], point[1]
+            ),
+            [point[0], thickness * 0.5, point[1]],
+            [0.0, 1.0, 0.0],
+        ),
+    })
+}
+
 fn encoder_bearing_block_solid(
     builder: &mut FeatureBuilder,
     p: &PrototypeParameters,
@@ -3202,14 +3367,16 @@ fn carrier_post_definition(
     Ok((id, faces, fasteners))
 }
 
-fn m3x20_pan_head_bolt_solid(builder: &mut FeatureBuilder) -> Result<SolidId, PrototypeError> {
-    const SHANK_LENGTH: f64 = 20.0;
+fn m3_pan_head_bolt_solid(
+    builder: &mut FeatureBuilder,
+    shank_length: f64,
+) -> Result<SolidId, PrototypeError> {
     const HEAD_THICKNESS: f64 = 2.4;
-    let shank = cylinder_x(builder, 1.5, SHANK_LENGTH)?;
+    let shank = cylinder_x(builder, 1.5, shank_length)?;
     let shank = builder.translate(
         shank,
         Translation3 {
-            x: -SHANK_LENGTH * 0.5,
+            x: -shank_length * 0.5,
             y: 0.0,
             z: 0.0,
         },

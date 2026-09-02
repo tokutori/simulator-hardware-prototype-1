@@ -1156,9 +1156,25 @@ mod tests {
             .assembly
             .relations()
             .iter()
-            .filter_map(|relation| match relation {
-                AssemblyRelation::Fastened(joint) => Some(*joint),
-                _ => None,
+            .filter_map(|relation| {
+                let AssemblyRelation::Fastened(joint) = relation else {
+                    return None;
+                };
+                let roles = [joint.first_hole.instance, joint.second_hole.instance].map(|id| {
+                    design
+                        .assembly
+                        .definition(
+                            design
+                                .assembly
+                                .instance(id)
+                                .expect("fastened member exists")
+                                .definition,
+                        )
+                        .expect("fastened member definition exists")
+                        .role
+                });
+                (roles == [ComponentRole::PitchSector, ComponentRole::FixedCarrierPost])
+                    .then_some(*joint)
             })
             .collect::<Vec<_>>();
         assert_eq!(
@@ -1216,6 +1232,91 @@ mod tests {
                     assert!(
                         volume <= 1.0e-7,
                         "M3 joint participants {first_name} and {second_name} overlap by {volume} mm^3"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pitch_gearbox_plates_use_real_m3_fasteners_instead_of_placeholder_rods() {
+        let design = load_design();
+        let joints = design
+            .assembly
+            .relations()
+            .iter()
+            .filter_map(|relation| {
+                let AssemblyRelation::Fastened(joint) = relation else {
+                    return None;
+                };
+                let first_role = design
+                    .assembly
+                    .definition(
+                        design
+                            .assembly
+                            .instance(joint.first_hole.instance)
+                            .expect("first fastened member exists")
+                            .definition,
+                    )
+                    .expect("first member definition exists")
+                    .role;
+                let second_role = design
+                    .assembly
+                    .definition(
+                        design
+                            .assembly
+                            .instance(joint.second_hole.instance)
+                            .expect("second fastened member exists")
+                            .definition,
+                    )
+                    .expect("second member definition exists")
+                    .role;
+                (first_role == ComponentRole::PitchContactCarriagePlate
+                    && second_role == ComponentRole::PitchGearboxFarPlate)
+                    .then_some(*joint)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            joints.len(),
+            12,
+            "each of four gearboxes needs three M3 joints"
+        );
+        assert!(
+            design
+                .assembly
+                .instances()
+                .iter()
+                .all(|instance| !instance.name.contains("_m3_tie_"))
+        );
+        assert_eq!(count_role(&design, ComponentRole::M3Bolt), 20);
+        assert_eq!(count_role(&design, ComponentRole::M3Nut), 20);
+        assert_eq!(count_role(&design, ComponentRole::M3Washer), 40);
+
+        let mut evaluator = Evaluator::new(&design.graph);
+        for joint in joints {
+            let participants = [
+                joint.first_hole.instance,
+                joint.second_hole.instance,
+                joint.hardware.bolt,
+                joint.hardware.nut,
+                joint.hardware.first_washer.expect("head washer exists"),
+                joint.hardware.second_washer.expect("nut washer exists"),
+            ];
+            for first_index in 0..participants.len() {
+                for second_index in first_index + 1..participants.len() {
+                    let first_id = participants[first_index];
+                    let second_id = participants[second_index];
+                    let volume = evaluator
+                        .intersection_volume_transformed(
+                            instance_solid_by_id(&design, first_id),
+                            instance_pose_by_id(&design, first_id, 0.0, 0.0),
+                            instance_solid_by_id(&design, second_id),
+                            instance_pose_by_id(&design, second_id, 0.0, 0.0),
+                        )
+                        .expect("pitch gearbox fastener intersection query succeeds");
+                    assert!(
+                        volume <= 1.0e-7,
+                        "pitch gearbox M3 participants overlap by {volume} mm^3"
                     );
                 }
             }
