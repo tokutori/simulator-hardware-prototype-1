@@ -236,3 +236,4 @@ Exit criteria:
 - 分割後も既定設計のdefinition/instance/relation数、主要pose、床clearance、exact solid回帰を含むworkspace 54 testsが成功した。fmt、warning-as-error Clippy、native/wasm `no_std` checkも成功したためA5を完了とした。
 - A6の最初のcheckpointとして、既定prototypeのparameter、validation、geometry、definition、instance、relationおよび`build_prototype`を`no_std + alloc`の`geared-gimbal-design` crateへ移した。CLIはcomposition rootでdesign crateを選択し、`gimbal-core`は具体設計をexportしない。
 - `ComponentRole`とpitch/roll固定のcoordinate adapterはまだgeneric core側に残るため、A6は進行中とする。
+- A8の独立checkpointとして、任意fileのSHA-256計算を`gimbal-export`から`gimbal-cli::manifest`へ移した。export crateはmesh/CAD形式のserializationだけを担当し、artifact provenanceはCLI shellが担当する。

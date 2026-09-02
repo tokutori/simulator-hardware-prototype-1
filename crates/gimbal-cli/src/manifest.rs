@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: MIT
 
-use gimbal_export::sha256_file;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::error::Error;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+
+fn sha256_file(path: &Path) -> Result<String, std::io::Error> {
+    let bytes = fs::read(path)?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
 
 pub(crate) fn optional_artifact_paths(output: &Path) -> Vec<PathBuf> {
     [

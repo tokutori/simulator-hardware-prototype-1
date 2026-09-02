@@ -315,6 +315,7 @@ dependencies = [
  "gimbal-kernel-manifold",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror",
  "toml",
 ]
@@ -334,7 +335,6 @@ dependencies = [
  "gimbal-core",
  "serde",
  "serde_json",
- "sha2",
  "thiserror",
  "zip",
 ]

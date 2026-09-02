@@ -5,10 +5,7 @@ mod gltf;
 mod mesh_files;
 mod three_mf;
 
-use std::path::Path;
-
 use gimbal_core::{ComponentDefinitionId, FrameId, Manufacturing, RigidTransform, TriangleMesh};
-use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 pub use dxf::{write_dxf_profile, write_dxf_sheet_profile};
@@ -46,9 +43,4 @@ pub enum ExportError {
     InvalidDxf(&'static str),
     #[error("profile must contain at least three points")]
     InvalidProfile,
-}
-
-pub fn sha256_file(path: &Path) -> Result<String, ExportError> {
-    let bytes = std::fs::read(path)?;
-    Ok(format!("{:x}", Sha256::digest(bytes)))
 }
