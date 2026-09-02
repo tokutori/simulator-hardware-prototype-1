@@ -17,8 +17,9 @@ use gimbal_export::{
     write_dxf_sheet_profile, write_mesh_3mf, write_obj,
 };
 use gimbal_kernel_manifold::{
-    AssemblyValidator, Evaluator, RelationValidationStatus, UnrelatedProximityPolicy,
-    ValidationIssueKind, ValidationProgress, ValidationReport, ValidationScope, ValidatorSettings,
+    AssemblyValidator, Evaluator, GeometryFidelity, MotionCoverage, RelationValidationStatus,
+    UnrelatedProximityPolicy, ValidationIssueKind, ValidationProfile, ValidationProgress,
+    ValidationReport, ValidatorSettings,
 };
 use serde_json::{Value, json};
 
@@ -41,8 +42,8 @@ fn run() -> Result<(), Box<dyn Error>> {
     match command.as_str() {
         "generate" => generate(&workspace, &loaded, GenerationMode::Validated),
         "generate-preview" => generate(&workspace, &loaded, GenerationMode::PreviewOnly),
-        "validate" => validate(&workspace, &loaded, ValidationScope::StructuralFast),
-        "validate-full" => validate(&workspace, &loaded, ValidationScope::Full),
+        "validate" => validate(&workspace, &loaded, ValidationProfile::STRUCTURAL_STATIC),
+        "validate-full" => validate(&workspace, &loaded, ValidationProfile::EXACT_STATIC),
         "refresh-manifest" => refresh_manifest(&workspace),
         "clean-output" => clean_output(&workspace),
         unknown => Err(format!(
@@ -61,11 +62,11 @@ enum GenerationMode {
 fn validate(
     workspace: &Path,
     loaded: &LoadedConfig,
-    scope: ValidationScope,
+    profile: ValidationProfile,
 ) -> Result<(), Box<dyn Error>> {
     let design = build_prototype(&loaded.parameters)
         .map_err(|error| format!("prototype design rejected: {error:?}"))?;
-    let report = validate_assembly(&design, scope)?;
+    let report = validate_assembly(&design, profile)?;
     write_validation_report(workspace, &design, &report)?;
     for validated in &report.definitions {
         let definition = design
@@ -79,7 +80,7 @@ fn validate(
     }
     println!(
         "validation complete ({:?}): {} definitions checked ({} skipped), {} pair candidates, {} errors, {} warnings",
-        report.scope,
+        report.profile,
         report.definitions.len(),
         report.skipped_definitions.len(),
         report.broad_phase_candidates,
@@ -98,7 +99,7 @@ fn generate(
     let design = build_prototype(&loaded.parameters)
         .map_err(|error| format!("prototype design rejected: {error:?}"))?;
     let validation_report = if mode == GenerationMode::Validated {
-        let report = validate_assembly(&design, ValidationScope::Full)?;
+        let report = validate_assembly(&design, ValidationProfile::EXACT_STATIC)?;
         write_validation_report(workspace, &design, &report)?;
         require_valid_assembly(&report)?;
         Some(report)
@@ -369,7 +370,7 @@ fn generate(
 
 fn validate_assembly(
     design: &PrototypeDesign,
-    scope: ValidationScope,
+    profile: ValidationProfile,
 ) -> Result<ValidationReport, Box<dyn Error>> {
     let zero_pose = design
         .kinematics
@@ -379,7 +380,7 @@ fn validate_assembly(
         })
         .map_err(|error| format!("zero pose rejected: {error:?}"))?;
     let settings = ValidatorSettings {
-        scope,
+        profile,
         numerical_tolerance: NumericalTolerance {
             linear_epsilon: PositiveLength::mm(1.0e-6).expect("validator epsilon is positive"),
             area_epsilon: PositiveArea::square_mm(1.0e-8).expect("validator epsilon is positive"),
@@ -431,9 +432,9 @@ fn write_validation_report(
     fs::create_dir_all(&output)?;
     let bytes = serde_json::to_vec_pretty(&validation_report_json(design, report))?;
     fs::write(output.join("validation-report.json"), &bytes)?;
-    let scoped_name = match report.scope {
-        ValidationScope::StructuralFast => "validation-report-structural.json",
-        ValidationScope::Full => "validation-report-full.json",
+    let scoped_name = match report.profile.geometry {
+        GeometryFidelity::StructuralProxy => "validation-report-structural.json",
+        GeometryFidelity::Exact => "validation-report-full.json",
     };
     fs::write(output.join(scoped_name), bytes)?;
     Ok(())
@@ -681,9 +682,14 @@ fn validation_report_json(design: &PrototypeDesign, report: &ValidationReport) -
         "complete": report.is_complete(),
         "preview_only": false,
         "valid": report.is_valid(),
-        "scope": match report.scope {
-            ValidationScope::StructuralFast => "structural-fast",
-            ValidationScope::Full => "full",
+        "profile": {
+            "geometry_fidelity": match report.profile.geometry {
+                GeometryFidelity::StructuralProxy => "structural-proxy",
+                GeometryFidelity::Exact => "exact",
+            },
+            "motion_coverage": match report.profile.motion {
+                MotionCoverage::StaticPose => "static-pose",
+            },
         },
         "definition_count": report.definitions.len(),
         "skipped_definition_count": report.skipped_definitions.len(),
@@ -1281,7 +1287,7 @@ mod tests {
             "each of four sector/post joints needs two bolts"
         );
 
-        let report = validate_assembly(&design, ValidationScope::StructuralFast)
+        let report = validate_assembly(&design, ValidationProfile::STRUCTURAL_STATIC)
             .expect("fast assembly validation succeeds");
         assert!(
             report
@@ -1399,7 +1405,7 @@ mod tests {
         assert_eq!(count_role(&design, ComponentRole::M3Nut), 20);
         assert_eq!(count_role(&design, ComponentRole::M3Washer), 40);
 
-        let report = validate_assembly(&design, ValidationScope::StructuralFast)
+        let report = validate_assembly(&design, ValidationProfile::STRUCTURAL_STATIC)
             .expect("fast assembly validation succeeds");
         assert!(
             report

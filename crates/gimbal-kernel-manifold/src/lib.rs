@@ -12,10 +12,10 @@ use thiserror::Error;
 mod validation;
 
 pub use validation::{
-    AssemblyValidator, DefinitionValidation, PairCheckMethod, PairValidation, RelationValidation,
-    RelationValidationStatus, UnrelatedProximityPolicy, ValidationError, ValidationIssue,
-    ValidationIssueKind, ValidationProgress, ValidationReport, ValidationScope, ValidationSeverity,
-    ValidatorSettings,
+    AssemblyValidator, DefinitionValidation, GeometryFidelity, MotionCoverage, PairCheckMethod,
+    PairValidation, RelationValidation, RelationValidationStatus, UnrelatedProximityPolicy,
+    ValidationError, ValidationIssue, ValidationIssueKind, ValidationProfile, ValidationProgress,
+    ValidationReport, ValidationSeverity, ValidatorSettings,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]

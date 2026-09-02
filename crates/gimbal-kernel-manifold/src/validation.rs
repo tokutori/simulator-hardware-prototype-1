@@ -3,7 +3,8 @@
 use gimbal_core::{
     Assembly, AssemblyPose, AssemblyRelation, AssemblyRelationId, AxisDatum, ComponentDefinitionId,
     ComponentIdentity, ComponentInstanceId, ComponentInstancePair, ComponentRole, CylinderDatum,
-    DatumEndpoint, FeatureGraph, NonNegativeLength, NumericalTolerance, PlaneDatum,
+    DatumEndpoint, FastenedJoint, FeatureGraph, NonNegativeLength, NumericalTolerance, PlaneDatum,
+    SurfaceContact,
 };
 use manifold_rust::manifold::Manifold;
 use manifold_rust::types::{BooleanEngine, Error as ManifoldStatus};
@@ -27,18 +28,41 @@ pub enum UnrelatedProximityPolicy {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ValidationScope {
-    StructuralFast,
-    Full,
+pub enum GeometryFidelity {
+    StructuralProxy,
+    Exact,
 }
 
-impl ValidationScope {
+impl GeometryFidelity {
     const fn includes(self, role: ComponentRole) -> bool {
         match self {
-            Self::Full => true,
-            Self::StructuralFast => !role.has_high_detail_gear_geometry(),
+            Self::Exact => true,
+            Self::StructuralProxy => !role.has_high_detail_gear_geometry(),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MotionCoverage {
+    StaticPose,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ValidationProfile {
+    pub geometry: GeometryFidelity,
+    pub motion: MotionCoverage,
+}
+
+impl ValidationProfile {
+    pub const STRUCTURAL_STATIC: Self = Self {
+        geometry: GeometryFidelity::StructuralProxy,
+        motion: MotionCoverage::StaticPose,
+    };
+
+    pub const EXACT_STATIC: Self = Self {
+        geometry: GeometryFidelity::Exact,
+        motion: MotionCoverage::StaticPose,
+    };
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -163,7 +187,7 @@ pub struct RelationValidation {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ValidationReport {
-    pub scope: ValidationScope,
+    pub profile: ValidationProfile,
     pub definitions: Vec<DefinitionValidation>,
     pub skipped_definitions: Vec<ComponentDefinitionId>,
     pub skipped_instances: Vec<ComponentInstanceId>,
@@ -214,7 +238,7 @@ impl ValidationReport {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ValidatorSettings {
-    pub scope: ValidationScope,
+    pub profile: ValidationProfile,
     pub numerical_tolerance: NumericalTolerance,
     pub unrelated_proximity_threshold: NonNegativeLength,
     pub unrelated_proximity_policy: UnrelatedProximityPolicy,
@@ -277,15 +301,15 @@ impl<'a> AssemblyValidator<'a> {
         &self,
         mut progress: impl FnMut(ValidationProgress),
     ) -> Result<ValidationReport, ValidationError> {
-        let evaluation_mode = match self.settings.scope {
-            ValidationScope::StructuralFast => GeometryEvaluationMode::StructuralProxy,
-            ValidationScope::Full => GeometryEvaluationMode::Robust,
+        let evaluation_mode = match self.settings.profile.geometry {
+            GeometryFidelity::StructuralProxy => GeometryEvaluationMode::StructuralProxy,
+            GeometryFidelity::Exact => GeometryEvaluationMode::Robust,
         };
         let mut evaluator = Evaluator::with_mode(self.graph, evaluation_mode);
         let mut definitions = Vec::new();
         let mut skipped_definitions = Vec::new();
         for (definition_id, definition) in self.assembly.definitions_with_ids() {
-            if self.settings.scope.includes(definition.role) {
+            if self.settings.profile.geometry.includes(definition.role) {
                 definitions.push(DefinitionValidation {
                     definition: definition_id,
                     metrics: evaluator.metrics(definition.body.assembly_solid())?,
@@ -321,7 +345,7 @@ impl<'a> AssemblyValidator<'a> {
                     .assembly
                     .definition(instance.definition)
                     .expect("inserted instance references a validated definition");
-                if !self.settings.scope.includes(definition.role) {
+                if !self.settings.profile.geometry.includes(definition.role) {
                     skipped_instances.push(id);
                     return Ok(None);
                 }
@@ -343,8 +367,7 @@ impl<'a> AssemblyValidator<'a> {
             })
             .collect::<Result<Vec<Option<InstanceGeometry>>, ValidationError>>()?;
 
-        self.validate_surface_contacts(&instances, &mut issues);
-        let relation_checks = self.relation_validation_statuses(&instances, &issues);
+        let relation_checks = self.validate_relations(&instances, &mut issues);
         let skipped_relation_checks = relation_checks
             .iter()
             .filter(|check| check.status == RelationValidationStatus::SkippedByScope)
@@ -386,8 +409,8 @@ impl<'a> AssemblyValidator<'a> {
         let mut pair_checks = Vec::new();
         const PAIR_CHUNK_SIZE: usize = 32;
         for (chunk_index, chunk) in candidate_pairs.chunks(PAIR_CHUNK_SIZE).enumerate() {
-            let evaluated = match self.settings.scope {
-                ValidationScope::StructuralFast => chunk
+            let evaluated = match self.settings.profile.geometry {
+                GeometryFidelity::StructuralProxy => chunk
                     .iter()
                     .map(|pair| {
                         let first = instances[pair.first.index()]
@@ -399,7 +422,7 @@ impl<'a> AssemblyValidator<'a> {
                         (*pair, first.bounds.interior_overlap_volume(second.bounds))
                     })
                     .collect::<Vec<_>>(),
-                ValidationScope::Full => chunk
+                GeometryFidelity::Exact => chunk
                     .par_iter()
                     .map(|pair| {
                         let first = instances[pair.first.index()]
@@ -436,9 +459,9 @@ impl<'a> AssemblyValidator<'a> {
                     .relations_between(pair)
                     .map(|(id, _)| id)
                     .collect::<Vec<_>>();
-                let method = match self.settings.scope {
-                    ValidationScope::StructuralFast => PairCheckMethod::StructuralProxyAabb,
-                    ValidationScope::Full => PairCheckMethod::ExactSolid,
+                let method = match self.settings.profile.geometry {
+                    GeometryFidelity::StructuralProxy => PairCheckMethod::StructuralProxyAabb,
+                    GeometryFidelity::Exact => PairCheckMethod::ExactSolid,
                 };
                 pair_checks.push(PairValidation {
                     pair,
@@ -446,13 +469,13 @@ impl<'a> AssemblyValidator<'a> {
                     method,
                     intersection_volume_mm3,
                 });
-                let kind = match self.settings.scope {
-                    ValidationScope::StructuralFast => {
+                let kind = match self.settings.profile.geometry {
+                    GeometryFidelity::StructuralProxy => {
                         ValidationIssueKind::PotentialStructuralInterference {
                             proxy_aabb_overlap_mm3: intersection_volume_mm3,
                         }
                     }
-                    ValidationScope::Full => ValidationIssueKind::UnexpectedInterference {
+                    GeometryFidelity::Exact => ValidationIssueKind::UnexpectedInterference {
                         intersection_volume_mm3,
                     },
                 };
@@ -476,7 +499,7 @@ impl<'a> AssemblyValidator<'a> {
             self.validate_unrelated_proximity(&instances, linear_epsilon, &mut issues);
 
         Ok(ValidationReport {
-            scope: self.settings.scope,
+            profile: self.settings.profile,
             definitions,
             skipped_definitions,
             skipped_instances,
@@ -520,9 +543,9 @@ impl<'a> AssemblyValidator<'a> {
                 continue;
             }
             checks += 1;
-            let gap_mm = match self.settings.scope {
-                ValidationScope::StructuralFast => first.bounds.minimum_gap(second.bounds),
-                ValidationScope::Full => first.solid.min_gap(&second.solid, search_length),
+            let gap_mm = match self.settings.profile.geometry {
+                GeometryFidelity::StructuralProxy => first.bounds.minimum_gap(second.bounds),
+                GeometryFidelity::Exact => first.solid.min_gap(&second.solid, search_length),
             };
             if gap_mm <= search_length {
                 issues.push(ValidationIssue {
@@ -539,41 +562,32 @@ impl<'a> AssemblyValidator<'a> {
         checks
     }
 
-    fn relation_validation_statuses(
+    fn validate_relations(
         &self,
         instances: &[Option<InstanceGeometry>],
-        issues: &[ValidationIssue],
+        issues: &mut Vec<ValidationIssue>,
     ) -> Vec<RelationValidation> {
         self.assembly
             .relations_with_ids()
             .map(|(relation_id, relation)| {
-                let (first, second, supported) = match *relation {
+                let status = match *relation {
                     AssemblyRelation::SurfaceContact(contact) => {
-                        (contact.first.instance, contact.second.instance, true)
+                        self.validate_surface_contact(relation_id, contact, instances, issues)
                     }
                     AssemblyRelation::Fastened(joint) => {
-                        (joint.first_hole.instance, joint.second_hole.instance, true)
+                        self.validate_fastened_joint(relation_id, joint, instances, issues)
                     }
-                    AssemblyRelation::CylindricalFit(fit) => {
-                        (fit.shaft.instance, fit.bore.instance, false)
-                    }
-                    AssemblyRelation::GearMesh(mesh) => {
-                        (mesh.first_axis.instance, mesh.second_axis.instance, false)
-                    }
+                    AssemblyRelation::CylindricalFit(fit) => unsupported_relation_status(
+                        fit.shaft.instance,
+                        fit.bore.instance,
+                        instances,
+                    ),
+                    AssemblyRelation::GearMesh(mesh) => unsupported_relation_status(
+                        mesh.first_axis.instance,
+                        mesh.second_axis.instance,
+                        instances,
+                    ),
                 };
-                let status =
-                    if instances[first.index()].is_none() || instances[second.index()].is_none() {
-                        RelationValidationStatus::SkippedByScope
-                    } else if !supported {
-                        RelationValidationStatus::Unsupported
-                    } else if issues.iter().any(|issue| {
-                        issue.relation == Some(relation_id)
-                            && issue.severity == ValidationSeverity::Error
-                    }) {
-                        RelationValidationStatus::Failed
-                    } else {
-                        RelationValidationStatus::Validated
-                    };
                 RelationValidation {
                     relation: relation_id,
                     status,
@@ -582,412 +596,433 @@ impl<'a> AssemblyValidator<'a> {
             .collect()
     }
 
-    fn validate_surface_contacts(
+    fn validate_surface_contact(
         &self,
+        relation_id: AssemblyRelationId,
+        contact: SurfaceContact,
         instances: &[Option<InstanceGeometry>],
         issues: &mut Vec<ValidationIssue>,
-    ) -> usize {
-        let mut skipped = 0;
-        for (relation_id, relation) in self.assembly.relations_with_ids() {
-            let relation = *relation;
-            let AssemblyRelation::SurfaceContact(contact) = relation else {
-                continue;
-            };
-            let pair = ComponentInstancePair {
-                first: contact.first.instance,
-                second: contact.second.instance,
-            };
-            let (Some(first_geometry), Some(second_geometry)) = (
-                instances[pair.first.index()].as_ref(),
-                instances[pair.second.index()].as_ref(),
-            ) else {
-                skipped += 1;
-                continue;
-            };
-            let first = world_plane(contact.first, self.assembly, instances);
-            let second = world_plane(contact.second, self.assembly, instances);
-            let delta = subtract(second.origin, first.origin);
-            let distance_mm = dot(first.normal, delta).abs();
-            let allowed_mm = contact.tolerance.linear.as_mm();
+    ) -> RelationValidationStatus {
+        let initial_issue_count = issues.len();
+        let pair = ComponentInstancePair {
+            first: contact.first.instance,
+            second: contact.second.instance,
+        };
+        let (Some(first_geometry), Some(second_geometry)) = (
+            instances[pair.first.index()].as_ref(),
+            instances[pair.second.index()].as_ref(),
+        ) else {
+            return RelationValidationStatus::SkippedByScope;
+        };
+        let first = world_plane(contact.first, self.assembly, instances);
+        let second = world_plane(contact.second, self.assembly, instances);
+        let delta = subtract(second.origin, first.origin);
+        let distance_mm = dot(first.normal, delta).abs();
+        let allowed_mm = contact.tolerance.linear.as_mm();
+        if distance_mm > allowed_mm {
+            issues.push(ValidationIssue {
+                severity: ValidationSeverity::Error,
+                pair: Some(pair),
+                relation: Some(relation_id),
+                kind: ValidationIssueKind::SurfaceContactSeparation {
+                    distance_mm,
+                    allowed_mm,
+                },
+            });
+        }
+        let opposed_dot = (-dot(first.normal, second.normal)).clamp(-1.0, 1.0);
+        let error_radians = opposed_dot.acos();
+        let allowed_radians = contact.tolerance.angular.as_radians();
+        let normals_match = error_radians <= allowed_radians;
+        if !normals_match {
+            issues.push(ValidationIssue {
+                severity: ValidationSeverity::Error,
+                pair: Some(pair),
+                relation: Some(relation_id),
+                kind: ValidationIssueKind::SurfaceContactNormalMismatch {
+                    error_radians,
+                    allowed_radians,
+                },
+            });
+        }
+        if normals_match {
+            let contact_area_mm2 = contact_area(
+                &first_geometry.solid,
+                &second_geometry.solid,
+                first,
+                second,
+                self.settings.numerical_tolerance.linear_epsilon.as_mm(),
+            );
+            let minimum_area_mm2 = contact.minimum_contact_area.as_square_mm();
+            if contact_area_mm2
+                + self
+                    .settings
+                    .numerical_tolerance
+                    .area_epsilon
+                    .as_square_mm()
+                < minimum_area_mm2
+            {
+                issues.push(ValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    pair: Some(pair),
+                    relation: Some(relation_id),
+                    kind: ValidationIssueKind::SurfaceContactAreaInsufficient {
+                        contact_area_mm2,
+                        minimum_area_mm2,
+                    },
+                });
+            }
+        }
+        relation_status_after(initial_issue_count, issues)
+    }
+
+    fn validate_fastened_joint(
+        &self,
+        relation_id: AssemblyRelationId,
+        joint: FastenedJoint,
+        instances: &[Option<InstanceGeometry>],
+        issues: &mut Vec<ValidationIssue>,
+    ) -> RelationValidationStatus {
+        let initial_issue_count = issues.len();
+        let pair = ComponentInstancePair {
+            first: joint.first_hole.instance,
+            second: joint.second_hole.instance,
+        };
+        if instances[pair.first.index()].is_none() || instances[pair.second.index()].is_none() {
+            return RelationValidationStatus::SkippedByScope;
+        }
+        let first_hole = world_cylinder(joint.first_hole, self.assembly, instances);
+        let second_hole = world_cylinder(joint.second_hole, self.assembly, instances);
+        let axis_delta = subtract(second_hole.origin, first_hole.origin);
+        let axis_distance_mm = magnitude(cross(axis_delta, first_hole.direction));
+        let allowed_mm = joint.tolerance.linear.as_mm();
+        if axis_distance_mm > allowed_mm {
+            issues.push(ValidationIssue {
+                severity: ValidationSeverity::Error,
+                pair: Some(pair),
+                relation: Some(relation_id),
+                kind: ValidationIssueKind::FastenerHoleAxisSeparation {
+                    distance_mm: axis_distance_mm,
+                    allowed_mm,
+                },
+            });
+        }
+        let axis_error_radians = dot(first_hole.direction, second_hole.direction)
+            .abs()
+            .clamp(-1.0, 1.0)
+            .acos();
+        let allowed_radians = joint.tolerance.angular.as_radians();
+        if axis_error_radians > allowed_radians {
+            issues.push(ValidationIssue {
+                severity: ValidationSeverity::Error,
+                pair: Some(pair),
+                relation: Some(relation_id),
+                kind: ValidationIssueKind::FastenerHoleAxisMismatch {
+                    error_radians: axis_error_radians,
+                    allowed_radians,
+                },
+            });
+        }
+        let expected_radius_mm =
+            joint.thread.nominal_diameter_mm() * 0.5 + joint.target_hole_radial_clearance.as_mm();
+        if (first_hole.radius_mm - expected_radius_mm).abs() > allowed_mm
+            || (second_hole.radius_mm - expected_radius_mm).abs() > allowed_mm
+        {
+            issues.push(ValidationIssue {
+                severity: ValidationSeverity::Error,
+                pair: Some(pair),
+                relation: Some(relation_id),
+                kind: ValidationIssueKind::FastenerHoleRadiusMismatch {
+                    first_radius_mm: first_hole.radius_mm,
+                    second_radius_mm: second_hole.radius_mm,
+                    expected_radius_mm,
+                    allowed_mm,
+                },
+            });
+        }
+        let first_seat = world_plane(joint.head_seat, self.assembly, instances);
+        let second_seat = world_plane(joint.nut_seat, self.assembly, instances);
+        let first_axis_error = dot(first_seat.normal, first_hole.direction)
+            .abs()
+            .clamp(-1.0, 1.0)
+            .acos();
+        let second_axis_error = dot(second_seat.normal, first_hole.direction)
+            .abs()
+            .clamp(-1.0, 1.0)
+            .acos();
+        let opposed_error = (-dot(first_seat.normal, second_seat.normal))
+            .clamp(-1.0, 1.0)
+            .acos();
+        let seat_error_radians = first_axis_error.max(second_axis_error).max(opposed_error);
+        if seat_error_radians > allowed_radians {
+            issues.push(ValidationIssue {
+                severity: ValidationSeverity::Error,
+                pair: Some(pair),
+                relation: Some(relation_id),
+                kind: ValidationIssueKind::FastenerSeatNormalMismatch {
+                    error_radians: seat_error_radians,
+                    allowed_radians,
+                },
+            });
+        }
+        let actual_grip_mm = dot(
+            subtract(second_seat.origin, first_seat.origin),
+            first_hole.direction,
+        )
+        .abs();
+        let expected_grip_mm = joint.grip_length.as_mm();
+        if (actual_grip_mm - expected_grip_mm).abs() > allowed_mm {
+            issues.push(ValidationIssue {
+                severity: ValidationSeverity::Error,
+                pair: Some(pair),
+                relation: Some(relation_id),
+                kind: ValidationIssueKind::FastenerGripLengthMismatch {
+                    actual_mm: actual_grip_mm,
+                    expected_mm: expected_grip_mm,
+                    allowed_mm,
+                },
+            });
+        }
+
+        let bolt = joint.hardware.bolt;
+        let nut = joint.hardware.nut;
+        let bolt_axis = world_axis(
+            DatumEndpoint::new(bolt.instance, bolt.axis),
+            self.assembly,
+            instances,
+        );
+        let nut_axis = world_axis(
+            DatumEndpoint::new(nut.instance, nut.axis),
+            self.assembly,
+            instances,
+        );
+        let mut validate_hardware_axis = |hardware: ComponentInstanceId, axis: WorldAxis| {
+            let delta = subtract(axis.origin, first_hole.origin);
+            let distance_mm = magnitude(cross(delta, first_hole.direction));
             if distance_mm > allowed_mm {
                 issues.push(ValidationIssue {
                     severity: ValidationSeverity::Error,
                     pair: Some(pair),
                     relation: Some(relation_id),
-                    kind: ValidationIssueKind::SurfaceContactSeparation {
+                    kind: ValidationIssueKind::FastenerHardwareAxisSeparation {
+                        hardware,
                         distance_mm,
                         allowed_mm,
                     },
                 });
             }
-            let opposed_dot = (-dot(first.normal, second.normal)).clamp(-1.0, 1.0);
-            let error_radians = opposed_dot.acos();
-            let allowed_radians = contact.tolerance.angular.as_radians();
-            let normals_match = error_radians <= allowed_radians;
-            if !normals_match {
+            let error_radians = dot(axis.direction, first_hole.direction)
+                .abs()
+                .clamp(-1.0, 1.0)
+                .acos();
+            if error_radians > allowed_radians {
                 issues.push(ValidationIssue {
                     severity: ValidationSeverity::Error,
                     pair: Some(pair),
                     relation: Some(relation_id),
-                    kind: ValidationIssueKind::SurfaceContactNormalMismatch {
+                    kind: ValidationIssueKind::FastenerHardwareAxisMismatch {
+                        hardware,
                         error_radians,
                         allowed_radians,
                     },
                 });
             }
-            if normals_match {
-                let contact_area_mm2 = contact_area(
-                    &first_geometry.solid,
-                    &second_geometry.solid,
-                    first,
-                    second,
-                    self.settings.numerical_tolerance.linear_epsilon.as_mm(),
-                );
-                let minimum_area_mm2 = contact.minimum_contact_area.as_square_mm();
-                if contact_area_mm2
-                    + self
-                        .settings
-                        .numerical_tolerance
-                        .area_epsilon
-                        .as_square_mm()
-                    < minimum_area_mm2
-                {
-                    issues.push(ValidationIssue {
-                        severity: ValidationSeverity::Error,
-                        pair: Some(pair),
-                        relation: Some(relation_id),
-                        kind: ValidationIssueKind::SurfaceContactAreaInsufficient {
-                            contact_area_mm2,
-                            minimum_area_mm2,
-                        },
-                    });
-                }
-            }
+        };
+        validate_hardware_axis(bolt.instance, bolt_axis);
+        validate_hardware_axis(nut.instance, nut_axis);
+        for washer in [joint.hardware.first_washer, joint.hardware.second_washer]
+            .into_iter()
+            .flatten()
+        {
+            validate_hardware_axis(
+                washer.instance,
+                world_axis(
+                    DatumEndpoint::new(washer.instance, washer.axis),
+                    self.assembly,
+                    instances,
+                ),
+            );
         }
-        for (relation_id, relation) in self.assembly.relations_with_ids() {
-            let AssemblyRelation::Fastened(joint) = *relation else {
-                continue;
-            };
-            let pair = ComponentInstancePair {
-                first: joint.first_hole.instance,
-                second: joint.second_hole.instance,
-            };
-            if instances[pair.first.index()].is_none() || instances[pair.second.index()].is_none() {
-                skipped += 1;
-                continue;
-            }
-            let first_hole = world_cylinder(joint.first_hole, self.assembly, instances);
-            let second_hole = world_cylinder(joint.second_hole, self.assembly, instances);
-            let axis_delta = subtract(second_hole.origin, first_hole.origin);
-            let axis_distance_mm = magnitude(cross(axis_delta, first_hole.direction));
-            let allowed_mm = joint.tolerance.linear.as_mm();
-            if axis_distance_mm > allowed_mm {
-                issues.push(ValidationIssue {
-                    severity: ValidationSeverity::Error,
-                    pair: Some(pair),
-                    relation: Some(relation_id),
-                    kind: ValidationIssueKind::FastenerHoleAxisSeparation {
-                        distance_mm: axis_distance_mm,
-                        allowed_mm,
-                    },
-                });
-            }
-            let axis_error_radians = dot(first_hole.direction, second_hole.direction)
-                .abs()
-                .clamp(-1.0, 1.0)
-                .acos();
-            let allowed_radians = joint.tolerance.angular.as_radians();
-            if axis_error_radians > allowed_radians {
-                issues.push(ValidationIssue {
-                    severity: ValidationSeverity::Error,
-                    pair: Some(pair),
-                    relation: Some(relation_id),
-                    kind: ValidationIssueKind::FastenerHoleAxisMismatch {
-                        error_radians: axis_error_radians,
-                        allowed_radians,
-                    },
-                });
-            }
-            let expected_radius_mm = joint.thread.nominal_diameter_mm() * 0.5
-                + joint.target_hole_radial_clearance.as_mm();
-            if (first_hole.radius_mm - expected_radius_mm).abs() > allowed_mm
-                || (second_hole.radius_mm - expected_radius_mm).abs() > allowed_mm
-            {
-                issues.push(ValidationIssue {
-                    severity: ValidationSeverity::Error,
-                    pair: Some(pair),
-                    relation: Some(relation_id),
-                    kind: ValidationIssueKind::FastenerHoleRadiusMismatch {
-                        first_radius_mm: first_hole.radius_mm,
-                        second_radius_mm: second_hole.radius_mm,
-                        expected_radius_mm,
-                        allowed_mm,
-                    },
-                });
-            }
-            let first_seat = world_plane(joint.head_seat, self.assembly, instances);
-            let second_seat = world_plane(joint.nut_seat, self.assembly, instances);
-            let first_axis_error = dot(first_seat.normal, first_hole.direction)
-                .abs()
-                .clamp(-1.0, 1.0)
-                .acos();
-            let second_axis_error = dot(second_seat.normal, first_hole.direction)
-                .abs()
-                .clamp(-1.0, 1.0)
-                .acos();
-            let opposed_error = (-dot(first_seat.normal, second_seat.normal))
-                .clamp(-1.0, 1.0)
-                .acos();
-            let seat_error_radians = first_axis_error.max(second_axis_error).max(opposed_error);
-            if seat_error_radians > allowed_radians {
-                issues.push(ValidationIssue {
-                    severity: ValidationSeverity::Error,
-                    pair: Some(pair),
-                    relation: Some(relation_id),
-                    kind: ValidationIssueKind::FastenerSeatNormalMismatch {
-                        error_radians: seat_error_radians,
-                        allowed_radians,
-                    },
-                });
-            }
-            let actual_grip_mm = dot(
-                subtract(second_seat.origin, first_seat.origin),
-                first_hole.direction,
-            )
-            .abs();
-            let expected_grip_mm = joint.grip_length.as_mm();
-            if (actual_grip_mm - expected_grip_mm).abs() > allowed_mm {
-                issues.push(ValidationIssue {
-                    severity: ValidationSeverity::Error,
-                    pair: Some(pair),
-                    relation: Some(relation_id),
-                    kind: ValidationIssueKind::FastenerGripLengthMismatch {
-                        actual_mm: actual_grip_mm,
-                        expected_mm: expected_grip_mm,
-                        allowed_mm,
-                    },
-                });
-            }
 
-            let bolt = joint.hardware.bolt;
-            let nut = joint.hardware.nut;
-            let bolt_axis = world_axis(
-                DatumEndpoint::new(bolt.instance, bolt.axis),
-                self.assembly,
-                instances,
-            );
-            let nut_axis = world_axis(
-                DatumEndpoint::new(nut.instance, nut.axis),
-                self.assembly,
-                instances,
-            );
-            let mut validate_hardware_axis = |hardware: ComponentInstanceId, axis: WorldAxis| {
-                let delta = subtract(axis.origin, first_hole.origin);
-                let distance_mm = magnitude(cross(delta, first_hole.direction));
-                if distance_mm > allowed_mm {
+        let bolt_under_head = world_plane(
+            DatumEndpoint::new(bolt.instance, bolt.under_head_face),
+            self.assembly,
+            instances,
+        );
+        let bolt_tip = world_plane(
+            DatumEndpoint::new(bolt.instance, bolt.shank_tip_face),
+            self.assembly,
+            instances,
+        );
+        let nut_bearing = world_plane(
+            DatumEndpoint::new(nut.instance, nut.bearing_face),
+            self.assembly,
+            instances,
+        );
+        let nut_outer = world_plane(
+            DatumEndpoint::new(nut.instance, nut.outer_face),
+            self.assembly,
+            instances,
+        );
+        let mut validate_hardware_contact =
+            |first_instance: ComponentInstanceId,
+             first: WorldPlane,
+             second_instance: ComponentInstanceId,
+             second: WorldPlane| {
+                let separation_mm = magnitude(subtract(second.origin, first.origin));
+                let normal_error_radians =
+                    (-dot(first.normal, second.normal)).clamp(-1.0, 1.0).acos();
+                if separation_mm > allowed_mm || normal_error_radians > allowed_radians {
                     issues.push(ValidationIssue {
                         severity: ValidationSeverity::Error,
                         pair: Some(pair),
                         relation: Some(relation_id),
-                        kind: ValidationIssueKind::FastenerHardwareAxisSeparation {
-                            hardware,
-                            distance_mm,
+                        kind: ValidationIssueKind::FastenerHardwareContactMismatch {
+                            first: first_instance,
+                            second: second_instance,
+                            separation_mm,
+                            normal_error_radians,
                             allowed_mm,
-                        },
-                    });
-                }
-                let error_radians = dot(axis.direction, first_hole.direction)
-                    .abs()
-                    .clamp(-1.0, 1.0)
-                    .acos();
-                if error_radians > allowed_radians {
-                    issues.push(ValidationIssue {
-                        severity: ValidationSeverity::Error,
-                        pair: Some(pair),
-                        relation: Some(relation_id),
-                        kind: ValidationIssueKind::FastenerHardwareAxisMismatch {
-                            hardware,
-                            error_radians,
                             allowed_radians,
                         },
                     });
                 }
             };
-            validate_hardware_axis(bolt.instance, bolt_axis);
-            validate_hardware_axis(nut.instance, nut_axis);
-            for washer in [joint.hardware.first_washer, joint.hardware.second_washer]
-                .into_iter()
-                .flatten()
-            {
-                validate_hardware_axis(
-                    washer.instance,
-                    world_axis(
-                        DatumEndpoint::new(washer.instance, washer.axis),
-                        self.assembly,
-                        instances,
-                    ),
-                );
-            }
 
-            let bolt_under_head = world_plane(
-                DatumEndpoint::new(bolt.instance, bolt.under_head_face),
+        if let Some(washer) = joint.hardware.first_washer {
+            let member_face = world_plane(
+                DatumEndpoint::new(washer.instance, washer.member_face),
                 self.assembly,
                 instances,
             );
-            let bolt_tip = world_plane(
-                DatumEndpoint::new(bolt.instance, bolt.shank_tip_face),
+            let hardware_face = world_plane(
+                DatumEndpoint::new(washer.instance, washer.hardware_face),
                 self.assembly,
                 instances,
             );
-            let nut_bearing = world_plane(
-                DatumEndpoint::new(nut.instance, nut.bearing_face),
-                self.assembly,
-                instances,
+            validate_hardware_contact(
+                joint.head_seat.instance,
+                first_seat,
+                washer.instance,
+                member_face,
             );
-            let nut_outer = world_plane(
-                DatumEndpoint::new(nut.instance, nut.outer_face),
-                self.assembly,
-                instances,
+            validate_hardware_contact(
+                washer.instance,
+                hardware_face,
+                bolt.instance,
+                bolt_under_head,
             );
-            let mut validate_hardware_contact =
-                |first_instance: ComponentInstanceId,
-                 first: WorldPlane,
-                 second_instance: ComponentInstanceId,
-                 second: WorldPlane| {
-                    let separation_mm = magnitude(subtract(second.origin, first.origin));
-                    let normal_error_radians =
-                        (-dot(first.normal, second.normal)).clamp(-1.0, 1.0).acos();
-                    if separation_mm > allowed_mm || normal_error_radians > allowed_radians {
-                        issues.push(ValidationIssue {
-                            severity: ValidationSeverity::Error,
-                            pair: Some(pair),
-                            relation: Some(relation_id),
-                            kind: ValidationIssueKind::FastenerHardwareContactMismatch {
-                                first: first_instance,
-                                second: second_instance,
-                                separation_mm,
-                                normal_error_radians,
-                                allowed_mm,
-                                allowed_radians,
-                            },
-                        });
-                    }
-                };
-
-            if let Some(washer) = joint.hardware.first_washer {
-                let member_face = world_plane(
-                    DatumEndpoint::new(washer.instance, washer.member_face),
-                    self.assembly,
-                    instances,
-                );
-                let hardware_face = world_plane(
-                    DatumEndpoint::new(washer.instance, washer.hardware_face),
-                    self.assembly,
-                    instances,
-                );
-                validate_hardware_contact(
-                    joint.head_seat.instance,
-                    first_seat,
-                    washer.instance,
-                    member_face,
-                );
-                validate_hardware_contact(
-                    washer.instance,
-                    hardware_face,
-                    bolt.instance,
-                    bolt_under_head,
-                );
-            } else {
-                validate_hardware_contact(
-                    joint.head_seat.instance,
-                    first_seat,
-                    bolt.instance,
-                    bolt_under_head,
-                );
-            }
-            if let Some(washer) = joint.hardware.second_washer {
-                let member_face = world_plane(
-                    DatumEndpoint::new(washer.instance, washer.member_face),
-                    self.assembly,
-                    instances,
-                );
-                let hardware_face = world_plane(
-                    DatumEndpoint::new(washer.instance, washer.hardware_face),
-                    self.assembly,
-                    instances,
-                );
-                validate_hardware_contact(
-                    joint.nut_seat.instance,
-                    second_seat,
-                    washer.instance,
-                    member_face,
-                );
-                validate_hardware_contact(
-                    washer.instance,
-                    hardware_face,
-                    nut.instance,
-                    nut_bearing,
-                );
-            } else {
-                validate_hardware_contact(
-                    joint.nut_seat.instance,
-                    second_seat,
-                    nut.instance,
-                    nut_bearing,
-                );
-            }
-
-            let seat_delta = subtract(second_seat.origin, first_seat.origin);
-            let travel_sign = if dot(seat_delta, first_hole.direction) >= 0.0 {
-                1.0
-            } else {
-                -1.0
-            };
-            let travel_direction = [
-                first_hole.direction[0] * travel_sign,
-                first_hole.direction[1] * travel_sign,
-                first_hole.direction[2] * travel_sign,
-            ];
-            let thread_engagement_mm = dot(
-                subtract(nut_outer.origin, nut_bearing.origin),
-                travel_direction,
-            )
-            .abs();
-            let minimum_engagement_mm = joint.thread.minimum_full_thread_engagement_mm();
-            if thread_engagement_mm + allowed_mm < minimum_engagement_mm {
-                issues.push(ValidationIssue {
-                    severity: ValidationSeverity::Error,
-                    pair: Some(pair),
-                    relation: Some(relation_id),
-                    kind: ValidationIssueKind::FastenerThreadEngagementInsufficient {
-                        actual_mm: thread_engagement_mm,
-                        minimum_mm: minimum_engagement_mm,
-                    },
-                });
-            }
-            let bolt_reach_mm = dot(
-                subtract(bolt_tip.origin, bolt_under_head.origin),
-                travel_direction,
+        } else {
+            validate_hardware_contact(
+                joint.head_seat.instance,
+                first_seat,
+                bolt.instance,
+                bolt_under_head,
             );
-            let nut_outer_distance_mm = dot(
-                subtract(nut_outer.origin, bolt_under_head.origin),
-                travel_direction,
-            );
-            let protrusion_mm = bolt_reach_mm - nut_outer_distance_mm;
-            let minimum_protrusion_mm = joint.thread.nominal_pitch_mm();
-            if protrusion_mm + allowed_mm < minimum_protrusion_mm {
-                issues.push(ValidationIssue {
-                    severity: ValidationSeverity::Error,
-                    pair: Some(pair),
-                    relation: Some(relation_id),
-                    kind: ValidationIssueKind::FastenerBoltProtrusionInsufficient {
-                        actual_mm: protrusion_mm,
-                        minimum_mm: minimum_protrusion_mm,
-                    },
-                });
-            }
         }
-        skipped
+        if let Some(washer) = joint.hardware.second_washer {
+            let member_face = world_plane(
+                DatumEndpoint::new(washer.instance, washer.member_face),
+                self.assembly,
+                instances,
+            );
+            let hardware_face = world_plane(
+                DatumEndpoint::new(washer.instance, washer.hardware_face),
+                self.assembly,
+                instances,
+            );
+            validate_hardware_contact(
+                joint.nut_seat.instance,
+                second_seat,
+                washer.instance,
+                member_face,
+            );
+            validate_hardware_contact(washer.instance, hardware_face, nut.instance, nut_bearing);
+        } else {
+            validate_hardware_contact(
+                joint.nut_seat.instance,
+                second_seat,
+                nut.instance,
+                nut_bearing,
+            );
+        }
+
+        let seat_delta = subtract(second_seat.origin, first_seat.origin);
+        let travel_sign = if dot(seat_delta, first_hole.direction) >= 0.0 {
+            1.0
+        } else {
+            -1.0
+        };
+        let travel_direction = [
+            first_hole.direction[0] * travel_sign,
+            first_hole.direction[1] * travel_sign,
+            first_hole.direction[2] * travel_sign,
+        ];
+        let thread_engagement_mm = dot(
+            subtract(nut_outer.origin, nut_bearing.origin),
+            travel_direction,
+        )
+        .abs();
+        let minimum_engagement_mm = joint.thread.minimum_full_thread_engagement_mm();
+        if thread_engagement_mm + allowed_mm < minimum_engagement_mm {
+            issues.push(ValidationIssue {
+                severity: ValidationSeverity::Error,
+                pair: Some(pair),
+                relation: Some(relation_id),
+                kind: ValidationIssueKind::FastenerThreadEngagementInsufficient {
+                    actual_mm: thread_engagement_mm,
+                    minimum_mm: minimum_engagement_mm,
+                },
+            });
+        }
+        let bolt_reach_mm = dot(
+            subtract(bolt_tip.origin, bolt_under_head.origin),
+            travel_direction,
+        );
+        let nut_outer_distance_mm = dot(
+            subtract(nut_outer.origin, bolt_under_head.origin),
+            travel_direction,
+        );
+        let protrusion_mm = bolt_reach_mm - nut_outer_distance_mm;
+        let minimum_protrusion_mm = joint.thread.nominal_pitch_mm();
+        if protrusion_mm + allowed_mm < minimum_protrusion_mm {
+            issues.push(ValidationIssue {
+                severity: ValidationSeverity::Error,
+                pair: Some(pair),
+                relation: Some(relation_id),
+                kind: ValidationIssueKind::FastenerBoltProtrusionInsufficient {
+                    actual_mm: protrusion_mm,
+                    minimum_mm: minimum_protrusion_mm,
+                },
+            });
+        }
+        relation_status_after(initial_issue_count, issues)
+    }
+}
+
+fn unsupported_relation_status(
+    first: ComponentInstanceId,
+    second: ComponentInstanceId,
+    instances: &[Option<InstanceGeometry>],
+) -> RelationValidationStatus {
+    if instances[first.index()].is_none() || instances[second.index()].is_none() {
+        RelationValidationStatus::SkippedByScope
+    } else {
+        RelationValidationStatus::Unsupported
+    }
+}
+
+fn relation_status_after(
+    initial_issue_count: usize,
+    issues: &[ValidationIssue],
+) -> RelationValidationStatus {
+    if issues[initial_issue_count..]
+        .iter()
+        .any(|issue| issue.severity == ValidationSeverity::Error)
+    {
+        RelationValidationStatus::Failed
+    } else {
+        RelationValidationStatus::Validated
     }
 }
 
@@ -1236,7 +1271,7 @@ mod tests {
 
     fn settings() -> ValidatorSettings {
         ValidatorSettings {
-            scope: ValidationScope::Full,
+            profile: ValidationProfile::EXACT_STATIC,
             numerical_tolerance: NumericalTolerance {
                 linear_epsilon: PositiveLength::mm(1.0e-6).expect("positive epsilon"),
                 area_epsilon: PositiveArea::square_mm(1.0e-9).expect("positive epsilon"),
@@ -1835,7 +1870,7 @@ mod tests {
             });
         }
         let mut structural_settings = settings();
-        structural_settings.scope = ValidationScope::StructuralFast;
+        structural_settings.profile = ValidationProfile::STRUCTURAL_STATIC;
         let report = AssemblyValidator::new(&graph, &assembly, &pose, structural_settings)
             .validate()
             .expect("structural validation succeeds");

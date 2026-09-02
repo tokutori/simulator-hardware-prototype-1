@@ -57,7 +57,7 @@ gimbal-export -> gimbal-core
 | Phase | 内容 | 状態 | Assembly phaseとの関係 |
 | ---: | --- | --- | --- |
 | A0 | baseline、境界、振舞い固定方法の記録 | 完了 | Phase 4と並行 |
-| A1 | relation validationの網羅性とdispatcher分離 | 進行中 | Phase 4完了前 |
+| A1 | relation validationの網羅性とdispatcher分離 | 完了 | Phase 4完了前 |
 | A2 | CLI integration testの外部化 | 未着手 | Phase 5前 |
 | A3 | CLIをcommand/generate/validate/manifestへ分割 | 未着手 | Phase 5前 |
 | A4 | kernel validationをreport/interference/relationsへ分割 | 未着手 | Phase 5前 |
@@ -219,4 +219,6 @@ Exit criteria:
 - A1の最初のcheckpointとして、全relationへ`Validated`、`Failed`、`SkippedByScope`、`Unsupported`のstatusを必ず割り当てるcoverage reportを追加した。
 - `ValidationReport::is_complete()`をrelation statusから導出し、CLI JSONのhard-coded `complete: true`を撤去した。未実装の`CylindricalFit`または`GearMesh`を含むreportは`complete=false`かつ`valid=false`になる。
 - relation kindとstatusをCLI JSONへ列挙するようにし、未対応`CylindricalFit` fixture、成功する`FastenedJoint` fixtureおよび失敗する`FastenedJoint` fixtureでcoverage statusを回帰検査した。
-- A1の残作業は、現状一つの関数に残るSurfaceContact/Fastened処理をwildcardなしdispatcherと個別validator関数へ分離し、validation profileをgeometry fidelityとmotion coverageへ分けることである。
+- `AssemblyRelation`をwildcardなしで処理する単一dispatcherを実装し、`SurfaceContact`と`FastenedJoint`を個別validator関数へ分離した。variant追加時はdispatcherの網羅性検査が働く。
+- 旧`ValidationScope`を、独立した`GeometryFidelity`と`MotionCoverage`を持つ`ValidationProfile`へ置換した。現在のvalidatorが保証するmotion範囲は`StaticPose`だけであり、exact geometryと全可動域検査を同じ`full`という語で混同しない。
+- CLI reportは`structural-proxy`または`exact`のgeometry fidelityと、`static-pose`のmotion coverageを別fieldで出力する。A1のexit criteriaを満たしたためA1を完了した。
