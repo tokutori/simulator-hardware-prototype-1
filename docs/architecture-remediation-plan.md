@@ -227,3 +227,5 @@ Exit criteria:
 - A3として、CLI libraryを`command`、`generate`、`validate`、`manifest`、`output`へ分割した。`lib.rs`はconfiguration読込みとtyped command dispatchだけを担い、`main.rs`はprocess boundaryだけを担う。
 - command文字列を境界で`Command` enumへ一度だけ変換し、default command、全subcommand、helpおよびunknown commandをunit testで固定した。helpは各validation commandが`structural-proxy/static-pose`または`exact/static-pose`であることを明示する。
 - `generate.rs`はartifact生成、`validate.rs`はvalidator orchestrationとreport、`manifest.rs`はhash/refresh、`output.rs`は出力directoryの削除だけを担当する。A3を完了し、A4を進行中へ変更した。
+- A4のmodule分割checkpointとして、kernel validatorを`report.rs`、`instance.rs`、`interference.rs`、`proximity.rs`、`relations.rs`、`tests.rs`へ分離した。`mod.rs`はpublic error、validator contextおよびmodule wiringだけを保持する。
+- このcheckpointは振舞いを変更しない。`ValidationPlan`による検査対象の外部指定と、prototype固有の`ComponentRole`判定撤去が未完了であるため、A4は引き続き進行中とする。
