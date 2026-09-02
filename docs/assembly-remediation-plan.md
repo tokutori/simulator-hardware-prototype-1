@@ -243,8 +243,8 @@ validatorは`#[cfg(test)]`内へ閉じ込めない。CLIとtestが同じ実装�
 | 0 | 誤った不変条件の撤去とbaseline固定 | 完了 | なし |
 | 1 | typed identityとAssemblyRelation | 完了 | Phase 0 |
 | 2 | 共通AssemblyValidator | 完了 | Phase 1 |
-| 3 | 固定pitch frameとsector荷重経路 | 検証中 | Phase 2 |
-| 4 | M3締結とlaser sheet hole | 未着手 | Phase 2, 3 |
+| 3 | 固定pitch frameとsector荷重経路 | 完了 | Phase 2 |
+| 4 | M3締結とlaser sheet hole | 進行中 | Phase 2, 3 |
 | 5 | roll/pitchの軸、軸受、clamp、hub、key | 未着手 | Phase 2, 4 |
 | 6 | gear mesh、位相、gearbox伝達 | 未着手 | Phase 2, 5 |
 | 7 | motion envelope、床、全pair干渉 | 未着手 | Phase 3–6 |
@@ -579,8 +579,12 @@ Exit criteria:
 - 新しい38 definition・187 instanceのpreview model、静止画8枚、`.blend`、`gimbal-motion.mp4`、pitch gearbox動画およびroll gearbox動画を再生成した。manifestは20 artifactを記録し、全SHA-256一致を確認した。動画はH.264、720×540、12 fps、6秒である。
 - 高速検証は高精細gear 10 definitionを除外し、201件のconservative proxy候補と12件の未定義近接を報告している。これは確定干渉ではない。±20度の全pair motion sweepはPhase 7まで未完了であり、可動域成立をまだ宣言しない。
 - Phase 3 checkpointでworkspace test 44件、format、warning-as-error Clippy、native/wasm32の`gimbal-core no_std` checkが成功した。主要moving structure対floor、短縮コクピ対roll support、upper carrier対roll mountおよびgearbox plate対gear/shaftの列挙済みexact干渉testは成功したが、全pair・全中間姿勢の証明ではない。
+- 固定構造17部品の全136 pairと、固定・可動構造の全44 `SurfaceContact` pairを高精細solid Booleanで検査するtestを追加した。この検査でsector端と4本のpostに各約19.915 mm³、sector歯先と4本のupper railに各約3.196 mm³の正体積交差を検出した。
+- post接合面をsector端の内歯歯先包絡より2.39 mm内側へ移し、upper rail下面を外歯歯先包絡より1.20 mm上へ移した。両clearanceをparameter検証へ追加し、sector一体supportとpost/railのface contactは維持した。修正後は全136 fixed pairと全44 contact pairで正体積交差0を確認した。
+- 修正後の38 definition・187 instanceからinspection model、Blender model、静止画8枚およびMP4 3本を再生成した。manifestの20 artifactは全SHA-256一致、動画はすべてH.264、720×540、12 fps、6秒である。
+- Phase 3最終gateとしてworkspace test 46件、format、warning-as-error Clippy、native/wasm32の`gimbal-core no_std` checkが成功した。Blender modelで固定frame、sector一体support、post、upper/lower railおよび矩形crossmemberの端面接続を確認し、Phase 3のexit criteriaを満たしたためPhase 3を完了、Phase 4を進行中へ変更した。
 
-次の作業はPhase 3の固定構造・moving carrier接触面をexact geometryで確認し、Phase 4の実締結へ渡せるload pathを確定することである。実joint relationの登録は未成立形状を正当化しないよう、Phase 3–6の再設計と同時に行う。
+次の作業はPhase 4として、FDM前提の固定frame接合をM3通しbolt、実穴、washer/nut座面および工具空間を持つ実jointへ置換することである。LaserCutの`Body::Sheet` hole表現とDXF経路は次prototype向けに維持するが、現prototypeのcustom partはFDMを前提とする。
 
 ## 9. 完成の定義
 

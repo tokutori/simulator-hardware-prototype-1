@@ -670,8 +670,9 @@ fn refresh_manifest(workspace: &Path) -> Result<(), Box<dyn Error>> {
 mod tests {
     use super::*;
     use gimbal_core::{
-        AssemblyRelation, ComponentIdentity, ComponentInstance, ComponentLocation, ComponentRole,
-        LongitudinalEnd, PrototypeDesign, RigidTransform, Side, VerticalEnd,
+        AssemblyRelation, ComponentIdentity, ComponentInstance, ComponentInstanceId,
+        ComponentLocation, ComponentRole, LongitudinalEnd, PrototypeDesign, RigidTransform, Side,
+        VerticalEnd,
     };
 
     fn load_configuration() -> config::LoadedConfig {
@@ -751,6 +752,41 @@ mod tests {
             .expect("instance definition exists")
             .body
             .assembly_solid()
+    }
+
+    fn instance_solid_by_id(
+        design: &PrototypeDesign,
+        instance_id: ComponentInstanceId,
+    ) -> gimbal_core::SolidId {
+        let instance = design
+            .assembly
+            .instance(instance_id)
+            .expect("instance id exists");
+        design
+            .assembly
+            .definition(instance.definition)
+            .expect("instance definition exists")
+            .body
+            .assembly_solid()
+    }
+
+    fn instance_pose_by_id(
+        design: &PrototypeDesign,
+        instance_id: ComponentInstanceId,
+        pitch: f64,
+        roll: f64,
+    ) -> RigidTransform {
+        let instance = design
+            .assembly
+            .instance(instance_id)
+            .expect("instance id exists");
+        design
+            .kinematics
+            .pose(command(pitch, roll))
+            .expect("command within limits")
+            .frame(instance.frame)
+            .expect("instance frame exists")
+            .compose(instance.local_pose)
     }
 
     fn count_role(design: &PrototypeDesign, role: ComponentRole) -> usize {
@@ -907,6 +943,102 @@ mod tests {
                 "pitch sector {sector:?} has no typed structural path to the floor"
             );
         }
+    }
+
+    #[test]
+    fn structural_surface_contacts_do_not_use_solid_overlap() {
+        let design = load_design();
+        let mut evaluator = Evaluator::new(&design.graph);
+        let mut checked = 0;
+        let mut overlaps = Vec::new();
+        for relation in design.assembly.relations() {
+            let AssemblyRelation::SurfaceContact(contact) = relation else {
+                continue;
+            };
+            let volume = evaluator
+                .intersection_volume_transformed(
+                    instance_solid_by_id(&design, contact.first.instance),
+                    instance_pose_by_id(&design, contact.first.instance, 0.0, 0.0),
+                    instance_solid_by_id(&design, contact.second.instance),
+                    instance_pose_by_id(&design, contact.second.instance, 0.0, 0.0),
+                )
+                .expect("structural contact intersection query succeeds");
+            if volume > 1.0e-7 {
+                let first = design
+                    .assembly
+                    .instance(contact.first.instance)
+                    .expect("first contact instance exists");
+                let second = design
+                    .assembly
+                    .instance(contact.second.instance)
+                    .expect("second contact instance exists");
+                overlaps.push((first.name.as_str(), second.name.as_str(), volume));
+            }
+            checked += 1;
+        }
+        assert_eq!(checked, 44);
+        assert!(
+            overlaps.is_empty(),
+            "structural surface contacts must not use solid overlap: {overlaps:#?}"
+        );
+    }
+
+    #[test]
+    fn fixed_structure_has_no_unintended_solid_overlap() {
+        let design = load_design();
+        let fixed_roles = [
+            ComponentRole::PitchSector,
+            ComponentRole::FixedCarrierRail,
+            ComponentRole::FixedCarrierPost,
+            ComponentRole::FixedCrossmember,
+            ComponentRole::InstallationFloor,
+        ];
+        let fixed_instances = design
+            .assembly
+            .instances_with_ids()
+            .filter_map(|(instance_id, instance)| {
+                let definition = design
+                    .assembly
+                    .definition(instance.definition)
+                    .expect("instance definition exists");
+                fixed_roles
+                    .contains(&definition.role)
+                    .then_some(instance_id)
+            })
+            .collect::<Vec<_>>();
+        let mut evaluator = Evaluator::new(&design.graph);
+        let mut overlaps = Vec::new();
+        let mut checked = 0;
+        for (index, first_id) in fixed_instances.iter().copied().enumerate() {
+            for second_id in fixed_instances.iter().copied().skip(index + 1) {
+                let volume = evaluator
+                    .intersection_volume_transformed(
+                        instance_solid_by_id(&design, first_id),
+                        instance_pose_by_id(&design, first_id, 0.0, 0.0),
+                        instance_solid_by_id(&design, second_id),
+                        instance_pose_by_id(&design, second_id, 0.0, 0.0),
+                    )
+                    .expect("fixed structure intersection query succeeds");
+                if volume > 1.0e-7 {
+                    let first = design
+                        .assembly
+                        .instance(first_id)
+                        .expect("first fixed instance exists");
+                    let second = design
+                        .assembly
+                        .instance(second_id)
+                        .expect("second fixed instance exists");
+                    overlaps.push((first.name.as_str(), second.name.as_str(), volume));
+                }
+                checked += 1;
+            }
+        }
+        assert_eq!(fixed_instances.len(), 17);
+        assert_eq!(checked, 136);
+        assert!(
+            overlaps.is_empty(),
+            "fixed structure must not contain unintended solid overlap: {overlaps:#?}"
+        );
     }
 
     #[test]

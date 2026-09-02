@@ -135,6 +135,7 @@ pub enum PrototypeError {
     InvalidGearboxPlacement,
     InvalidMovingCarrier,
     SectorSpineHitsDrive,
+    SectorSupportHitsPost,
     FrameBaseNotOnFloor,
     CarrierRailTooClose,
     CockpitHitsRollSupport,
@@ -271,6 +272,20 @@ fn validate(parameters: &PrototypeParameters) -> Result<(), PrototypeError> {
     if sector_support_keep_out_half_height() <= drive_vertical_extent + 5.0 {
         return Err(PrototypeError::SectorSpineHitsDrive);
     }
+    // The fixed post meets the integral support at `sector_spine_inner_x`.
+    // Keep that plane inward of the toothed sector at both angular ends so
+    // the separate post only has face contact with the support, never a
+    // positive-volume intersection with the gear body.
+    let sector_end_inner_x =
+        internal.tip_radius() * libm::cos(parameters.pitch_sector.sector.half_angle().as_radians());
+    let support_inner_x = sector_spine_inner_x(parameters);
+    const MINIMUM_SECTOR_POST_CLEARANCE_MM: f64 = 1.0;
+    if support_inner_x + MINIMUM_SECTOR_POST_CLEARANCE_MM > sector_end_inner_x
+        || support_inner_x + parameters.frame.fixed_rail_depth.mm()
+            <= sector_end_inner_x + MINIMUM_SECTOR_POST_CLEARANCE_MM
+    {
+        return Err(PrototypeError::SectorSupportHitsPost);
+    }
     if parameters.cockpit.length.mm() >= internal.tip_radius() * 2.0
         || parameters.cockpit.width.mm() >= parameters.pitch_sector.carrier_spacing.mm()
     {
@@ -329,8 +344,13 @@ fn validate(parameters: &PrototypeParameters) -> Result<(), PrototypeError> {
     {
         return Err(PrototypeError::InvalidMovingCarrier);
     }
+    let sector_outer_end_z =
+        external.tip_radius() * libm::sin(parameters.pitch_sector.sector.half_angle().as_radians());
+    let upper_rail_bottom =
+        parameters.frame.upper_rail_height.mm() - parameters.frame.fixed_rail_depth.mm() * 0.5;
+    const MINIMUM_SECTOR_RAIL_CLEARANCE_MM: f64 = 1.0;
     if parameters.frame.lower_rail_depth.mm() <= 80.0
-        || parameters.frame.upper_rail_height.mm() < 78.0
+        || upper_rail_bottom < sector_outer_end_z + MINIMUM_SECTOR_RAIL_CLEARANCE_MM
     {
         return Err(PrototypeError::CarrierRailTooClose);
     }

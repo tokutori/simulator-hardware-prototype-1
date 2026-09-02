@@ -59,12 +59,12 @@ suspension_drop_mm = 42.0
 
 [frame]
 fixed_rail_length_mm = 260.0
-fixed_crossmember_station_mm = 112.0
+fixed_crossmember_station_mm = 108.0
 fixed_crossmember_width_mm = 12.0
 fixed_rail_depth_mm = 8.0
 bearing_pedestal_thickness_mm = 8.0
 sheet_thickness_mm = 6.0
-upper_rail_height_mm = 78.0
+upper_rail_height_mm = 80.0
 lower_rail_depth_mm = 118.0
 moving_carrier_half_span_mm = 91.0
 moving_carrier_height_mm = 24.0
