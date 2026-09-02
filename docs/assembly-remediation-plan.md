@@ -569,6 +569,9 @@ Exit criteria:
 - 接触pinionの外側支持板とretention preload部だけをsector外側へ残し、減速gear、近側gearbox plate、遠側plateおよびtie rodを内側へ反転した。gearbox shaftは固定値でずらさず、2枚の支持板の中点から位置と長さを導出するようにした。
 - 左右の遠側支持板間には52 mmの中央通路が残り、現在のコクピ幅45 mmを上回ることを自動テストした。これはX/Z方向を含む可動包絡の成立を意味せず、Phase 7までpreview-onlyである。
 - 内側移設後のpreview model、静止画8枚、`gimbal-motion.mp4`、pitch/roll gearbox動画および`.blend`を再生成した。軽量構造検査では507件のproxy候補を得ており、中央側の既存構造との整理をPhase 3で継続する。
+- コクピ直下の2本のmoving crossbar、実機能のなかったannular clampおよび実穴のない仮M3 fastenerをmodelから撤去した。上側moving carrierをroll軸上24 mmの左右長手材と前後矩形tieへ置換した。
+- contact carriageから上側長手材へ伸びる2本のtruss webは、別instance同士のoverlapを接続扱いせず、FDM carriage plate definition内でUnionした。roll bearing pedestalは、roll軸のbearing bossから上側carrier rail内面までを2本のribとbridgeで結ぶ一体のhangerへ置換した。roll gearbox支持はコクピ前後で上側tieから下ろす斜材へ変更した。
+- 固定pitch frameの前後crossmemberは円形shaftから幅12 mm・高さ8 mmの矩形構造部材へ変更し、左右railの内面間へ配置した。下側railと同じ8 mm高さを共通parameterにして床上面とのface contactへ揃えた結果、床への2 mm penetrationを解消した。軽量構造検査のproxy候補は507件から259件へ減少したが、これは機械的成立を意味せず、残候補を引き続きrelationと実joint形状へ置換する。
 
 次の作業はPhase 3の固定pitch frameとsector荷重経路の再設計である。実joint relationの登録は未成立形状を正当化しないよう、Phase 3–6の再設計と同時に行う。
 

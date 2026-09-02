@@ -90,13 +90,15 @@ struct RawCockpit {
 
 #[derive(Debug, Deserialize)]
 struct RawFrame {
-    crossmember_diameter_mm: f64,
-    moving_crossbar_diameter_mm: f64,
+    fixed_crossmember_width_mm: f64,
+    fixed_rail_depth_mm: f64,
     bearing_pedestal_thickness_mm: f64,
     sheet_thickness_mm: f64,
     upper_rail_height_mm: f64,
     lower_rail_depth_mm: f64,
-    moving_crossbar_station_mm: f64,
+    moving_carrier_half_span_mm: f64,
+    moving_carrier_height_mm: f64,
+    moving_carrier_member_width_mm: f64,
     floor_top_below_axis_mm: f64,
     floor_thickness_mm: f64,
 }
@@ -384,13 +386,13 @@ pub fn load(parameters_path: &Path, fabrication_path: &Path) -> Result<LoadedCon
                 )?,
             },
             frame: FrameParameters {
-                crossmember_radius: positive(
-                    raw.frame.crossmember_diameter_mm * 0.5,
-                    "frame.crossmember_diameter_mm",
+                fixed_crossmember_width: positive(
+                    raw.frame.fixed_crossmember_width_mm,
+                    "frame.fixed_crossmember_width_mm",
                 )?,
-                moving_crossbar_radius: positive(
-                    raw.frame.moving_crossbar_diameter_mm * 0.5,
-                    "frame.moving_crossbar_diameter_mm",
+                fixed_rail_depth: positive(
+                    raw.frame.fixed_rail_depth_mm,
+                    "frame.fixed_rail_depth_mm",
                 )?,
                 bearing_pedestal_thickness: positive(
                     raw.frame.bearing_pedestal_thickness_mm,
@@ -408,9 +410,17 @@ pub fn load(parameters_path: &Path, fabrication_path: &Path) -> Result<LoadedCon
                     raw.frame.lower_rail_depth_mm,
                     "frame.lower_rail_depth_mm",
                 )?,
-                moving_crossbar_station: positive(
-                    raw.frame.moving_crossbar_station_mm,
-                    "frame.moving_crossbar_station_mm",
+                moving_carrier_half_span: positive(
+                    raw.frame.moving_carrier_half_span_mm,
+                    "frame.moving_carrier_half_span_mm",
+                )?,
+                moving_carrier_height: positive(
+                    raw.frame.moving_carrier_height_mm,
+                    "frame.moving_carrier_height_mm",
+                )?,
+                moving_carrier_member_width: positive(
+                    raw.frame.moving_carrier_member_width_mm,
+                    "frame.moving_carrier_member_width_mm",
                 )?,
                 floor_top_below_axis: positive(
                     raw.frame.floor_top_below_axis_mm,

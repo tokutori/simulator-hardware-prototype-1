@@ -49,11 +49,8 @@ impl ValidationScope {
                 ComponentRole::FixedCarrierRail
                 | ComponentRole::SectorToRailLink
                 | ComponentRole::FixedCrossmember
-                | ComponentRole::MovingCrossbar
-                | ComponentRole::MovingCrossbarClamp
                 | ComponentRole::PitchCradleLongitudinalRail
                 | ComponentRole::PitchEndUpperTie
-                | ComponentRole::StructuralFastener
                 | ComponentRole::InstallationFloor
                 | ComponentRole::PitchDriveFlange
                 | ComponentRole::PitchRetentionFlange
@@ -64,8 +61,6 @@ impl ValidationScope {
                 | ComponentRole::PitchGearboxFarPlate
                 | ComponentRole::PitchGearboxShaft
                 | ComponentRole::PitchGearboxTieRod
-                | ComponentRole::PitchUnitLowerFrameArm
-                | ComponentRole::PitchUnitUpperFrameArm
                 | ComponentRole::RetentionLeafSpring
                 | ComponentRole::RetentionBearingBlock
                 | ComponentRole::Cockpit
@@ -77,7 +72,6 @@ impl ValidationScope {
                 | ComponentRole::RollGearboxShaft
                 | ComponentRole::RollBearingPedestal
                 | ComponentRole::RollBearing
-                | ComponentRole::RollPedestalSupport
                 | ComponentRole::RollGearboxPlate
                 | ComponentRole::RollGearboxMount
                 | ComponentRole::MovingDriveMountArm => true,

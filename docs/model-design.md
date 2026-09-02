@@ -87,7 +87,9 @@ drive pinion relative angle = -(338 / 18) * pitch angle
 retention pinion relative angle = +(372 / 18) * pitch angle
 ```
 
-4 unitはroll軸周辺またはコクピ上側のmoving carrierでroll駆動部と一体化する。コクピ直下のcrossbarは撤去し、コクピ下側を床clearance用keep-out volumeとして空ける。pitch gearboxとdistribution部は各sectorの外側でなく左右frame間の内側へ置き、前後stationに留めてコクピ・roll機構の包絡を避ける。各sectorのmid-planeから内側へ、近側支持板6.5 mm、第一gear layer 10.5 mm、遠側支持板24.0 mmの順に配置し、左右の遠側支持板間には52 mmの中央通路を残す。外側には接触pinionの反対側支持板とretention preload部だけを置く。motorとrotary encoder本体は今回含めない。
+4 unitはroll軸周辺またはコクピ上側のmoving carrierでroll駆動部と一体化する。コクピ直下のcrossbarは撤去し、コクピ下側を床clearance用keep-out volumeとして空ける。moving carrierはroll軸より24 mm上にある左右2本の220 mm長手材と、前後の矩形tieで構成する。接触carriageから各長手材へ伸びる2本のtruss webは別部品を重ねず、FDM carriage plateの同一solidへ統合する。front/rear roll bearingは軸受bossから上側carrier railの内面までをribとbridgeで結ぶ一体のhangerで支持する。roll gearboxだけはコクピ前後でroll軸下側に置き、上側carrierから斜材で支持する。
+
+pitch gearboxとdistribution部は各sectorの外側でなく左右frame間の内側へ置き、前後stationに留めてコクピ・roll機構の包絡を避ける。各sectorのmid-planeから内側へ、近側支持板6.5 mm、第一gear layer 10.5 mm、遠側支持板24.0 mmの順に配置し、左右の遠側支持板間には52 mmの中央通路を残す。外側には接触pinionの反対側支持板とretention preload部だけを置く。motorとrotary encoder本体は今回含めない。
 
 各pitch/roll gearboxの露出input shaftには、No.2プラスドライバーで低荷重手回しできるPH2-compatible cross recessを設ける。これはprototypeのkinematics確認用であり、規格適合、高トルク耐久または本番入力interfaceを保証しない。
 

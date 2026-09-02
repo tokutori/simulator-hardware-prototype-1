@@ -314,12 +314,15 @@ fn generate(
             "retention_encoder_pinion_count": 4,
             "pitch_gearbox_count": 4,
             "roll_gearbox_count": 2,
-            "pitch_unit_to_roll_frame_brace_count": 8,
             "cockpit_length_mm": loaded.parameters.cockpit.length.mm(),
             "cockpit_suspension_drop_mm": loaded.parameters.cockpit.suspension_drop.mm(),
             "upper_rail_height_mm": loaded.parameters.frame.upper_rail_height.mm(),
             "lower_rail_depth_mm": loaded.parameters.frame.lower_rail_depth.mm(),
-            "moving_crossbar_station_mm": loaded.parameters.frame.moving_crossbar_station.mm(),
+            "moving_carrier_half_span_mm": loaded.parameters.frame.moving_carrier_half_span.mm(),
+            "moving_carrier_height_mm": loaded.parameters.frame.moving_carrier_height.mm(),
+            "moving_carrier_member_width_mm": loaded.parameters.frame.moving_carrier_member_width.mm(),
+            "fixed_crossmember_width_mm": loaded.parameters.frame.fixed_crossmember_width.mm(),
+            "fixed_rail_depth_mm": loaded.parameters.frame.fixed_rail_depth.mm(),
             "floor_top_below_axis_mm": loaded.parameters.frame.floor_top_below_axis.mm(),
             "pitch_gearbox_near_plate_inboard_offset_mm": loaded.parameters.pitch_gearbox.near_plate_inboard_offset.mm(),
             "pitch_gearbox_gear_plane_inboard_offset_mm": loaded.parameters.pitch_gearbox.gear_plane_inboard_offset.mm(),
@@ -891,6 +894,41 @@ mod tests {
     }
 
     #[test]
+    fn moving_carrier_and_roll_bearing_supports_are_above_the_cockpit() {
+        let design = load_design();
+        for (_, instance) in design
+            .assembly
+            .instances_with_role(ComponentRole::PitchCradleLongitudinalRail)
+            .chain(
+                design
+                    .assembly
+                    .instances_with_role(ComponentRole::PitchEndUpperTie),
+            )
+        {
+            let pose = design
+                .kinematics
+                .pose(command(0.0, 0.0))
+                .expect("zero pose is valid")
+                .frame(instance.frame)
+                .expect("instance frame exists")
+                .compose(instance.local_pose);
+            assert!(
+                pose.translation[2] > 0.0,
+                "upper moving-carrier support {} must not occupy the cockpit underside",
+                instance.name
+            );
+        }
+        assert!(
+            design
+                .assembly
+                .instances()
+                .iter()
+                .all(|instance| !instance.name.contains("moving_crossbar")),
+            "the obsolete cockpit-underbody crossbar must remain absent"
+        );
+    }
+
+    #[test]
     fn retention_supports_are_not_fixed_to_the_outer_frame() {
         let design = load_design();
         for component in [
@@ -1024,14 +1062,6 @@ mod tests {
         let watched = [
             singleton(ComponentRole::Cockpit),
             located(
-                ComponentRole::MovingCrossbar,
-                ComponentLocation::new().with_longitudinal_end(LongitudinalEnd::Front),
-            ),
-            located(
-                ComponentRole::MovingCrossbar,
-                ComponentLocation::new().with_longitudinal_end(LongitudinalEnd::Rear),
-            ),
-            located(
                 ComponentRole::RollGearboxPlate,
                 ComponentLocation::new()
                     .with_longitudinal_end(LongitudinalEnd::Front)
@@ -1078,62 +1108,6 @@ mod tests {
                 ComponentLocation::new()
                     .with_longitudinal_end(LongitudinalEnd::Rear)
                     .with_ordinal(2),
-            ),
-            located(
-                ComponentRole::PitchUnitLowerFrameArm,
-                ComponentLocation::new()
-                    .with_side(Side::Left)
-                    .with_longitudinal_end(LongitudinalEnd::Front)
-                    .with_vertical_end(VerticalEnd::Lower),
-            ),
-            located(
-                ComponentRole::PitchUnitLowerFrameArm,
-                ComponentLocation::new()
-                    .with_side(Side::Right)
-                    .with_longitudinal_end(LongitudinalEnd::Front)
-                    .with_vertical_end(VerticalEnd::Lower),
-            ),
-            located(
-                ComponentRole::PitchUnitLowerFrameArm,
-                ComponentLocation::new()
-                    .with_side(Side::Left)
-                    .with_longitudinal_end(LongitudinalEnd::Rear)
-                    .with_vertical_end(VerticalEnd::Lower),
-            ),
-            located(
-                ComponentRole::PitchUnitLowerFrameArm,
-                ComponentLocation::new()
-                    .with_side(Side::Right)
-                    .with_longitudinal_end(LongitudinalEnd::Rear)
-                    .with_vertical_end(VerticalEnd::Lower),
-            ),
-            located(
-                ComponentRole::PitchUnitUpperFrameArm,
-                ComponentLocation::new()
-                    .with_side(Side::Left)
-                    .with_longitudinal_end(LongitudinalEnd::Front)
-                    .with_vertical_end(VerticalEnd::Upper),
-            ),
-            located(
-                ComponentRole::PitchUnitUpperFrameArm,
-                ComponentLocation::new()
-                    .with_side(Side::Right)
-                    .with_longitudinal_end(LongitudinalEnd::Front)
-                    .with_vertical_end(VerticalEnd::Upper),
-            ),
-            located(
-                ComponentRole::PitchUnitUpperFrameArm,
-                ComponentLocation::new()
-                    .with_side(Side::Left)
-                    .with_longitudinal_end(LongitudinalEnd::Rear)
-                    .with_vertical_end(VerticalEnd::Upper),
-            ),
-            located(
-                ComponentRole::PitchUnitUpperFrameArm,
-                ComponentLocation::new()
-                    .with_side(Side::Right)
-                    .with_longitudinal_end(LongitudinalEnd::Rear)
-                    .with_vertical_end(VerticalEnd::Upper),
             ),
             located(
                 ComponentRole::PitchCradleLongitudinalRail,

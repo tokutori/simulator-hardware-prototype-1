@@ -57,13 +57,15 @@ height_mm = 45.0
 suspension_drop_mm = 42.0
 
 [frame]
-crossmember_diameter_mm = 6.0
-moving_crossbar_diameter_mm = 12.0
+fixed_crossmember_width_mm = 12.0
+fixed_rail_depth_mm = 8.0
 bearing_pedestal_thickness_mm = 8.0
 sheet_thickness_mm = 6.0
 upper_rail_height_mm = 78.0
 lower_rail_depth_mm = 118.0
-moving_crossbar_station_mm = 95.0
+moving_carrier_half_span_mm = 110.0
+moving_carrier_height_mm = 24.0
+moving_carrier_member_width_mm = 12.0
 floor_top_below_axis_mm = 122.0
 floor_thickness_mm = 10.0
 
