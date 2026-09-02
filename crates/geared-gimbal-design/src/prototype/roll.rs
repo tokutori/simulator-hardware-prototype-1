@@ -39,14 +39,6 @@ pub(super) fn build_roll_assembly(
             RigidTransform::translated(x, 0.0, 0.0),
             ComponentLocation::new().with_ordinal((index + 1) as u16),
         );
-        add_located_instance(
-            assembly,
-            &format!("cockpit_shaft_key_{}", index + 1),
-            d.roll.cockpit_shaft_key,
-            roll_frame,
-            RigidTransform::translated(x, 0.0, 3.5),
-            ComponentLocation::new().with_ordinal((index + 1) as u16),
-        );
     }
     let carrier_rail_y =
         p.pitch_sector.carrier_spacing.mm() * 0.5 - p.frame.moving_carrier_inboard_offset.mm();
@@ -89,22 +81,6 @@ pub(super) fn build_roll_assembly(
             d.roll.roll_driven,
             roll_frame,
             RigidTransform::translated(gear_x, 0.0, 0.0),
-            location,
-        );
-        add_located_instance(
-            assembly,
-            &format!("roll_driven_hub_{end}"),
-            d.roll.roll_driven_hub,
-            roll_frame,
-            RigidTransform::translated(gear_x, 0.0, 0.0),
-            location,
-        );
-        add_located_instance(
-            assembly,
-            &format!("roll_driven_key_{end}"),
-            d.roll.roll_driven_key,
-            roll_frame,
-            RigidTransform::translated(gear_x, 0.0, 3.5),
             location,
         );
         let output_z =
@@ -558,9 +534,105 @@ pub(super) fn cockpit_hanger_solid(
     )?;
     let boss = cylinder_x(builder, 9.0, 14.0)?;
     let hanger = builder.boolean(BooleanOperation::Union, web, boss)?;
-    let bore = cylinder_x(builder, p.roll_axis.shaft_radius.mm() + 0.15, 16.0)?;
+    let bore = d_bore_x(
+        builder,
+        p.roll_axis.shaft_radius.mm() + 0.15,
+        16.0,
+        roll_shaft_flat_height_mm() + 0.15,
+    )?;
     builder
         .boolean(BooleanOperation::Difference, hanger, bore)
+        .map_err(PrototypeError::Feature)
+}
+
+pub(super) const fn roll_shaft_flat_height_mm() -> f64 {
+    3.0
+}
+
+pub(super) fn d_bore_x(
+    builder: &mut FeatureBuilder,
+    radius: f64,
+    width: f64,
+    flat_height: f64,
+) -> Result<SolidId, PrototypeError> {
+    let cylinder = cylinder_x(builder, radius, width)?;
+    let lower = -radius - 1.0;
+    let height = flat_height - lower;
+    let half_space = centered_box(builder, [width + 2.0, radius * 2.0 + 2.0, height]);
+    let half_space = builder.translate(
+        half_space,
+        Translation3 {
+            x: 0.0,
+            y: 0.0,
+            z: (flat_height + lower) * 0.5,
+        },
+    )?;
+    builder
+        .boolean(BooleanOperation::Intersection, cylinder, half_space)
+        .map_err(PrototypeError::Feature)
+}
+
+pub(super) fn roll_shaft_solid(
+    builder: &mut FeatureBuilder,
+    p: &PrototypeParameters,
+) -> Result<SolidId, PrototypeError> {
+    let radius = p.roll_axis.shaft_radius.mm();
+    let mut shaft = cylinder_x(builder, radius, p.roll_axis.shaft_length.mm())?;
+    let hanger_station = p.cockpit.length.mm() * 0.30;
+    for (station, width) in [
+        (-hanger_station, 14.0),
+        (hanger_station, 14.0),
+        (-p.roll_axis.drive_station.mm(), 12.0),
+        (p.roll_axis.drive_station.mm(), 12.0),
+    ] {
+        let cut_height = radius - roll_shaft_flat_height_mm() + 1.0;
+        let cutter = centered_box(builder, [width, radius * 2.0 + 2.0, cut_height]);
+        let cutter = builder.translate(
+            cutter,
+            Translation3 {
+                x: station,
+                y: 0.0,
+                z: (radius + roll_shaft_flat_height_mm() + 1.0) * 0.5,
+            },
+        )?;
+        shaft = builder.boolean(BooleanOperation::Difference, shaft, cutter)?;
+    }
+    Ok(shaft)
+}
+
+pub(super) fn roll_driven_gear_solid(
+    builder: &mut FeatureBuilder,
+    p: &PrototypeParameters,
+) -> Result<SolidId, PrototypeError> {
+    let face_width = 6.0;
+    let profile = builder.polygon(p.roll_axis.driven_gear.profile().points)?;
+    let gear = builder.extrude(profile, length(face_width))?;
+    let gear = builder.translate(
+        gear,
+        Translation3 {
+            x: 0.0,
+            y: 0.0,
+            z: -face_width * 0.5,
+        },
+    )?;
+    let gear = builder.rotate(
+        gear,
+        Rotation3 {
+            x: angle(0.0),
+            y: angle(90.0),
+            z: angle(0.0),
+        },
+    )?;
+    let hub = cylinder_x(builder, 10.0, 12.0)?;
+    let body = builder.boolean(BooleanOperation::Union, gear, hub)?;
+    let bore = d_bore_x(
+        builder,
+        p.roll_axis.shaft_radius.mm() + 0.15,
+        14.0,
+        roll_shaft_flat_height_mm() + 0.15,
+    )?;
+    builder
+        .boolean(BooleanOperation::Difference, body, bore)
         .map_err(PrototypeError::Feature)
 }
 

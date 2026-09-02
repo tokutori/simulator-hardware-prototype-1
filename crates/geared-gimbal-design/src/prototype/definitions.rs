@@ -141,11 +141,8 @@ pub(super) struct RollDefinitions {
     pub(super) roll_bearing_carrier_end: Defined<CarrierEndDatums>,
     pub(super) cockpit: Defined<CockpitDatums>,
     pub(super) cockpit_hanger: Defined<CockpitHangerDatums>,
-    pub(super) cockpit_shaft_key: ComponentDefinitionId,
     pub(super) roll_shaft: ComponentDefinitionId,
     pub(super) roll_driven: ComponentDefinitionId,
-    pub(super) roll_driven_hub: ComponentDefinitionId,
-    pub(super) roll_driven_key: ComponentDefinitionId,
     pub(super) roll_pinion: ComponentDefinitionId,
     pub(super) roll_gearbox_small: ComponentDefinitionId,
     pub(super) roll_gearbox_large: ComponentDefinitionId,
@@ -436,51 +433,21 @@ pub(super) fn build_definitions(
         [0.72, 0.25, 0.20, 1.0],
         cockpit_hanger_datums,
     );
-    let cockpit_shaft_key = add_solid_definition(
-        assembly,
-        "cockpit_roll_shaft_key",
-        ComponentRole::CockpitShaftKey,
-        centered_box(builder, [14.0, 2.5, 2.0]),
-        Manufacturing::Purchased,
-        [0.72, 0.74, 0.77, 1.0],
-    );
     let roll_shaft = add_solid_definition(
         assembly,
         "roll_shaft",
         ComponentRole::RollShaft,
-        cylinder_x(
-            builder,
-            p.roll_axis.shaft_radius.mm(),
-            p.roll_axis.shaft_length.mm(),
-        )?,
+        roll_shaft_solid(builder, p)?,
         Manufacturing::Purchased,
         [0.64, 0.67, 0.70, 1.0],
     );
-    let roll_driven = gear_definition_x(
-        builder,
+    let roll_driven = add_solid_definition(
         assembly,
         "roll_driven_gear",
-        &p.roll_axis.driven_gear,
-        length(6.0),
-        p.roll_axis.shaft_radius,
-        definition_style(ComponentRole::RollDrivenGear, [0.88, 0.72, 0.08, 1.0]),
-    )?;
-    let roll_driven_hub = annulus_definition_x(
-        builder,
-        assembly,
-        "roll_driven_clamping_hub",
-        10.0,
-        p.roll_axis.shaft_radius.mm() + 0.15,
-        12.0,
-        definition_style(ComponentRole::RollDrivenHub, [0.76, 0.58, 0.10, 1.0]),
-    )?;
-    let roll_driven_key = add_solid_definition(
-        assembly,
-        "roll_driven_shaft_key",
-        ComponentRole::RollDrivenKey,
-        centered_box(builder, [12.0, 2.5, 2.0]),
-        Manufacturing::Purchased,
-        [0.72, 0.74, 0.77, 1.0],
+        ComponentRole::RollDrivenGear,
+        roll_driven_gear_solid(builder, p)?,
+        fdm,
+        [0.88, 0.72, 0.08, 1.0],
     );
     let roll_pinion = gear_definition_x(
         builder,
@@ -690,11 +657,8 @@ pub(super) fn build_definitions(
                     cockpit_face: cockpit_hanger_cockpit_face,
                 },
             },
-            cockpit_shaft_key,
             roll_shaft,
             roll_driven,
-            roll_driven_hub,
-            roll_driven_key,
             roll_pinion,
             roll_gearbox_small,
             roll_gearbox_large,

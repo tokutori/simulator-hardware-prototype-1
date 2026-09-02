@@ -1288,13 +1288,13 @@ fn upper_carrier_and_roll_mounts_do_not_use_solid_overlap() {
                 ),
             ));
         }
-        let hub = located(ComponentRole::RollDrivenHub, end_location);
+        let driven_gear = located(ComponentRole::RollDrivenGear, end_location);
         for ordinal in [1, 2] {
             let arm = located(
                 ComponentRole::MovingDriveMountArm,
                 end_location.with_ordinal(ordinal),
             );
-            pairs.push((hub, arm));
+            pairs.push((driven_gear, arm));
             for plate_ordinal in [1, 2] {
                 pairs.push((
                     located(
@@ -1318,6 +1318,56 @@ fn upper_carrier_and_roll_mounts_do_not_use_solid_overlap() {
         assert!(
             volume <= 1.0e-7,
             "{first:?} intersects {second:?} by {volume} mm^3"
+        );
+    }
+}
+
+#[test]
+fn roll_d_interfaces_replace_obsolete_overlapping_hubs_and_keys() {
+    let design = load_design();
+    assert!(design.assembly.definitions().iter().all(|definition| {
+        !definition.name.contains("shaft_key") && !definition.name.contains("clamping_hub")
+    }));
+    assert!(design.assembly.instances().iter().all(|instance| {
+        !instance.name.contains("shaft_key") && !instance.name.contains("driven_hub")
+    }));
+
+    let shaft = singleton(ComponentRole::RollShaft);
+    let mut evaluator = Evaluator::new(&design.graph);
+    for end in [LongitudinalEnd::Front, LongitudinalEnd::Rear] {
+        let gear = located(
+            ComponentRole::RollDrivenGear,
+            ComponentLocation::new().with_longitudinal_end(end),
+        );
+        let gear_overlap = evaluator
+            .intersection_volume_transformed(
+                instance_solid(&design, shaft),
+                instance_pose(&design, shaft, 0.0, 0.0),
+                instance_solid(&design, gear),
+                instance_pose(&design, gear, 0.0, 0.0),
+            )
+            .expect("roll D-shaft/gear clearance query succeeds");
+        assert!(
+            gear_overlap <= 1.0e-7,
+            "roll D-shaft intersects integrated driven gear by {gear_overlap} mm^3"
+        );
+    }
+    for ordinal in [1, 2] {
+        let hanger = located(
+            ComponentRole::CockpitHanger,
+            ComponentLocation::new().with_ordinal(ordinal),
+        );
+        let hanger_overlap = evaluator
+            .intersection_volume_transformed(
+                instance_solid(&design, shaft),
+                instance_pose(&design, shaft, 0.0, 0.0),
+                instance_solid(&design, hanger),
+                instance_pose(&design, hanger, 0.0, 0.0),
+            )
+            .expect("roll D-shaft/hanger clearance query succeeds");
+        assert!(
+            hanger_overlap <= 1.0e-7,
+            "roll D-shaft intersects cockpit hanger by {hanger_overlap} mm^3"
         );
     }
 }

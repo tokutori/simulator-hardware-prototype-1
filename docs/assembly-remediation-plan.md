@@ -543,7 +543,7 @@ Exit criteria:
 | outboard plateのretention軸boss/boreと別`RetentionBearingBlock` | 削除・置換済み | rigid bossと別blockによる重複拘束を撤去し、inner/outboard支持板にbearing island、平行flexure、bridge、anchor ribを一体化した |
 | `RetentionLeafSpring` | 削除・置換済み | 固定端・可動端のない8個のbox形状を撤去し、各支持板solid内の2本のradial flexure beamへ置換した。ばね定数、予圧および疲労はPhase 5で検証する |
 | cockpit hangerのcockpit内2 mm延長 | 削除 | 接続をpenetrationで代用した旧featureを撤去し、cockpit上面とhanger下面を型付き`SurfaceContact`へ置換した。cockpit本体の実締結方式はPhase 5で確定する |
-| `RollDrivenHub`と`RollDrivenKey` | 再設計 | 現在はgear/shaftへ重なる別solidであり、clamping hub、keywayまたは一体gearのいずれかへ一本化する |
+| `RollDrivenHub`、`RollDrivenKey`、`CockpitShaftKey` | 削除・置換済み | 実keywayを持たず別solidへ食い込んでいた6 instanceと3 definitionを撤去した。driven gear/hubを同一definition内でUnionし、連続shaftのgear/hanger stationだけをD-flat、相手側をclearance付きD-boreとした。軸方向保持とfit公差はPhase 5で引き続き検証する |
 | drive/retention flange | 維持・再検証 | sectorからの軸方向脱落防止という現行機能を持つ。Phase 5でshaft retentionと工具accessを含めて再検証する |
 | front/rear roll driven gearとgearbox | 維持・topology確定待ち | コクピ前後に置く要求に対応する。Phase 6でactive/passive分類と閉路整合性を確定する |
 
@@ -645,8 +645,11 @@ Exit criteria:
 - 2026-09-03の追加監査で、`DatumId<T>`が発行元definitionを保持しないため、同kind・同indexのforeign datumを誤受理できることを確認した。`DatumSet`をdefinition IDに所有させ、relation endpoint検証でinstance definitionとの一致を必須にした。異なるdefinitionの`PlaneDatum[0]`を借用する回帰testで`DatumOwnerMismatch`を確認した。空のdatum setだけはdatumを発行できないためunownedを許容する。
 - `FastenerHardware`をinstance IDだけでなく、boltの軸・頭下面・shank先端、nutの軸・bearing面・外面、washerの軸・両面をtyped datumで参照する構造へ変更した。共通validatorは全hardware軸の同軸度、member–washer–bolt/nut間の座面接触、M3 nutの最小full-thread engagement 2.4 mmおよびbolt先端の1 pitch以上の突出を検査する。意図的にhardware軸を0.2 mmずらしたfixtureと短いbolt fixtureが失敗し、現prototypeのsector–post 8 jointとpitch gearbox 12 jointが新検査を通過した。
 - 全relationへ`Validated`、`Failed`、`SkippedByScope`、`Unsupported`のcoverage statusを割り当て、CLI reportの`complete`をstatusから導出するようにした。未実装の`CylindricalFit`または`GearMesh`を含むreportは、error issueが0件でも`complete=false`かつ`valid=false`になる。これによりA-32の誤成功経路を塞いだ。個別relation validatorへのmodule分割はarchitecture A1で継続する。
+- 実keywayを持たず別solidへ食い込んでいた`RollDrivenHub`、`RollDrivenKey`および`CockpitShaftKey`の6 instance・3 definitionを撤去した。driven gearとhubを一つのFDM definition内でUnionし、前後を切断しないroll shaftのgear/hanger stationだけへD-flat、相手側へnominal 0.15 mm clearanceのD-boreを設けた。shaft、前後driven gearおよび2個のhangerの全組合せについて高精細Boolean intersection volumeが0である回帰testを追加して成功した。これは旧overlapの撤去であり、軸方向保持、typed fit relationおよび製造公差の成立を意味しないためPhase 5は未完了のままとする。
+- 上記変更後に旧`output`を全消去し、35 definition・233 instanceのpreview model、静止画8枚、`.blend`、`gimbal-motion.mp4`およびpitch/roll gearbox動画を再生成した。manifest記載20 artifactのSHA-256は全件一致し、3動画はいずれもH.264、720×540、12 fps、6秒である。static structural-proxy validationは高精細gear 10 definitionを除外した25 definitionから221件のconservative candidateを報告して失敗しており、正式加工可能とは扱わない。
+- このcheckpointでworkspace test 55件、format、warning-as-error Clippy、`gimbal-core`と`geared-gimbal-design`のnative/wasm32 `no_std` checkが成功した。
 
-次の作業はPhase 4として、残る全instanceとdefinition内featureの存在理由監査を行い、不要形状を削除した上で、FDM前提の固定frame接合をM3通しbolt、実穴、washer/nut座面および工具空間を持つ実jointへ置換する。並行して、未対応relationを黙って通過させないvalidation coverage reportへ改修する。LaserCutの`Body::Sheet` hole表現とDXF経路は次prototype向けに維持するが、現prototypeのcustom partはFDMを前提とする。
+次の作業はPhase 4として、残る全instanceとdefinition内featureの存在理由監査を続け、不要形状を削除した上で、FDM前提の固定frame接合をM3通しbolt、実穴、washer/nut座面および工具空間を持つ実jointへ置換する。relation coverage reportは実装済みであり、今後追加するrelationも未対応なら`Unsupported`として正式生成を失敗させる。LaserCutの`Body::Sheet` hole表現とDXF経路は次prototype向けに維持するが、現prototypeのcustom partはFDMを前提とする。
 
 ## 9. 完成の定義
 
