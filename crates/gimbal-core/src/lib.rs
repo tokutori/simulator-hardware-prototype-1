@@ -10,7 +10,6 @@ mod gear;
 mod geometry;
 mod kinematics;
 mod manufacturing;
-mod prototype;
 mod relation;
 mod units;
 
@@ -39,11 +38,6 @@ pub use kinematics::{AssemblyPose, KinematicError, Kinematics, PitchRollCommand}
 pub use manufacturing::{
     ComponentLocation, ComponentRole, FdmMaterial, LongitudinalEnd, Manufacturing, Side,
     VerticalEnd,
-};
-pub use prototype::{
-    CockpitParameters, ContactUnitParameters, FrameParameters, MotionParameters,
-    PitchGearboxParameters, PitchSectorParameters, PrototypeDesign, PrototypeError,
-    PrototypeParameters, RollAxisParameters, build_prototype,
 };
 pub use relation::{
     AssemblyRelation, AssemblyRelationId, BoltHardware, CylindricalFit, DatumEndpoint,

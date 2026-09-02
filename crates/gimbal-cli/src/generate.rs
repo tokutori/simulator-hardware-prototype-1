@@ -5,9 +5,8 @@ use crate::manifest::{artifact_manifest, optional_artifact_paths};
 use crate::validate::{
     require_valid_assembly, validate_assembly, validation_report_json, write_validation_report,
 };
-use gimbal_core::{
-    Angle, Body, Manufacturing, PitchRollCommand, RegionNode, TriangleMesh, build_prototype,
-};
+use geared_gimbal_design::build_prototype;
+use gimbal_core::{Angle, Body, Manufacturing, PitchRollCommand, RegionNode, TriangleMesh};
 use gimbal_export::{
     AnimationParameters, ExportPart, write_3mf, write_animated_gltf, write_binary_stl,
     write_dxf_sheet_profile, write_mesh_3mf, write_obj,

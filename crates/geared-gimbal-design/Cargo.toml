@@ -1,0 +1,10 @@
+[package]
+name = "geared-gimbal-design"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gimbal-core = { path = "../gimbal-core" }
+libm.workspace = true

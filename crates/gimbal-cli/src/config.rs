@@ -3,11 +3,11 @@
 use std::fs;
 use std::path::Path;
 
-use gimbal_core::{
-    Angle, CockpitParameters, ContactUnitParameters, FdmMaterial, FrameParameters, GearSector,
-    InternalGear, Length, MotionParameters, PitchGearboxParameters, PitchSectorParameters,
-    PrototypeParameters, RollAxisParameters, SpurGear,
+use geared_gimbal_design::{
+    CockpitParameters, ContactUnitParameters, FrameParameters, MotionParameters,
+    PitchGearboxParameters, PitchSectorParameters, PrototypeParameters, RollAxisParameters,
 };
+use gimbal_core::{Angle, FdmMaterial, GearSector, InternalGear, Length, SpurGear};
 use serde::Deserialize;
 use thiserror::Error;
 

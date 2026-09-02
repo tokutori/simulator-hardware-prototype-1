@@ -10,6 +10,7 @@ name = "gimbal"
 path = "src/main.rs"
 
 [dependencies]
+geared-gimbal-design = { path = "../geared-gimbal-design" }
 gimbal-core = { path = "../gimbal-core" }
 gimbal-export = { path = "../gimbal-export" }
 gimbal-kernel-manifold = { path = "../gimbal-kernel-manifold" }

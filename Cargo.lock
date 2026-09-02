@@ -277,6 +277,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "geared-gimbal-design"
+version = "0.1.0"
+dependencies = [
+ "gimbal-core",
+ "libm",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -301,6 +309,7 @@ dependencies = [
 name = "gimbal-cli"
 version = "0.1.0"
 dependencies = [
+ "geared-gimbal-design",
  "gimbal-core",
  "gimbal-export",
  "gimbal-kernel-manifold",

@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/gimbal-core",
+    "crates/geared-gimbal-design",
     "crates/gimbal-kernel-manifold",
     "crates/gimbal-export",
     "crates/gimbal-cli",

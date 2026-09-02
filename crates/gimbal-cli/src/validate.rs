@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 
 use crate::config::LoadedConfig;
+use geared_gimbal_design::{PrototypeDesign, build_prototype};
 use gimbal_core::{
     Angle, NonNegativeLength, NumericalTolerance, PitchRollCommand, PositiveArea, PositiveLength,
-    PositiveVolume, PrototypeDesign, build_prototype,
+    PositiveVolume,
 };
 use gimbal_kernel_manifold::{
     AssemblyValidator, GeometryFidelity, MotionCoverage, RelationValidationStatus,

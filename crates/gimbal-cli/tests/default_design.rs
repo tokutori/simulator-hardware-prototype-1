@@ -1,3 +1,4 @@
+use geared_gimbal_design::{PrototypeDesign, build_prototype};
 use gimbal_cli::{config, validate_assembly};
 use gimbal_core::*;
 use gimbal_kernel_manifold::{

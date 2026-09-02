@@ -62,7 +62,7 @@ gimbal-export -> gimbal-core
 | A3 | CLIをcommand/generate/validate/manifestへ分割 | 完了 | Phase 5前 |
 | A4 | kernel validationをreport/interference/relationsへ分割 | 完了 | Phase 5前 |
 | A5 | prototypeをsubsystem別moduleへ分割しDefinitionsをgroup化 | 完了 | Phase 5前 |
-| A6 | `geared-gimbal-design` crateを追加し固有設計を移す | 未着手 | Phase 6前 |
+| A6 | `geared-gimbal-design` crateを追加し固有設計を移す | 進行中 | Phase 6前 |
 | A7 | generic identity、coordinateおよびmodule依存方向を整理 | 未着手 | Phase 6と並行 |
 | A8 | export/renderer境界をsemantic metadataとencoderへ変更 | 未着手 | Assembly Phase 8–9前 |
 | A9 | rustdoc、最小README、CIおよび公開前gateを同期 | 未着手 | Assembly Phase 10 |
@@ -234,3 +234,5 @@ Exit criteria:
 - 平坦だった`Definitions`をfixed frame、pitch unit、rollおよびhardwareへgroup化し、datumを持つdefinitionは`Defined<D>`でdefinition IDとdatum bundleを一体にした。
 - definition IDの決定順を一箇所で明示するためdefinition生成は`definitions.rs`に集約し、instanceとrelationは`fixed_frame.rs`、`pitch_unit.rs`、`roll.rs`が所有する構成を採用した。分散したbuilderから暗黙のID順序を復元するより変更経路が明確であるため、当初案の「各subsystemがdefinitionも構築する」は採用しない。
 - 分割後も既定設計のdefinition/instance/relation数、主要pose、床clearance、exact solid回帰を含むworkspace 54 testsが成功した。fmt、warning-as-error Clippy、native/wasm `no_std` checkも成功したためA5を完了とした。
+- A6の最初のcheckpointとして、既定prototypeのparameter、validation、geometry、definition、instance、relationおよび`build_prototype`を`no_std + alloc`の`geared-gimbal-design` crateへ移した。CLIはcomposition rootでdesign crateを選択し、`gimbal-core`は具体設計をexportしない。
+- `ComponentRole`とpitch/roll固定のcoordinate adapterはまだgeneric core側に残るため、A6は進行中とする。

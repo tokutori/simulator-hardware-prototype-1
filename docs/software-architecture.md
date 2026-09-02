@@ -23,6 +23,7 @@
 simulator-hardware-prototype-1/
 ├─ crates/
 │  ├─ gimbal-core/
+│  ├─ geared-gimbal-design/
 │  ├─ gimbal-kernel-manifold/
 │  ├─ gimbal-export/
 │  └─ gimbal-cli/
@@ -38,16 +39,19 @@ simulator-hardware-prototype-1/
 ```mermaid
 flowchart TD
     CLI[gimbal-cli]
+    DESIGN[geared-gimbal-design no_std]
     CORE[gimbal-core no_std]
     KERNEL[gimbal-kernel-manifold]
     EXPORT[gimbal-export]
     BLENDER[Blender adapter]
 
+    CLI --> DESIGN
     CLI --> CORE
     CLI --> KERNEL
     CLI --> EXPORT
     KERNEL --> CORE
     EXPORT --> CORE
+    DESIGN --> CORE
     BLENDER -->|generated glTF only| EXPORT
 ```
 
@@ -65,8 +69,7 @@ coreは次を持つ。
 - `ComponentDefinition` と `ComponentInstance`
 - append-only `FrameGraph`
 - `Joint::Fixed` と `Joint::Revolute`
-- `PitchRollCommand`
-- prototype設計規則とerror enum
+- generic assembly、datum、relation、constraintおよびmesh IR
 
 ### 3.1 Local geometryとinstance
 
@@ -101,7 +104,11 @@ World
 
 固定sectorと公転pinionの関係はframe親子関係とgear ratioから表す。exporterに個別の角度計算を書かない。
 
-## 4. gimbal-kernel-manifold
+## 4. geared-gimbal-design
+
+既定prototype固有のparameter、cross-field validation、component definition、instance、relationおよびpitch/roll kinematicsを構築する`no_std + alloc` crateである。genericなCAD/mechanism型は`gimbal-core`から利用し、filesystem、TOML、kernelおよびexport形式へ依存しない。
+
+## 5. gimbal-kernel-manifold
 
 Feature DAGを `manifold-rust` へ評価するadapterである。
 
@@ -113,7 +120,7 @@ Feature DAGを `manifold-rust` へ評価するadapterである。
 
 domain codeからManifold型を参照しない。将来別kernelを追加してもcoreとexporterを変更しない境界とする。
 
-## 5. gimbal-export
+## 6. gimbal-export
 
 評価済みmesh、core kinematicsおよびnominal profileだけを受け取る。
 
@@ -136,7 +143,7 @@ DXFはR2013、`INSUNITS=Millimeters`、`CUT` layer、closed `LWPOLYLINE` とし�
 
 3MFはCore packageに必要な `[Content_Types].xml`、`_rels/.rels`、`3D/3dmodel.model` を直接生成する。ZIP timestampを固定し、同一meshからbyte-identicalな出力になることと、mm unit、object/build itemおよびXML escapingをtestする。外部3MF parserはruntime dependencyにしない。
 
-## 6. gimbal-cli
+## 7. gimbal-cli
 
 ```text
 Raw TOML
@@ -162,7 +169,7 @@ clean-output       output directoryを削除
 
 `validate-full`の`full`は高精細geometryを含むことを表すhistorical command名であり、全可動域を意味しない。structured reportはgeometry fidelityとmotion coverageを別fieldで出力する。`clean-output` はcanonicalizeしたworkspace直下の `output` だけを削除する。
 
-## 7. Manufacturing境界
+## 8. Manufacturing境界
 
 ```rust
 enum Manufacturing {
@@ -176,7 +183,7 @@ enum Manufacturing {
 
 kerf、FDM hole compensationおよびmachine envelopeは `fabrication.toml` のprocess profileであり、nominal Feature DAGへ混ぜない。現在のprototypeでは補正値をmanifestへ記録するが、nominal加工ファイルへ自動適用しない。
 
-## 8. Blender adapter
+## 9. Blender adapter
 
 Blender 5.xをbackground実行し、generated glTFをimportするだけである。
 
@@ -188,7 +195,7 @@ Blender 5.xをbackground実行し、generated glTFをimportするだけである
 
 Blender固有処理はcore、kernelおよびexport crateへ入れない。
 
-## 9. Validation
+## 10. Validation
 
 ### Core/unit
 
@@ -217,7 +224,7 @@ Blender固有処理はcore、kernelおよびexport crateへ入れない。
 - glTF coordinate conversion、node、animation
 - SHA-256 manifest
 
-## 10. Quality gate
+## 11. Quality gate
 
 ```text
 cargo fmt --check
@@ -225,11 +232,13 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
 cargo check -p gimbal-core --no-default-features
 cargo check -p gimbal-core --target wasm32-unknown-unknown --no-default-features
+cargo check -p geared-gimbal-design --no-default-features
+cargo check -p geared-gimbal-design --target wasm32-unknown-unknown --no-default-features
 cargo audit
 ```
 
 公開前にはdependency license、secrets、large files、staged contentおよびrelease archiveを検査する。
 
-## 11. License
+## 12. License
 
 repository sourceはMIT Licenseとする。外部実行programのBlenderとFFmpegはrepositoryへ同梱・リンクしない。第三者gear実装をコピーせず、一般公開された数式から独立実装する。dependency追加時はMIT公開との互換性を確認する。
