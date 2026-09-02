@@ -67,14 +67,48 @@ impl MetricThread {
             Self::M3 => 3.0,
         }
     }
+
+    pub const fn nominal_pitch_mm(self) -> f64 {
+        match self {
+            Self::M3 => 0.5,
+        }
+    }
+
+    pub const fn minimum_full_thread_engagement_mm(self) -> f64 {
+        self.nominal_diameter_mm() * 0.8
+    }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BoltHardware {
+    pub instance: ComponentInstanceId,
+    pub axis: DatumId<AxisDatum>,
+    pub under_head_face: DatumId<PlaneDatum>,
+    pub shank_tip_face: DatumId<PlaneDatum>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NutHardware {
+    pub instance: ComponentInstanceId,
+    pub axis: DatumId<AxisDatum>,
+    pub bearing_face: DatumId<PlaneDatum>,
+    pub outer_face: DatumId<PlaneDatum>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WasherHardware {
+    pub instance: ComponentInstanceId,
+    pub axis: DatumId<AxisDatum>,
+    pub member_face: DatumId<PlaneDatum>,
+    pub hardware_face: DatumId<PlaneDatum>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FastenerHardware {
-    pub bolt: ComponentInstanceId,
-    pub nut: ComponentInstanceId,
-    pub first_washer: Option<ComponentInstanceId>,
-    pub second_washer: Option<ComponentInstanceId>,
+    pub bolt: BoltHardware,
+    pub nut: NutHardware,
+    pub first_washer: Option<WasherHardware>,
+    pub second_washer: Option<WasherHardware>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -147,23 +181,113 @@ impl<T> DatumEndpoint<T> {
 }
 
 impl AssemblyRelation {
-    pub(crate) fn endpoint_refs(self) -> [Option<RelationEndpointRef>; 4] {
+    pub(crate) fn endpoint_refs(self) -> [Option<RelationEndpointRef>; 16] {
         match self {
             Self::SurfaceContact(contact) => [
                 Some(erased(contact.first, DatumKind::Plane)),
                 Some(erased(contact.second, DatumKind::Plane)),
                 None,
                 None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
             ],
-            Self::Fastened(joint) => [
-                Some(erased(joint.first_hole, DatumKind::Cylinder)),
-                Some(erased(joint.second_hole, DatumKind::Cylinder)),
-                Some(erased(joint.head_seat, DatumKind::Plane)),
-                Some(erased(joint.nut_seat, DatumKind::Plane)),
-            ],
+            Self::Fastened(joint) => {
+                let bolt = joint.hardware.bolt;
+                let nut = joint.hardware.nut;
+                let first_washer = joint.hardware.first_washer;
+                let second_washer = joint.hardware.second_washer;
+                [
+                    Some(erased(joint.first_hole, DatumKind::Cylinder)),
+                    Some(erased(joint.second_hole, DatumKind::Cylinder)),
+                    Some(erased(joint.head_seat, DatumKind::Plane)),
+                    Some(erased(joint.nut_seat, DatumKind::Plane)),
+                    Some(erased(
+                        DatumEndpoint::new(bolt.instance, bolt.axis),
+                        DatumKind::Axis,
+                    )),
+                    Some(erased(
+                        DatumEndpoint::new(bolt.instance, bolt.under_head_face),
+                        DatumKind::Plane,
+                    )),
+                    Some(erased(
+                        DatumEndpoint::new(bolt.instance, bolt.shank_tip_face),
+                        DatumKind::Plane,
+                    )),
+                    Some(erased(
+                        DatumEndpoint::new(nut.instance, nut.axis),
+                        DatumKind::Axis,
+                    )),
+                    Some(erased(
+                        DatumEndpoint::new(nut.instance, nut.bearing_face),
+                        DatumKind::Plane,
+                    )),
+                    Some(erased(
+                        DatumEndpoint::new(nut.instance, nut.outer_face),
+                        DatumKind::Plane,
+                    )),
+                    first_washer.map(|washer| {
+                        erased(
+                            DatumEndpoint::new(washer.instance, washer.axis),
+                            DatumKind::Axis,
+                        )
+                    }),
+                    first_washer.map(|washer| {
+                        erased(
+                            DatumEndpoint::new(washer.instance, washer.member_face),
+                            DatumKind::Plane,
+                        )
+                    }),
+                    first_washer.map(|washer| {
+                        erased(
+                            DatumEndpoint::new(washer.instance, washer.hardware_face),
+                            DatumKind::Plane,
+                        )
+                    }),
+                    second_washer.map(|washer| {
+                        erased(
+                            DatumEndpoint::new(washer.instance, washer.axis),
+                            DatumKind::Axis,
+                        )
+                    }),
+                    second_washer.map(|washer| {
+                        erased(
+                            DatumEndpoint::new(washer.instance, washer.member_face),
+                            DatumKind::Plane,
+                        )
+                    }),
+                    second_washer.map(|washer| {
+                        erased(
+                            DatumEndpoint::new(washer.instance, washer.hardware_face),
+                            DatumKind::Plane,
+                        )
+                    }),
+                ]
+            }
             Self::CylindricalFit(fit) => [
                 Some(erased(fit.shaft, DatumKind::Cylinder)),
                 Some(erased(fit.bore, DatumKind::Cylinder)),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
                 None,
                 None,
             ],
@@ -172,6 +296,18 @@ impl AssemblyRelation {
                 Some(erased(mesh.second_axis, DatumKind::Axis)),
                 Some(erased(mesh.first_mid_plane, DatumKind::Plane)),
                 Some(erased(mesh.second_mid_plane, DatumKind::Plane)),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
             ],
         }
     }
@@ -185,15 +321,15 @@ impl AssemblyRelation {
         }
     }
 
-    pub(crate) const fn participant_instances(self) -> [Option<ComponentInstanceId>; 6] {
+    pub(crate) fn participant_instances(self) -> [Option<ComponentInstanceId>; 6] {
         match self {
             Self::Fastened(joint) => [
                 Some(joint.first_hole.instance),
                 Some(joint.second_hole.instance),
-                Some(joint.hardware.bolt),
-                Some(joint.hardware.nut),
-                joint.hardware.first_washer,
-                joint.hardware.second_washer,
+                Some(joint.hardware.bolt.instance),
+                Some(joint.hardware.nut.instance),
+                joint.hardware.first_washer.map(|washer| washer.instance),
+                joint.hardware.second_washer.map(|washer| washer.instance),
             ],
             _ => {
                 let [first, second] = self.instance_pair();

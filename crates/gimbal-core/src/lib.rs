@@ -46,9 +46,9 @@ pub use prototype::{
     PrototypeParameters, RollAxisParameters, build_prototype,
 };
 pub use relation::{
-    AssemblyRelation, AssemblyRelationId, CylindricalFit, DatumEndpoint, EngineeringTolerance,
-    FastenedJoint, FastenerHardware, GearMesh, GearMeshKind, MetricThread, NumericalTolerance,
-    SurfaceContact,
+    AssemblyRelation, AssemblyRelationId, BoltHardware, CylindricalFit, DatumEndpoint,
+    EngineeringTolerance, FastenedJoint, FastenerHardware, GearMesh, GearMeshKind, MetricThread,
+    NumericalTolerance, NutHardware, SurfaceContact, WasherHardware,
 };
 pub use units::{
     Angle, Length, NonNegativeAngle, NonNegativeLength, PositiveAngle, PositiveArea,

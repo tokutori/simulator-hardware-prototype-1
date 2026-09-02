@@ -561,6 +561,62 @@ fn validation_report_json(design: &PrototypeDesign, report: &ValidationReport) -
                         "allowed_mm": allowed_mm
                     }),
                 ),
+                ValidationIssueKind::FastenerHardwareAxisSeparation {
+                    hardware,
+                    distance_mm,
+                    allowed_mm,
+                } => (
+                    "fastener_hardware_axis_separation",
+                    json!({
+                        "hardware_instance_id": hardware.index(),
+                        "distance_mm": distance_mm,
+                        "allowed_mm": allowed_mm
+                    }),
+                ),
+                ValidationIssueKind::FastenerHardwareAxisMismatch {
+                    hardware,
+                    error_radians,
+                    allowed_radians,
+                } => (
+                    "fastener_hardware_axis_mismatch",
+                    json!({
+                        "hardware_instance_id": hardware.index(),
+                        "error_radians": error_radians,
+                        "allowed_radians": allowed_radians
+                    }),
+                ),
+                ValidationIssueKind::FastenerHardwareContactMismatch {
+                    first,
+                    second,
+                    separation_mm,
+                    normal_error_radians,
+                    allowed_mm,
+                    allowed_radians,
+                } => (
+                    "fastener_hardware_contact_mismatch",
+                    json!({
+                        "first_instance_id": first.index(),
+                        "second_instance_id": second.index(),
+                        "separation_mm": separation_mm,
+                        "normal_error_radians": normal_error_radians,
+                        "allowed_mm": allowed_mm,
+                        "allowed_radians": allowed_radians
+                    }),
+                ),
+                ValidationIssueKind::FastenerThreadEngagementInsufficient {
+                    actual_mm,
+                    minimum_mm,
+                } => (
+                    "fastener_thread_engagement_insufficient",
+                    json!({ "actual_mm": actual_mm, "minimum_mm": minimum_mm }),
+                ),
+                ValidationIssueKind::FastenerBoltProtrusionInsufficient {
+                    actual_mm,
+                    minimum_mm,
+                } => (
+                    "fastener_bolt_protrusion_insufficient",
+                    json!({ "actual_mm": actual_mm, "minimum_mm": minimum_mm }),
+                ),
                 ValidationIssueKind::UnspecifiedProximity {
                     gap_mm,
                     threshold_mm,
@@ -749,6 +805,22 @@ mod tests {
     fn load_design() -> PrototypeDesign {
         let loaded = load_configuration();
         build_prototype(&loaded.parameters).expect("repository design must be valid")
+    }
+
+    fn is_fastener_validation_issue(kind: ValidationIssueKind) -> bool {
+        matches!(
+            kind,
+            ValidationIssueKind::FastenerHoleAxisSeparation { .. }
+                | ValidationIssueKind::FastenerHoleAxisMismatch { .. }
+                | ValidationIssueKind::FastenerHoleRadiusMismatch { .. }
+                | ValidationIssueKind::FastenerSeatNormalMismatch { .. }
+                | ValidationIssueKind::FastenerGripLengthMismatch { .. }
+                | ValidationIssueKind::FastenerHardwareAxisSeparation { .. }
+                | ValidationIssueKind::FastenerHardwareAxisMismatch { .. }
+                | ValidationIssueKind::FastenerHardwareContactMismatch { .. }
+                | ValidationIssueKind::FastenerThreadEngagementInsufficient { .. }
+                | ValidationIssueKind::FastenerBoltProtrusionInsufficient { .. }
+        )
     }
 
     fn command(pitch: f64, roll: f64) -> PitchRollCommand {
@@ -1186,15 +1258,16 @@ mod tests {
         let report = validate_assembly(&design, ValidationScope::StructuralFast)
             .expect("fast assembly validation succeeds");
         assert!(
-            report.issues.iter().all(|issue| !matches!(
-                issue.kind,
-                ValidationIssueKind::FastenerHoleAxisSeparation { .. }
-                    | ValidationIssueKind::FastenerHoleAxisMismatch { .. }
-                    | ValidationIssueKind::FastenerHoleRadiusMismatch { .. }
-                    | ValidationIssueKind::FastenerSeatNormalMismatch { .. }
-                    | ValidationIssueKind::FastenerGripLengthMismatch { .. }
-            )),
-            "all sector/post fastener datums must satisfy the typed M3 relation"
+            report
+                .issues
+                .iter()
+                .all(|issue| !is_fastener_validation_issue(issue.kind)),
+            "all M3 member and hardware datums must satisfy the typed relation: {:#?}",
+            report
+                .issues
+                .iter()
+                .filter(|issue| is_fastener_validation_issue(issue.kind))
+                .collect::<Vec<_>>()
         );
 
         let mut evaluator = Evaluator::new(&design.graph);
@@ -1202,10 +1275,18 @@ mod tests {
             let participants = [
                 joint.first_hole.instance,
                 joint.second_hole.instance,
-                joint.hardware.bolt,
-                joint.hardware.nut,
-                joint.hardware.first_washer.expect("head washer exists"),
-                joint.hardware.second_washer.expect("nut washer exists"),
+                joint.hardware.bolt.instance,
+                joint.hardware.nut.instance,
+                joint
+                    .hardware
+                    .first_washer
+                    .expect("head washer exists")
+                    .instance,
+                joint
+                    .hardware
+                    .second_washer
+                    .expect("nut washer exists")
+                    .instance,
             ];
             for first_index in 0..participants.len() {
                 for second_index in first_index + 1..participants.len() {
@@ -1292,15 +1373,38 @@ mod tests {
         assert_eq!(count_role(&design, ComponentRole::M3Nut), 20);
         assert_eq!(count_role(&design, ComponentRole::M3Washer), 40);
 
+        let report = validate_assembly(&design, ValidationScope::StructuralFast)
+            .expect("fast assembly validation succeeds");
+        assert!(
+            report
+                .issues
+                .iter()
+                .all(|issue| !is_fastener_validation_issue(issue.kind)),
+            "pitch gearbox hardware placement must satisfy the typed M3 relation: {:#?}",
+            report
+                .issues
+                .iter()
+                .filter(|issue| is_fastener_validation_issue(issue.kind))
+                .collect::<Vec<_>>()
+        );
+
         let mut evaluator = Evaluator::new(&design.graph);
         for joint in joints {
             let participants = [
                 joint.first_hole.instance,
                 joint.second_hole.instance,
-                joint.hardware.bolt,
-                joint.hardware.nut,
-                joint.hardware.first_washer.expect("head washer exists"),
-                joint.hardware.second_washer.expect("nut washer exists"),
+                joint.hardware.bolt.instance,
+                joint.hardware.nut.instance,
+                joint
+                    .hardware
+                    .first_washer
+                    .expect("head washer exists")
+                    .instance,
+                joint
+                    .hardware
+                    .second_washer
+                    .expect("nut washer exists")
+                    .instance,
             ];
             for first_index in 0..participants.len() {
                 for second_index in first_index + 1..participants.len() {

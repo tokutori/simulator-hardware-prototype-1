@@ -389,10 +389,16 @@ impl Assembly {
         }
         if let AssemblyRelation::Fastened(joint) = relation {
             for (participant, expected) in [
-                (Some(joint.hardware.bolt), ComponentRole::M3Bolt),
-                (Some(joint.hardware.nut), ComponentRole::M3Nut),
-                (joint.hardware.first_washer, ComponentRole::M3Washer),
-                (joint.hardware.second_washer, ComponentRole::M3Washer),
+                (Some(joint.hardware.bolt.instance), ComponentRole::M3Bolt),
+                (Some(joint.hardware.nut.instance), ComponentRole::M3Nut),
+                (
+                    joint.hardware.first_washer.map(|washer| washer.instance),
+                    ComponentRole::M3Washer,
+                ),
+                (
+                    joint.hardware.second_washer.map(|washer| washer.instance),
+                    ComponentRole::M3Washer,
+                ),
             ] {
                 let Some(participant) = participant else {
                     continue;
@@ -639,14 +645,15 @@ fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
 
 #[cfg(test)]
 mod tests {
+    use alloc::format;
     use alloc::string::ToString;
 
     use super::*;
     use crate::{
-        AxisDatum, CylinderDatum, DatumEndpoint, EngineeringTolerance, FastenedJoint,
+        AxisDatum, BoltHardware, CylinderDatum, DatumEndpoint, EngineeringTolerance, FastenedJoint,
         FastenerHardware, FeatureBuilder, Manufacturing, MetricThread, NonNegativeAngle,
-        NonNegativeLength, PlaneDatum, Point3, PositiveArea, PositiveLength, Primitive3,
-        SurfaceContact, UnitVector3,
+        NonNegativeLength, NutHardware, PlaneDatum, Point3, PositiveArea, PositiveLength,
+        Primitive3, SurfaceContact, UnitVector3,
     };
 
     #[test]
@@ -880,27 +887,49 @@ mod tests {
             local_pose: RigidTransform::translated(0.0, 0.0, 3.0),
             location: ComponentLocation::default(),
         });
-        let mut add_hardware = |name: &str, role| {
+        let add_hardware = |assembly: &mut Assembly, name: &str, role| {
+            let owner = assembly.next_definition_id();
+            let mut datums = DatumSet::for_definition(owner);
+            let axis_id = datums.add(name.to_string(), axis);
+            let negative_face = datums.add(
+                format!("{name}_negative_face"),
+                PlaneDatum {
+                    origin,
+                    normal: UnitVector3::new([-1.0, 0.0, 0.0]).expect("valid normal"),
+                },
+            );
+            let positive_face = datums.add(
+                format!("{name}_positive_face"),
+                PlaneDatum {
+                    origin,
+                    normal: UnitVector3::new([1.0, 0.0, 0.0]).expect("valid normal"),
+                },
+            );
             let definition = assembly.add_definition(ComponentDefinition {
                 name: name.to_string(),
                 role,
                 body: Body::Solid(solid),
                 manufacturing: Manufacturing::Purchased,
                 color_rgba: [1.0; 4],
-                datums: DatumSet::new(),
+                datums,
             });
-            assembly.add_instance(ComponentInstance {
+            let instance = assembly.add_instance(ComponentInstance {
                 name: name.to_string(),
                 definition,
                 frame: FrameGraph::new().world(),
                 local_pose: RigidTransform::IDENTITY,
                 location: ComponentLocation::default(),
-            })
+            });
+            (instance, axis_id, negative_face, positive_face)
         };
-        let bolt = add_hardware("m3_bolt", ComponentRole::M3Bolt);
-        let nut = add_hardware("m3_nut", ComponentRole::M3Nut);
-        let wrong_nut = add_hardware("wrong_nut", ComponentRole::M3Bolt);
-        let third = add_hardware("unrelated_seat", ComponentRole::M3Washer);
+        let (bolt, bolt_axis, bolt_under_head, bolt_tip) =
+            add_hardware(&mut assembly, "m3_bolt", ComponentRole::M3Bolt);
+        let (nut, nut_axis, nut_bearing, nut_outer) =
+            add_hardware(&mut assembly, "m3_nut", ComponentRole::M3Nut);
+        let (wrong_nut, wrong_nut_axis, wrong_nut_bearing, wrong_nut_outer) =
+            add_hardware(&mut assembly, "wrong_nut", ComponentRole::M3Bolt);
+        let (third, _, _, _) =
+            add_hardware(&mut assembly, "unrelated_seat", ComponentRole::M3Washer);
         let tolerance = EngineeringTolerance {
             linear: NonNegativeLength::mm(0.05).expect("non-negative tolerance"),
             angular: NonNegativeAngle::degrees(0.2).expect("non-negative tolerance"),
@@ -911,8 +940,18 @@ mod tests {
             head_seat: DatumEndpoint::new(first, seat),
             nut_seat: DatumEndpoint::new(second, seat),
             hardware: FastenerHardware {
-                bolt,
-                nut,
+                bolt: BoltHardware {
+                    instance: bolt,
+                    axis: bolt_axis,
+                    under_head_face: bolt_under_head,
+                    shank_tip_face: bolt_tip,
+                },
+                nut: NutHardware {
+                    instance: nut,
+                    axis: nut_axis,
+                    bearing_face: nut_bearing,
+                    outer_face: nut_outer,
+                },
                 first_washer: None,
                 second_washer: None,
             },
@@ -940,13 +979,23 @@ mod tests {
             }) if actual_seat == third && actual_first == first && actual_second == second
         ));
         let mut aliased = joint;
-        aliased.hardware.nut = bolt;
+        aliased.hardware.nut = NutHardware {
+            instance: bolt,
+            axis: bolt_axis,
+            bearing_face: bolt_under_head,
+            outer_face: bolt_tip,
+        };
         assert_eq!(
             assembly.add_relation(AssemblyRelation::Fastened(aliased)),
             Err(AssemblyError::DuplicateRelationParticipant(bolt))
         );
         let mut wrong_role = joint;
-        wrong_role.hardware.nut = wrong_nut;
+        wrong_role.hardware.nut = NutHardware {
+            instance: wrong_nut,
+            axis: wrong_nut_axis,
+            bearing_face: wrong_nut_bearing,
+            outer_face: wrong_nut_outer,
+        };
         assert_eq!(
             assembly.add_relation(AssemblyRelation::Fastened(wrong_role)),
             Err(AssemblyError::RelationParticipantRoleMismatch {

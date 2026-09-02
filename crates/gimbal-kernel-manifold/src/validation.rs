@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 use gimbal_core::{
-    Assembly, AssemblyPose, AssemblyRelation, AssemblyRelationId, ComponentDefinitionId,
+    Assembly, AssemblyPose, AssemblyRelation, AssemblyRelationId, AxisDatum, ComponentDefinitionId,
     ComponentIdentity, ComponentInstanceId, ComponentInstancePair, ComponentRole, CylinderDatum,
     DatumEndpoint, FeatureGraph, NonNegativeLength, NumericalTolerance, PlaneDatum,
 };
@@ -86,6 +86,32 @@ pub enum ValidationIssueKind {
         actual_mm: f64,
         expected_mm: f64,
         allowed_mm: f64,
+    },
+    FastenerHardwareAxisSeparation {
+        hardware: ComponentInstanceId,
+        distance_mm: f64,
+        allowed_mm: f64,
+    },
+    FastenerHardwareAxisMismatch {
+        hardware: ComponentInstanceId,
+        error_radians: f64,
+        allowed_radians: f64,
+    },
+    FastenerHardwareContactMismatch {
+        first: ComponentInstanceId,
+        second: ComponentInstanceId,
+        separation_mm: f64,
+        normal_error_radians: f64,
+        allowed_mm: f64,
+        allowed_radians: f64,
+    },
+    FastenerThreadEngagementInsufficient {
+        actual_mm: f64,
+        minimum_mm: f64,
+    },
+    FastenerBoltProtrusionInsufficient {
+        actual_mm: f64,
+        minimum_mm: f64,
     },
     UnspecifiedProximity {
         gap_mm: f64,
@@ -666,6 +692,224 @@ impl<'a> AssemblyValidator<'a> {
                     },
                 });
             }
+
+            let bolt = joint.hardware.bolt;
+            let nut = joint.hardware.nut;
+            let bolt_axis = world_axis(
+                DatumEndpoint::new(bolt.instance, bolt.axis),
+                self.assembly,
+                instances,
+            );
+            let nut_axis = world_axis(
+                DatumEndpoint::new(nut.instance, nut.axis),
+                self.assembly,
+                instances,
+            );
+            let mut validate_hardware_axis = |hardware: ComponentInstanceId, axis: WorldAxis| {
+                let delta = subtract(axis.origin, first_hole.origin);
+                let distance_mm = magnitude(cross(delta, first_hole.direction));
+                if distance_mm > allowed_mm {
+                    issues.push(ValidationIssue {
+                        severity: ValidationSeverity::Error,
+                        pair: Some(pair),
+                        relation: Some(relation_id),
+                        kind: ValidationIssueKind::FastenerHardwareAxisSeparation {
+                            hardware,
+                            distance_mm,
+                            allowed_mm,
+                        },
+                    });
+                }
+                let error_radians = dot(axis.direction, first_hole.direction)
+                    .abs()
+                    .clamp(-1.0, 1.0)
+                    .acos();
+                if error_radians > allowed_radians {
+                    issues.push(ValidationIssue {
+                        severity: ValidationSeverity::Error,
+                        pair: Some(pair),
+                        relation: Some(relation_id),
+                        kind: ValidationIssueKind::FastenerHardwareAxisMismatch {
+                            hardware,
+                            error_radians,
+                            allowed_radians,
+                        },
+                    });
+                }
+            };
+            validate_hardware_axis(bolt.instance, bolt_axis);
+            validate_hardware_axis(nut.instance, nut_axis);
+            for washer in [joint.hardware.first_washer, joint.hardware.second_washer]
+                .into_iter()
+                .flatten()
+            {
+                validate_hardware_axis(
+                    washer.instance,
+                    world_axis(
+                        DatumEndpoint::new(washer.instance, washer.axis),
+                        self.assembly,
+                        instances,
+                    ),
+                );
+            }
+
+            let bolt_under_head = world_plane(
+                DatumEndpoint::new(bolt.instance, bolt.under_head_face),
+                self.assembly,
+                instances,
+            );
+            let bolt_tip = world_plane(
+                DatumEndpoint::new(bolt.instance, bolt.shank_tip_face),
+                self.assembly,
+                instances,
+            );
+            let nut_bearing = world_plane(
+                DatumEndpoint::new(nut.instance, nut.bearing_face),
+                self.assembly,
+                instances,
+            );
+            let nut_outer = world_plane(
+                DatumEndpoint::new(nut.instance, nut.outer_face),
+                self.assembly,
+                instances,
+            );
+            let mut validate_hardware_contact =
+                |first_instance: ComponentInstanceId,
+                 first: WorldPlane,
+                 second_instance: ComponentInstanceId,
+                 second: WorldPlane| {
+                    let separation_mm = magnitude(subtract(second.origin, first.origin));
+                    let normal_error_radians =
+                        (-dot(first.normal, second.normal)).clamp(-1.0, 1.0).acos();
+                    if separation_mm > allowed_mm || normal_error_radians > allowed_radians {
+                        issues.push(ValidationIssue {
+                            severity: ValidationSeverity::Error,
+                            pair: Some(pair),
+                            relation: Some(relation_id),
+                            kind: ValidationIssueKind::FastenerHardwareContactMismatch {
+                                first: first_instance,
+                                second: second_instance,
+                                separation_mm,
+                                normal_error_radians,
+                                allowed_mm,
+                                allowed_radians,
+                            },
+                        });
+                    }
+                };
+
+            if let Some(washer) = joint.hardware.first_washer {
+                let member_face = world_plane(
+                    DatumEndpoint::new(washer.instance, washer.member_face),
+                    self.assembly,
+                    instances,
+                );
+                let hardware_face = world_plane(
+                    DatumEndpoint::new(washer.instance, washer.hardware_face),
+                    self.assembly,
+                    instances,
+                );
+                validate_hardware_contact(
+                    joint.head_seat.instance,
+                    first_seat,
+                    washer.instance,
+                    member_face,
+                );
+                validate_hardware_contact(
+                    washer.instance,
+                    hardware_face,
+                    bolt.instance,
+                    bolt_under_head,
+                );
+            } else {
+                validate_hardware_contact(
+                    joint.head_seat.instance,
+                    first_seat,
+                    bolt.instance,
+                    bolt_under_head,
+                );
+            }
+            if let Some(washer) = joint.hardware.second_washer {
+                let member_face = world_plane(
+                    DatumEndpoint::new(washer.instance, washer.member_face),
+                    self.assembly,
+                    instances,
+                );
+                let hardware_face = world_plane(
+                    DatumEndpoint::new(washer.instance, washer.hardware_face),
+                    self.assembly,
+                    instances,
+                );
+                validate_hardware_contact(
+                    joint.nut_seat.instance,
+                    second_seat,
+                    washer.instance,
+                    member_face,
+                );
+                validate_hardware_contact(
+                    washer.instance,
+                    hardware_face,
+                    nut.instance,
+                    nut_bearing,
+                );
+            } else {
+                validate_hardware_contact(
+                    joint.nut_seat.instance,
+                    second_seat,
+                    nut.instance,
+                    nut_bearing,
+                );
+            }
+
+            let seat_delta = subtract(second_seat.origin, first_seat.origin);
+            let travel_sign = if dot(seat_delta, first_hole.direction) >= 0.0 {
+                1.0
+            } else {
+                -1.0
+            };
+            let travel_direction = [
+                first_hole.direction[0] * travel_sign,
+                first_hole.direction[1] * travel_sign,
+                first_hole.direction[2] * travel_sign,
+            ];
+            let thread_engagement_mm = dot(
+                subtract(nut_outer.origin, nut_bearing.origin),
+                travel_direction,
+            )
+            .abs();
+            let minimum_engagement_mm = joint.thread.minimum_full_thread_engagement_mm();
+            if thread_engagement_mm + allowed_mm < minimum_engagement_mm {
+                issues.push(ValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    pair: Some(pair),
+                    relation: Some(relation_id),
+                    kind: ValidationIssueKind::FastenerThreadEngagementInsufficient {
+                        actual_mm: thread_engagement_mm,
+                        minimum_mm: minimum_engagement_mm,
+                    },
+                });
+            }
+            let bolt_reach_mm = dot(
+                subtract(bolt_tip.origin, bolt_under_head.origin),
+                travel_direction,
+            );
+            let nut_outer_distance_mm = dot(
+                subtract(nut_outer.origin, bolt_under_head.origin),
+                travel_direction,
+            );
+            let protrusion_mm = bolt_reach_mm - nut_outer_distance_mm;
+            let minimum_protrusion_mm = joint.thread.nominal_pitch_mm();
+            if protrusion_mm + allowed_mm < minimum_protrusion_mm {
+                issues.push(ValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    pair: Some(pair),
+                    relation: Some(relation_id),
+                    kind: ValidationIssueKind::FastenerBoltProtrusionInsufficient {
+                        actual_mm: protrusion_mm,
+                        minimum_mm: minimum_protrusion_mm,
+                    },
+                });
+            }
         }
         skipped
     }
@@ -688,6 +932,37 @@ struct WorldCylinder {
     origin: [f64; 3],
     direction: [f64; 3],
     radius_mm: f64,
+}
+
+#[derive(Clone, Copy)]
+struct WorldAxis {
+    origin: [f64; 3],
+    direction: [f64; 3],
+}
+
+fn world_axis(
+    endpoint: DatumEndpoint<AxisDatum>,
+    assembly: &Assembly,
+    instances: &[Option<InstanceGeometry>],
+) -> WorldAxis {
+    let instance = assembly
+        .instance(endpoint.instance)
+        .expect("relation endpoint was validated when inserted");
+    let definition = assembly
+        .definition(instance.definition)
+        .expect("inserted instance references a definition");
+    let axis = definition
+        .datums
+        .get(endpoint.datum)
+        .expect("relation datum kind was validated when inserted");
+    let pose = instances[endpoint.instance.index()]
+        .as_ref()
+        .expect("fastener hardware endpoint is included in this validation scope")
+        .world_pose;
+    WorldAxis {
+        origin: pose.transform_point(axis.origin.coordinates_mm()),
+        direction: pose.transform_vector(axis.direction.components()),
+    }
 }
 
 fn world_cylinder(
@@ -873,12 +1148,12 @@ impl Aabb3 {
 #[cfg(test)]
 mod tests {
     use gimbal_core::{
-        Angle, AssemblyRelation, AxisDatum, Body, ComponentDefinition, ComponentInstance,
-        ComponentLocation, ComponentRole, CylinderDatum, DatumEndpoint, DatumSet,
-        EngineeringTolerance, FastenedJoint, FastenerHardware, FeatureBuilder, FrameGraph,
-        Kinematics, Manufacturing, MetricThread, NonNegativeAngle, NonNegativeLength,
-        PitchRollCommand, PlaneDatum, Point3, PositiveArea, PositiveLength, PositiveVolume,
-        Primitive3, RigidTransform, SurfaceContact, UnitVector3,
+        Angle, AssemblyRelation, AxisDatum, Body, BoltHardware, ComponentDefinition,
+        ComponentInstance, ComponentLocation, ComponentRole, CylinderDatum, DatumEndpoint,
+        DatumSet, EngineeringTolerance, FastenedJoint, FastenerHardware, FeatureBuilder,
+        FrameGraph, Kinematics, Manufacturing, MetricThread, NonNegativeAngle, NonNegativeLength,
+        NutHardware, PitchRollCommand, PlaneDatum, Point3, PositiveArea, PositiveLength,
+        PositiveVolume, Primitive3, RigidTransform, SurfaceContact, UnitVector3,
     };
 
     use super::*;
@@ -1107,6 +1382,16 @@ mod tests {
             z: gimbal_core::Length::positive_mm(1.0).expect("positive length"),
             centered: true,
         });
+        let hardware = builder
+            .translate(
+                hardware,
+                gimbal_core::Translation3 {
+                    x: 20.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+            )
+            .expect("hardware fixture translation");
         let graph = builder.finish();
         let frames = FrameGraph::new();
         let world = frames.world();
@@ -1121,7 +1406,10 @@ mod tests {
         })
         .expect("zero pose");
 
-        let report_for_offset = |second_x: f64, second_radius: f64| {
+        let report_for_offset = |second_x: f64,
+                                 second_radius: f64,
+                                 hardware_x: f64,
+                                 bolt_tip_z: f64| {
             let member_datums = |owner, seat_z: f64, seat_normal: [f64; 3], radius: f64| {
                 let mut datums = DatumSet::for_definition(owner);
                 let hole = datums.add(
@@ -1182,25 +1470,74 @@ mod tests {
                 local_pose: RigidTransform::translated(second_x, 0.0, 1.0),
                 location: ComponentLocation::new(),
             });
-            let mut add_hardware = |name: &str, role, x: f64| {
+            let add_hardware = |assembly: &mut Assembly,
+                                name: &str,
+                                role,
+                                z: f64,
+                                first_face_z: f64,
+                                first_face_normal: [f64; 3],
+                                second_face_z: f64,
+                                second_face_normal: [f64; 3]| {
+                let owner = assembly.next_definition_id();
+                let mut datums = DatumSet::for_definition(owner);
+                let axis = datums.add(
+                    format!("{name}_axis"),
+                    AxisDatum {
+                        origin: Point3::from_mm([0.0; 3]).expect("finite point"),
+                        direction: UnitVector3::new([0.0, 0.0, 1.0]).expect("valid direction"),
+                    },
+                );
+                let first_face = datums.add(
+                    format!("{name}_first_face"),
+                    PlaneDatum {
+                        origin: Point3::from_mm([0.0, 0.0, first_face_z]).expect("finite point"),
+                        normal: UnitVector3::new(first_face_normal).expect("valid normal"),
+                    },
+                );
+                let second_face = datums.add(
+                    format!("{name}_second_face"),
+                    PlaneDatum {
+                        origin: Point3::from_mm([0.0, 0.0, second_face_z]).expect("finite point"),
+                        normal: UnitVector3::new(second_face_normal).expect("valid normal"),
+                    },
+                );
                 let definition = assembly.add_definition(ComponentDefinition {
                     name: name.into(),
                     role,
                     body: Body::Solid(hardware),
                     manufacturing: Manufacturing::Purchased,
                     color_rgba: [1.0; 4],
-                    datums: DatumSet::new(),
+                    datums,
                 });
-                assembly.add_instance(ComponentInstance {
+                let instance = assembly.add_instance(ComponentInstance {
                     name: name.into(),
                     definition,
                     frame: world,
-                    local_pose: RigidTransform::translated(x, 0.0, 0.0),
+                    local_pose: RigidTransform::translated(hardware_x, 0.0, z),
                     location: ComponentLocation::new(),
-                })
+                });
+                (instance, axis, first_face, second_face)
             };
-            let bolt = add_hardware("m3_bolt", ComponentRole::M3Bolt, 20.0);
-            let nut = add_hardware("m3_nut", ComponentRole::M3Nut, 22.0);
+            let (bolt, bolt_axis, bolt_under_head, bolt_tip) = add_hardware(
+                &mut assembly,
+                "m3_bolt",
+                ComponentRole::M3Bolt,
+                -2.0,
+                0.0,
+                [0.0, 0.0, 1.0],
+                bolt_tip_z,
+                [0.0, 0.0, 1.0],
+            );
+            let (nut, nut_axis, nut_bearing, nut_outer) = add_hardware(
+                &mut assembly,
+                "m3_nut",
+                ComponentRole::M3Nut,
+                3.2,
+                -1.2,
+                [0.0, 0.0, -1.0],
+                1.2,
+                [0.0, 0.0, 1.0],
+            );
             assembly
                 .add_relation(AssemblyRelation::Fastened(FastenedJoint {
                     first_hole: DatumEndpoint::new(first, first_hole),
@@ -1208,8 +1545,18 @@ mod tests {
                     head_seat: DatumEndpoint::new(first, first_seat),
                     nut_seat: DatumEndpoint::new(second, second_seat),
                     hardware: FastenerHardware {
-                        bolt,
-                        nut,
+                        bolt: BoltHardware {
+                            instance: bolt,
+                            axis: bolt_axis,
+                            under_head_face: bolt_under_head,
+                            shank_tip_face: bolt_tip,
+                        },
+                        nut: NutHardware {
+                            instance: nut,
+                            axis: nut_axis,
+                            bearing_face: nut_bearing,
+                            outer_face: nut_outer,
+                        },
                         first_washer: None,
                         second_washer: None,
                     },
@@ -1228,14 +1575,15 @@ mod tests {
                 .expect("validation query succeeds")
         };
 
-        assert!(report_for_offset(0.0, 1.7).is_valid());
-        let axis_error = report_for_offset(0.2, 1.7);
+        let valid = report_for_offset(0.0, 1.7, 0.0, 8.0);
+        assert!(valid.is_valid(), "{valid:#?}");
+        let axis_error = report_for_offset(0.2, 1.7, 0.0, 8.0);
         assert!(axis_error.issues.iter().any(|issue| matches!(
             issue.kind,
             ValidationIssueKind::FastenerHoleAxisSeparation { distance_mm, .. }
                 if (distance_mm - 0.2).abs() < 1.0e-8
         )));
-        let radius_error = report_for_offset(0.0, 1.9);
+        let radius_error = report_for_offset(0.0, 1.9, 0.0, 8.0);
         assert!(radius_error.issues.iter().any(|issue| matches!(
             issue.kind,
             ValidationIssueKind::FastenerHoleRadiusMismatch {
@@ -1244,6 +1592,18 @@ mod tests {
                 ..
             } if (second_radius_mm - 1.9).abs() < 1.0e-8
                 && (expected_radius_mm - 1.7).abs() < 1.0e-8
+        )));
+        let hardware_axis_error = report_for_offset(0.0, 1.7, 0.2, 8.0);
+        assert!(hardware_axis_error.issues.iter().any(|issue| matches!(
+            issue.kind,
+            ValidationIssueKind::FastenerHardwareAxisSeparation { distance_mm, .. }
+                if (distance_mm - 0.2).abs() < 1.0e-8
+        )));
+        let short_bolt = report_for_offset(0.0, 1.7, 0.0, 6.0);
+        assert!(short_bolt.issues.iter().any(|issue| matches!(
+            issue.kind,
+            ValidationIssueKind::FastenerBoltProtrusionInsufficient { actual_mm, .. }
+                if (actual_mm + 0.4).abs() < 1.0e-8
         )));
     }
 

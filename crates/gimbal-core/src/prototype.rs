@@ -7,15 +7,15 @@ use alloc::vec::Vec;
 use core::f64::consts::{FRAC_PI_2, PI};
 
 use crate::{
-    Angle, Assembly, AssemblyError, AssemblyRelation, Axis3, AxisDatum, Body, BooleanOperation,
-    ComponentDefinition, ComponentDefinitionId, ComponentIdentity, ComponentInstance,
-    ComponentInstanceId, ComponentLocation, ComponentRole, CoordinateExpr, CylinderDatum,
-    DatumEndpoint, DatumId, DatumSet, EngineeringTolerance, ExternalGearPair, FastenedJoint,
-    FastenerHardware, FeatureBuilder, FeatureError, FeatureGraph, FrameGraph, FrameId, GearSector,
-    InternalGearPair, Joint, Kinematics, Length, LongitudinalEnd, Manufacturing, MetricThread,
-    NonNegativeAngle, NonNegativeLength, PlaneDatum, Point2, Point3, PositiveArea, PositiveLength,
-    Primitive3, RigidTransform, Rotation3, Side, SolidId, SpurGear, SurfaceContact, Translation3,
-    UnitVector3, VerticalEnd,
+    Angle, Assembly, AssemblyError, AssemblyRelation, Axis3, AxisDatum, Body, BoltHardware,
+    BooleanOperation, ComponentDefinition, ComponentDefinitionId, ComponentIdentity,
+    ComponentInstance, ComponentInstanceId, ComponentLocation, ComponentRole, CoordinateExpr,
+    CylinderDatum, DatumEndpoint, DatumId, DatumSet, EngineeringTolerance, ExternalGearPair,
+    FastenedJoint, FastenerHardware, FeatureBuilder, FeatureError, FeatureGraph, FrameGraph,
+    FrameId, GearSector, InternalGearPair, Joint, Kinematics, Length, LongitudinalEnd,
+    Manufacturing, MetricThread, NonNegativeAngle, NonNegativeLength, NutHardware, PlaneDatum,
+    Point2, Point3, PositiveArea, PositiveLength, Primitive3, RigidTransform, Rotation3, Side,
+    SolidId, SpurGear, SurfaceContact, Translation3, UnitVector3, VerticalEnd, WasherHardware,
 };
 
 #[derive(Clone, Debug)]
@@ -403,6 +403,30 @@ struct PostFastenerDatums {
 }
 
 #[derive(Clone, Copy)]
+struct M3BoltDefinition {
+    definition: ComponentDefinitionId,
+    axis: DatumId<AxisDatum>,
+    under_head_face: DatumId<PlaneDatum>,
+    shank_tip_face: DatumId<PlaneDatum>,
+}
+
+#[derive(Clone, Copy)]
+struct M3NutDefinition {
+    definition: ComponentDefinitionId,
+    axis: DatumId<AxisDatum>,
+    negative_x_face: DatumId<PlaneDatum>,
+    positive_x_face: DatumId<PlaneDatum>,
+}
+
+#[derive(Clone, Copy)]
+struct M3WasherDefinition {
+    definition: ComponentDefinitionId,
+    axis: DatumId<AxisDatum>,
+    negative_x_face: DatumId<PlaneDatum>,
+    positive_x_face: DatumId<PlaneDatum>,
+}
+
+#[derive(Clone, Copy)]
 struct Definitions {
     sector: ComponentDefinitionId,
     sector_mount_face: DatumId<PlaneDatum>,
@@ -460,10 +484,10 @@ struct Definitions {
     moving_drive_mount_arm: ComponentDefinitionId,
     moving_drive_mount_arm_carrier_face: DatumId<PlaneDatum>,
     moving_drive_mount_arm_plate_face: DatumId<PlaneDatum>,
-    m3x20_bolt: ComponentDefinitionId,
-    m3x25_bolt: ComponentDefinitionId,
-    m3_nut: ComponentDefinitionId,
-    m3_washer: ComponentDefinitionId,
+    m3x20_bolt: M3BoltDefinition,
+    m3x25_bolt: M3BoltDefinition,
+    m3_nut: M3NutDefinition,
+    m3_washer: M3WasherDefinition,
 }
 
 fn build_definitions(
@@ -917,38 +941,10 @@ fn build_definitions(
         [0.34, 0.24, 0.16, 1.0],
         moving_arm_datums,
     );
-    let m3x20_bolt = add_solid_definition(
-        assembly,
-        "m3x20_pan_head_bolt",
-        ComponentRole::M3Bolt,
-        m3_pan_head_bolt_solid(builder, 20.0)?,
-        Manufacturing::Purchased,
-        [0.68, 0.71, 0.74, 1.0],
-    );
-    let m3x25_bolt = add_solid_definition(
-        assembly,
-        "m3x25_pan_head_bolt",
-        ComponentRole::M3Bolt,
-        m3_pan_head_bolt_solid(builder, 25.0)?,
-        Manufacturing::Purchased,
-        [0.68, 0.71, 0.74, 1.0],
-    );
-    let m3_nut = add_solid_definition(
-        assembly,
-        "m3_hex_nut",
-        ComponentRole::M3Nut,
-        m3_hex_nut_solid(builder)?,
-        Manufacturing::Purchased,
-        [0.60, 0.63, 0.66, 1.0],
-    );
-    let m3_washer = add_solid_definition(
-        assembly,
-        "m3_plain_washer",
-        ComponentRole::M3Washer,
-        m3_washer_solid(builder)?,
-        Manufacturing::Purchased,
-        [0.72, 0.75, 0.78, 1.0],
-    );
+    let m3x20_bolt = add_m3_bolt_definition(builder, assembly, 20.0)?;
+    let m3x25_bolt = add_m3_bolt_definition(builder, assembly, 25.0)?;
+    let m3_nut = add_m3_nut_definition(builder, assembly)?;
+    let m3_washer = add_m3_washer_definition(builder, assembly)?;
     Ok(Definitions {
         sector,
         sector_mount_face,
@@ -1382,7 +1378,7 @@ fn add_sector_post_fastener(
     let bolt = add_located_instance(
         assembly,
         &format!("{stem}_m3x20_bolt"),
-        d.m3x20_bolt,
+        d.m3x20_bolt.definition,
         frame,
         RigidTransform::translated(x, bolt_under_head_y, world_z)
             .compose(RigidTransform::rotated(Axis3::Z, hardware_rotation)),
@@ -1391,7 +1387,7 @@ fn add_sector_post_fastener(
     let nut = add_located_instance(
         assembly,
         &format!("{stem}_m3_nut"),
-        d.m3_nut,
+        d.m3_nut.definition,
         frame,
         RigidTransform::translated(x, nut_y, world_z)
             .compose(RigidTransform::rotated(Axis3::Z, hardware_rotation)),
@@ -1400,7 +1396,7 @@ fn add_sector_post_fastener(
     let first_washer = add_located_instance(
         assembly,
         &format!("{stem}_head_washer"),
-        d.m3_washer,
+        d.m3_washer.definition,
         frame,
         RigidTransform::translated(x, first_washer_y, world_z)
             .compose(RigidTransform::rotated(Axis3::Z, hardware_rotation)),
@@ -1409,7 +1405,7 @@ fn add_sector_post_fastener(
     let second_washer = add_located_instance(
         assembly,
         &format!("{stem}_nut_washer"),
-        d.m3_washer,
+        d.m3_washer.definition,
         frame,
         RigidTransform::translated(x, second_washer_y, world_z)
             .compose(RigidTransform::rotated(Axis3::Z, hardware_rotation)),
@@ -1422,10 +1418,30 @@ fn add_sector_post_fastener(
             head_seat: DatumEndpoint::new(sector, head_seat),
             nut_seat: DatumEndpoint::new(sector, nut_seat),
             hardware: FastenerHardware {
-                bolt,
-                nut,
-                first_washer: Some(first_washer),
-                second_washer: Some(second_washer),
+                bolt: BoltHardware {
+                    instance: bolt,
+                    axis: d.m3x20_bolt.axis,
+                    under_head_face: d.m3x20_bolt.under_head_face,
+                    shank_tip_face: d.m3x20_bolt.shank_tip_face,
+                },
+                nut: NutHardware {
+                    instance: nut,
+                    axis: d.m3_nut.axis,
+                    bearing_face: d.m3_nut.positive_x_face,
+                    outer_face: d.m3_nut.negative_x_face,
+                },
+                first_washer: Some(WasherHardware {
+                    instance: first_washer,
+                    axis: d.m3_washer.axis,
+                    member_face: d.m3_washer.negative_x_face,
+                    hardware_face: d.m3_washer.positive_x_face,
+                }),
+                second_washer: Some(WasherHardware {
+                    instance: second_washer,
+                    axis: d.m3_washer.axis,
+                    member_face: d.m3_washer.positive_x_face,
+                    hardware_face: d.m3_washer.negative_x_face,
+                }),
             },
             thread: MetricThread::M3,
             target_hole_radial_clearance: NonNegativeLength::mm(0.2)
@@ -1867,7 +1883,7 @@ fn add_pitch_gearbox_fastener(
     let bolt = add_located_instance(
         assembly,
         &format!("{stem}_bolt"),
-        d.m3x25_bolt,
+        d.m3x25_bolt.definition,
         frame,
         pose(bolt_under_head_y, true),
         base_location.with_ordinal(ordinal),
@@ -1875,7 +1891,7 @@ fn add_pitch_gearbox_fastener(
     let nut = add_located_instance(
         assembly,
         &format!("{stem}_nut"),
-        d.m3_nut,
+        d.m3_nut.definition,
         frame,
         pose(nut_y, true),
         base_location.with_ordinal(ordinal),
@@ -1883,7 +1899,7 @@ fn add_pitch_gearbox_fastener(
     let first_washer = add_located_instance(
         assembly,
         &format!("{stem}_head_washer"),
-        d.m3_washer,
+        d.m3_washer.definition,
         frame,
         pose(first_washer_y, true),
         base_location.with_ordinal(ordinal * 2 - 1),
@@ -1891,7 +1907,7 @@ fn add_pitch_gearbox_fastener(
     let second_washer = add_located_instance(
         assembly,
         &format!("{stem}_nut_washer"),
-        d.m3_washer,
+        d.m3_washer.definition,
         frame,
         pose(second_washer_y, true),
         base_location.with_ordinal(ordinal * 2),
@@ -1915,10 +1931,30 @@ fn add_pitch_gearbox_fastener(
             head_seat: DatumEndpoint::new(near_plate, head_seat),
             nut_seat: DatumEndpoint::new(far_plate, nut_seat),
             hardware: FastenerHardware {
-                bolt,
-                nut,
-                first_washer: Some(first_washer),
-                second_washer: Some(second_washer),
+                bolt: BoltHardware {
+                    instance: bolt,
+                    axis: d.m3x25_bolt.axis,
+                    under_head_face: d.m3x25_bolt.under_head_face,
+                    shank_tip_face: d.m3x25_bolt.shank_tip_face,
+                },
+                nut: NutHardware {
+                    instance: nut,
+                    axis: d.m3_nut.axis,
+                    bearing_face: d.m3_nut.positive_x_face,
+                    outer_face: d.m3_nut.negative_x_face,
+                },
+                first_washer: Some(WasherHardware {
+                    instance: first_washer,
+                    axis: d.m3_washer.axis,
+                    member_face: d.m3_washer.negative_x_face,
+                    hardware_face: d.m3_washer.positive_x_face,
+                }),
+                second_washer: Some(WasherHardware {
+                    instance: second_washer,
+                    axis: d.m3_washer.axis,
+                    member_face: d.m3_washer.positive_x_face,
+                    hardware_face: d.m3_washer.negative_x_face,
+                }),
             },
             thread: MetricThread::M3,
             target_hole_radial_clearance: NonNegativeLength::mm(0.2)
@@ -3397,6 +3433,43 @@ fn m3_pan_head_bolt_solid(
         .map_err(PrototypeError::Feature)
 }
 
+fn add_m3_bolt_definition(
+    builder: &mut FeatureBuilder,
+    assembly: &mut Assembly,
+    shank_length: f64,
+) -> Result<M3BoltDefinition, PrototypeError> {
+    let owner = assembly.next_definition_id();
+    let mut datums = DatumSet::for_definition(owner);
+    let axis = add_axis_datum(&mut datums, "bolt_axis", [0.0; 3], [1.0, 0.0, 0.0]);
+    let under_head_face = add_plane_datum(
+        &mut datums,
+        "under_head_bearing_face",
+        [0.0; 3],
+        [-1.0, 0.0, 0.0],
+    );
+    let shank_tip_face = add_plane_datum(
+        &mut datums,
+        "shank_tip_face",
+        [-shank_length, 0.0, 0.0],
+        [-1.0, 0.0, 0.0],
+    );
+    let definition = add_solid_definition_with_datums(
+        assembly,
+        &format!("m3x{shank_length:.0}_pan_head_bolt"),
+        ComponentRole::M3Bolt,
+        m3_pan_head_bolt_solid(builder, shank_length)?,
+        Manufacturing::Purchased,
+        [0.68, 0.71, 0.74, 1.0],
+        datums,
+    );
+    Ok(M3BoltDefinition {
+        definition,
+        axis,
+        under_head_face,
+        shank_tip_face,
+    })
+}
+
 fn m3_hex_nut_solid(builder: &mut FeatureBuilder) -> Result<SolidId, PrototypeError> {
     const THICKNESS: f64 = 2.4;
     // 3.175 mm circumradius gives approximately 5.5 mm across flats.
@@ -3407,6 +3480,43 @@ fn m3_hex_nut_solid(builder: &mut FeatureBuilder) -> Result<SolidId, PrototypeEr
         .map_err(PrototypeError::Feature)
 }
 
+fn add_m3_nut_definition(
+    builder: &mut FeatureBuilder,
+    assembly: &mut Assembly,
+) -> Result<M3NutDefinition, PrototypeError> {
+    const THICKNESS: f64 = 2.4;
+    let owner = assembly.next_definition_id();
+    let mut datums = DatumSet::for_definition(owner);
+    let axis = add_axis_datum(&mut datums, "nut_axis", [0.0; 3], [1.0, 0.0, 0.0]);
+    let negative_x_face = add_plane_datum(
+        &mut datums,
+        "negative_x_bearing_face",
+        [-THICKNESS * 0.5, 0.0, 0.0],
+        [-1.0, 0.0, 0.0],
+    );
+    let positive_x_face = add_plane_datum(
+        &mut datums,
+        "positive_x_bearing_face",
+        [THICKNESS * 0.5, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+    );
+    let definition = add_solid_definition_with_datums(
+        assembly,
+        "m3_hex_nut",
+        ComponentRole::M3Nut,
+        m3_hex_nut_solid(builder)?,
+        Manufacturing::Purchased,
+        [0.60, 0.63, 0.66, 1.0],
+        datums,
+    );
+    Ok(M3NutDefinition {
+        definition,
+        axis,
+        negative_x_face,
+        positive_x_face,
+    })
+}
+
 fn m3_washer_solid(builder: &mut FeatureBuilder) -> Result<SolidId, PrototypeError> {
     const THICKNESS: f64 = 0.5;
     let outer = cylinder_x(builder, 3.5, THICKNESS)?;
@@ -3414,6 +3524,43 @@ fn m3_washer_solid(builder: &mut FeatureBuilder) -> Result<SolidId, PrototypeErr
     builder
         .boolean(BooleanOperation::Difference, outer, bore)
         .map_err(PrototypeError::Feature)
+}
+
+fn add_m3_washer_definition(
+    builder: &mut FeatureBuilder,
+    assembly: &mut Assembly,
+) -> Result<M3WasherDefinition, PrototypeError> {
+    const THICKNESS: f64 = 0.5;
+    let owner = assembly.next_definition_id();
+    let mut datums = DatumSet::for_definition(owner);
+    let axis = add_axis_datum(&mut datums, "washer_axis", [0.0; 3], [1.0, 0.0, 0.0]);
+    let negative_x_face = add_plane_datum(
+        &mut datums,
+        "negative_x_face",
+        [-THICKNESS * 0.5, 0.0, 0.0],
+        [-1.0, 0.0, 0.0],
+    );
+    let positive_x_face = add_plane_datum(
+        &mut datums,
+        "positive_x_face",
+        [THICKNESS * 0.5, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+    );
+    let definition = add_solid_definition_with_datums(
+        assembly,
+        "m3_plain_washer",
+        ComponentRole::M3Washer,
+        m3_washer_solid(builder)?,
+        Manufacturing::Purchased,
+        [0.72, 0.75, 0.78, 1.0],
+        datums,
+    );
+    Ok(M3WasherDefinition {
+        definition,
+        axis,
+        negative_x_face,
+        positive_x_face,
+    })
 }
 
 fn sheet_box_definition_with_faces(
@@ -3538,6 +3685,21 @@ fn add_plane_datum(
         PlaneDatum {
             origin: Point3::from_mm(origin).expect("box face origin is finite"),
             normal: UnitVector3::new(normal).expect("box face normal is non-zero"),
+        },
+    )
+}
+
+fn add_axis_datum(
+    datums: &mut DatumSet,
+    name: &str,
+    origin: [f64; 3],
+    direction: [f64; 3],
+) -> DatumId<AxisDatum> {
+    datums.add(
+        name.to_string(),
+        AxisDatum {
+            origin: Point3::from_mm(origin).expect("axis origin is finite"),
+            direction: UnitVector3::new(direction).expect("axis direction is non-zero"),
         },
     )
 }
