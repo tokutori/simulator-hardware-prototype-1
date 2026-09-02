@@ -64,8 +64,8 @@ gimbal-export -> gimbal-core
 | A5 | prototypeをsubsystem別moduleへ分割しDefinitionsをgroup化 | 完了 | Phase 5前 |
 | A6 | `geared-gimbal-design` crateを追加し固有設計を移す | 進行中 | Phase 6前 |
 | A7 | generic identity、coordinateおよびmodule依存方向を整理 | 未着手 | Phase 6と並行 |
-| A8 | export/renderer境界をsemantic metadataとencoderへ変更 | 未着手 | Assembly Phase 8–9前 |
-| A9 | rustdoc、最小README、CIおよび公開前gateを同期 | 未着手 | Assembly Phase 10 |
+| A8 | export/renderer境界をsemantic metadataとencoderへ変更 | 進行中 | Assembly Phase 8–9前 |
+| A9 | rustdoc、最小README、CIおよび公開前gateを同期 | 進行中 | Assembly Phase 10 |
 
 ### A0: baselineと移行規則
 
@@ -237,4 +237,5 @@ Exit criteria:
 - A6の最初のcheckpointとして、既定prototypeのparameter、validation、geometry、definition、instance、relationおよび`build_prototype`を`no_std + alloc`の`geared-gimbal-design` crateへ移した。CLIはcomposition rootでdesign crateを選択し、`gimbal-core`は具体設計をexportしない。
 - `ComponentRole`とpitch/roll固定のcoordinate adapterはまだgeneric core側に残るため、A6は進行中とする。
 - A8の独立checkpointとして、任意fileのSHA-256計算を`gimbal-export`から`gimbal-cli::manifest`へ移した。export crateはmesh/CAD形式のserializationだけを担当し、artifact provenanceはCLI shellが担当する。
+- A9のCI checkpointをAssembly Phase 10より前倒しし、push/PRでformat、workspace check、warning-as-error Clippy、workspace test、generic coreと固有designのnative/WASM `no_std` checkを行うworkflowを追加した。依存監査は`Cargo.lock`に対してversion固定した`cargo-audit`を実行する。公開前artifact gate、rustdoc、README同期およびremote CI結果の確認が残るためA9は進行中とする。
 - glTF nodeの`extras`へrole、side、longitudinal end、vertical endおよびordinalを出力し、Blender adapterのdetail対象選択をobject名prefixからsemantic custom propertyへ移行した。撤去済み部品名がadapterに残って別物を選ぶ経路を廃止した。全233 nodeへのmetadata出力、Rust unit testおよびBlender 5.1.2によるcustom property選択・静止画8枚・動画3本の再生成を確認した。

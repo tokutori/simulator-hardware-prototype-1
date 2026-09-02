@@ -82,7 +82,7 @@ Frame / Joint       = kinematic motion
 | A-14 | Medium | side/end等を`String`で分岐している | typoを静的に排除できない | 1 |
 | A-15 | Medium | instanceの意味を名前prefixで判定するtestが多い | renameで検証が壊れる | 1, 2 |
 | A-16 | Medium | inspection用3MFと製造用出力の責務が混在する | purchased/laser/FDM部品の扱いが曖昧 | 8 |
-| A-17 | Medium | quality gateがCIで強制されていない | 公開branchで退行を防げない | 10 |
+| A-17 | Medium | 基本quality gateはCI化したが、validator artifactとrelease gateが未統合 | 検証対象SHAとartifactの一致をまだ自動保証しない | 10 |
 | A-18 | Low | laser bed dimensionがNaN/Infinityを拒否しない | 不正設定を通す | 8 |
 | A-19 | Low | 一部previewがmanifestへ含まれない | artifact追跡が不完全 | 9 |
 | A-20 | Blocker | constraint graphの閉路整合性を検証しない | 複数pinionとgearboxを個別には配置できても全体では拘束が矛盾する | 1, 6 |
@@ -507,7 +507,7 @@ Exit criteria:
 
 作業:
 
-- GitHub Actionsでformat、clippy、workspace test、`no_std`、WASMおよびdependency auditを実行する。
+- GitHub Actionsでformat、clippy、workspace test、`no_std`、WASMおよびdependency auditを実行する。基本workflowはPhase 4中に前倒し導入し、Phase 10ではrequired check化とvalidator artifact統合を完了する。
 - MIT公開とdependency licenseの互換性を検査する。
 - secrets、large files、生成物、第三者assetおよびGit履歴を監査する。
 - `validate`、`generate`、artifact再読込およびrender smokeをrelease候補commitで実行する。
@@ -648,6 +648,7 @@ Exit criteria:
 - 実keywayを持たず別solidへ食い込んでいた`RollDrivenHub`、`RollDrivenKey`および`CockpitShaftKey`の6 instance・3 definitionを撤去した。driven gearとhubを一つのFDM definition内でUnionし、前後を切断しないroll shaftのgear/hanger stationだけへD-flat、相手側へnominal 0.15 mm clearanceのD-boreを設けた。shaft、前後driven gearおよび2個のhangerの全組合せについて高精細Boolean intersection volumeが0である回帰testを追加して成功した。これは旧overlapの撤去であり、軸方向保持、typed fit relationおよび製造公差の成立を意味しないためPhase 5は未完了のままとする。
 - 上記変更後に旧`output`を全消去し、35 definition・233 instanceのpreview model、静止画8枚、`.blend`、`gimbal-motion.mp4`およびpitch/roll gearbox動画を再生成した。manifest記載20 artifactのSHA-256は全件一致し、3動画はいずれもH.264、720×540、12 fps、6秒である。static structural-proxy validationは高精細gear 10 definitionを除外した25 definitionから221件のconservative candidateを報告して失敗しており、正式加工可能とは扱わない。
 - このcheckpointでworkspace test 55件、format、warning-as-error Clippy、`gimbal-core`と`geared-gimbal-design`のnative/wasm32 `no_std` checkが成功した。
+- Phase 10を待たず、push/PRごとにformat、workspace check、warning-as-error Clippy、workspace test、両`no_std` crateのnative/WASM checkおよび`cargo-audit 0.22.2`を実行するGitHub Actions workflowを追加した。これはA-17の基本gate部分だけを前倒しするものであり、structured validator reportのartifact保存、検証対象SHAとの照合、branch protectionおよび公開前監査はPhase 10に残す。
 
 次の作業はPhase 4として、残る全instanceとdefinition内featureの存在理由監査を続け、不要形状を削除した上で、FDM前提の固定frame接合をM3通しbolt、実穴、washer/nut座面および工具空間を持つ実jointへ置換する。relation coverage reportは実装済みであり、今後追加するrelationも未対応なら`Unsupported`として正式生成を失敗させる。LaserCutの`Body::Sheet` hole表現とDXF経路は次prototype向けに維持するが、現prototypeのcustom partはFDMを前提とする。
 
