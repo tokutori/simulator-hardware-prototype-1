@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 
 use crate::config::LoadedConfig;
-use crate::manifest::{artifact_manifest, optional_artifact_paths};
+use crate::manifest::{optional_artifact_paths, staged_artifact_manifest};
+use crate::output::{prepare_staging_output, publish_staging_output};
 use crate::validate::{
-    require_valid_assembly, validate_assembly, validation_report_json, write_validation_report,
+    require_valid_assembly, validate_assembly, validation_report_json, write_validation_report_to,
 };
 use geared_gimbal_design::build_prototype;
 use gimbal_core::{Angle, Body, Manufacturing, PitchRollCommand, RegionNode, TriangleMesh};
@@ -32,13 +33,18 @@ pub(crate) fn generate(
         .map_err(|error| format!("prototype design rejected: {error:?}"))?;
     let validation_report = if mode == GenerationMode::Validated {
         let report = validate_assembly(&design, ValidationProfile::EXACT_STATIC)?;
-        write_validation_report(workspace, &design, &report)?;
-        require_valid_assembly(&report)?;
+        if let Err(error) = require_valid_assembly(&report) {
+            crate::validate::write_validation_report(workspace, &design, &report)?;
+            return Err(error);
+        }
         Some(report)
     } else {
         None
     };
-    let output = workspace.join("output");
+    let output = prepare_staging_output(workspace)?;
+    if let Some(report) = &validation_report {
+        write_validation_report_to(&output, &design, report)?;
+    }
     let model_dir = output.join("model");
     let animation_dir = output.join("animation");
     let preview_dir = output.join("preview");
@@ -208,7 +214,7 @@ pub(crate) fn generate(
             artifact_paths.push(optional);
         }
     }
-    let artifacts = artifact_manifest(workspace, &artifact_paths)?;
+    let artifacts = staged_artifact_manifest(&output, &artifact_paths)?;
     let sector = &loaded.parameters.pitch_sector.sector;
     let gearbox_stage_ratio = design.pitch_gearbox_pair.ratio();
     let pitch_distribution_ratio = loaded.parameters.pitch_gearbox.small_gear.teeth() as f64
@@ -310,11 +316,12 @@ pub(crate) fn generate(
         output.join("manifest.json"),
         serde_json::to_vec_pretty(&manifest)?,
     )?;
+    let published_output = publish_staging_output(workspace)?;
     println!(
         "generated {} component definitions and {} instances in {} ({mode:?})",
         design.assembly.definitions().len(),
         export_parts.len(),
-        output.display()
+        published_output.display()
     );
     Ok(())
 }

@@ -121,7 +121,15 @@ pub(crate) fn write_validation_report(
     report: &ValidationReport,
 ) -> Result<(), Box<dyn Error>> {
     let output = workspace.join("output");
-    fs::create_dir_all(&output)?;
+    write_validation_report_to(&output, design, report)
+}
+
+pub(crate) fn write_validation_report_to(
+    output: &Path,
+    design: &PrototypeDesign,
+    report: &ValidationReport,
+) -> Result<(), Box<dyn Error>> {
+    fs::create_dir_all(output)?;
     let bytes = serde_json::to_vec_pretty(&validation_report_json(design, report))?;
     fs::write(output.join("validation-report.json"), &bytes)?;
     let scoped_name = match report.profile.geometry {

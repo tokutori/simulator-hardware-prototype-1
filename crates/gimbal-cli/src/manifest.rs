@@ -51,6 +51,26 @@ pub(crate) fn artifact_manifest(
         .collect()
 }
 
+pub(crate) fn staged_artifact_manifest(
+    staging_output: &Path,
+    artifact_paths: &[PathBuf],
+) -> Result<Vec<Value>, Box<dyn Error>> {
+    artifact_paths
+        .iter()
+        .map(|path| {
+            let relative = path
+                .strip_prefix(staging_output)
+                .map_err(|_| "staged artifact is outside the staging output")?;
+            let logical = Path::new("output").join(relative);
+            Ok(json!({
+                "path": logical.to_string_lossy().replace('\\', "/"),
+                "bytes": fs::metadata(path)?.len(),
+                "sha256": sha256_file(path)?
+            }))
+        })
+        .collect()
+}
+
 pub(crate) fn refresh_manifest(workspace: &Path) -> Result<(), Box<dyn Error>> {
     let output = workspace.join("output");
     let manifest_path = output.join("manifest.json");
@@ -91,4 +111,33 @@ pub(crate) fn refresh_manifest(workspace: &Path) -> Result<(), Box<dyn Error>> {
     fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
     println!("refreshed {} artifact hashes", paths.len());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn staged_artifacts_are_published_under_the_logical_output_prefix() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "gimbal-manifest-staging-{}-{nonce}",
+            std::process::id()
+        ));
+        let staging = root.join(".gimbal-output-staging");
+        let artifact = staging.join("model").join("assembly.obj");
+        fs::create_dir_all(artifact.parent().unwrap()).expect("staging directory can be created");
+        fs::write(&artifact, b"mesh").expect("staged artifact can be written");
+
+        let manifest = staged_artifact_manifest(&staging, &[artifact])
+            .expect("staged artifact can be described");
+        assert_eq!(manifest[0]["path"], "output/model/assembly.obj");
+        assert_eq!(manifest[0]["bytes"], 4);
+
+        fs::remove_dir_all(root).expect("temporary directory can be removed");
+    }
 }

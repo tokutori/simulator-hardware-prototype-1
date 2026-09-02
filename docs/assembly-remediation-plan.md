@@ -664,6 +664,7 @@ Exit criteria:
 
 - 上記の「後側にcollarを置かず内輪をshaft上でfloatさせる」判断は撤回する。SKFのlocating/non-locating bearing arrangementでは、回転軸へinterference fitする内輪を両側で軸方向に固定し、非分離型軸受の反対側ringをhousing seat上で移動させる。両608内輪をそれぞれ2個のcollarでshaftへ固定し、後側外輪だけへcarrier boreのnominal 0.15 mm radial slide clearanceとoutboard stopまで1.0 mmのaxial travelを与える構成へ修正した。後側retainerはbearing zoneを1.0 mm recessした専用definitionとし、`PlaneClearance` relationで外輪端面とstopの距離、法線および投影重なり面積を検証する。前側外輪は従来どおりshoulder/retainerで位置決めする。この訂正により、inner ringが回転shaft上で摺動・frettingする誤った荷重経路を除いた。
 - 軸受配置訂正後、workspace 61 tests、warning-as-error Clippy、generic coreと固有designのnative/WASM `no_std` checkが成功した。旧`output`を全消去し、39 definition・263 instanceのinspection model、Blender model、静止画8枚およびMP4 3本を再生成した。isometric、front、left、topおよびroll gearbox detailを目視し、追加した後側2 collarとfloating carrier/retainerによるcamera見切れ、白飛びまたは明白な新規干渉がないことを確認した。manifest記載18 artifactのSHA-256は全件一致し、3動画はいずれもH.264、720 × 540、12 fps、6秒である。正式加工可否は引き続き`preview_only=true`、`validation.valid=false`である。
+- A-31は既存実装を再監査し、`DatumId<T>`が発行元definitionを保持し、同kind・同indexでも別definition由来ならrelation登録を拒否することを確認した。問題一覧は発見記録として残すが、datum owner mismatchの誤受理経路は解消済みである。
 
 次の作業はPhase 4とPhase 5を依存順に進める。残る全instanceとdefinition内featureの存在理由監査を続け、不要形状を削除した上で、FDM前提の固定frame接合をM3通しbolt、実穴、washer/nut座面および工具空間を持つ実jointへ置換する。同時にroll軸系はcollar clamp screwの工具空間、保持力、購入shaft公差、後側外輪slide fitおよびFDM bore補正を確定する。relation coverage reportは実装済みであり、今後追加するrelationも未対応なら`Unsupported`として正式生成を失敗させる。LaserCutの`Body::Sheet` hole表現とDXF経路は次prototype向けに維持するが、現prototypeのcustom partはFDMを前提とする。
 

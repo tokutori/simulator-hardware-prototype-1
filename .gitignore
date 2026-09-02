@@ -1,5 +1,7 @@
 /target/
 /output/
+/.gimbal-output-staging/
+/.gimbal-output-previous/
 __pycache__/
 *.py[cod]
 *.blend1
