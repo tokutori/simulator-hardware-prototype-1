@@ -657,6 +657,7 @@ Exit criteria:
 - 608外輪の軸方向保持として、carrier一体の1 mm内側shoulderと3 mm FDM retainer plateを追加した。各端3本、合計6本のM3x20 bolt、nutおよび両washerでretainerをcarrierへ締結し、外輪両面とshoulder/retainer、retainerとcarrierの面接触をtyped `SurfaceContact`として登録した。6件の`FastenedJoint`はhardware軸・座面・thread engagementを共通validatorで検証し、bearing/carrier/retainerの全接触pairはexact Booleanで正の体積交差が0であることを回帰testへ固定した。これはouter raceのnominal axial retentionだけを確定するcheckpointであり、inner raceとshaftの軸方向保持および実FDM fit公差は未完了である。
 - 新しい軸受保持締結によって全M3数と全SurfaceContact数が増えるため、旧固定件数だけに依存していたintegration testを撤去した。pitch gearbox testは対象12 jointごとにbolt、nutおよび2枚のwasherのroleを検査し、surface contact testは宣言された全relationを走査する。別subsystemの正当な追加が無関係なtestを壊す構造を残さない。
 - commit `3edd35f`から旧`output`を全消去し、36 definition・259 instanceのinspection model、Blender model、静止画8枚およびMP4 3本を再生成した。roll gearbox detailにはfront側の608 bearing、carrier end、retainer plateおよびそのM3 hardwareもsemantic roleから選択して表示する。manifest記載18 artifactのSHA-256は全件一致し、3動画はいずれもH.264、720 × 540、12 fps、6秒である。isometric、左側面およびroll gearbox detailを目視し、外輪保持追加によるcamera見切れ、白飛びまたは明白なcockpit/frame干渉がないことを確認した。正式加工可否は引き続き`preview_only=true`、`validation.valid=false`である。
+- roll shaftの軸方向位置決めを前側608だけで行い、後側608をaxially floatingとする構成を採用した。前側内輪の両面へ、NBK公式の608ZZ用`NSCS-8-8-SB1`寸法に基づく8 mm clamp collarを2個配置した。購入部品のnominal body modelは外径20 mm、幅8.5 mm、内輪当接boss径11.7 mmであり、outboard側retainerには1 mmの外輪保持lipを残した段付きcounterboreを追加してcollar本体との干渉を避ける。2件のcollar–shaft `CylindricalFit`、2件のcollar–inner-race `SurfaceContact`および全関連pairのexact non-intersectionを回帰testにした。後側へcollarを置かないこともtestし、両bearingを軸方向に剛固定する過拘束を防ぐ。付属M3 clamp screwの突出・工具envelope、collar保持力、shaft公差およびFDM bore補正は未検証なのでPhase 5は継続する。
 
 次の作業はPhase 4とPhase 5を依存順に進める。残る全instanceとdefinition内featureの存在理由監査を続け、不要形状を削除した上で、FDM前提の固定frame接合をM3通しbolt、実穴、washer/nut座面および工具空間を持つ実jointへ置換する。同時にroll軸系は実bearing規格、inner/outer race、軸方向保持と製造公差を確定して、今回登録したreference fitを製造可能なfitへ置換する。relation coverage reportは実装済みであり、今後追加するrelationも未対応なら`Unsupported`として正式生成を失敗させる。LaserCutの`Body::Sheet` hole表現とDXF経路は次prototype向けに維持するが、現prototypeのcustom partはFDMを前提とする。
 
@@ -677,4 +678,5 @@ Exit criteria:
 - [KHK Internal Gears — Technical Information](https://khkgears.net/pdf/2025/internal-gears.pdf)
 - [KHK Spur Gears — Technical Information](https://khkgears.net/pdf/2023/spur-gears.pdf)
 - [UltiMaker: Design for FDM 3D printing](https://ultimaker.com/learn/design-for-fff-3d-printing-maximize-your-success/)
+- [NBK NSCS-SB: Set Collars for Securing Bearing](https://www.nbk1560.com/images/en/product/setcollar/NSCS-SB/NSCS-SB_1.pdf)
 - [開発方針](https://zenn.dev/bem130/articles/1b352797de94e7)

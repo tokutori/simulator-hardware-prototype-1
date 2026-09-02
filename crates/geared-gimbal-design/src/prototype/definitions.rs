@@ -102,6 +102,8 @@ pub(super) struct CarrierEndDatums {
 pub(super) struct RollShaftDatums {
     pub(super) front_bearing_surface: DatumId<CylinderDatum>,
     pub(super) rear_bearing_surface: DatumId<CylinderDatum>,
+    pub(super) front_inboard_collar_surface: DatumId<CylinderDatum>,
+    pub(super) front_outboard_collar_surface: DatumId<CylinderDatum>,
 }
 
 #[derive(Clone, Copy)]
@@ -117,6 +119,12 @@ pub(super) struct RollBearingRetainerDatums {
     pub(super) carrier_face: DatumId<PlaneDatum>,
     pub(super) bearing_face: DatumId<PlaneDatum>,
     pub(super) fasteners: [AxialFastenerDatums; 3],
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct RollShaftBearingCollarDatums {
+    pub(super) bore: DatumId<CylinderDatum>,
+    pub(super) bearing_face: DatumId<PlaneDatum>,
 }
 
 #[derive(Clone, Copy)]
@@ -180,6 +188,7 @@ pub(super) struct RollDefinitions {
     pub(super) roll_gearbox_large: ComponentDefinitionId,
     pub(super) roll_gearbox_shaft: ComponentDefinitionId,
     pub(super) roll_bearing: Defined<RollBearingDatums>,
+    pub(super) roll_shaft_bearing_collar: Defined<RollShaftBearingCollarDatums>,
     pub(super) roll_bearing_retainer: Defined<RollBearingRetainerDatums>,
     pub(super) roll_gearbox_plate: Defined<RollGearboxPlateDatums>,
     pub(super) moving_drive_mount_arm: Defined<MovingArmDatums>,
@@ -489,6 +498,20 @@ pub(super) fn build_definitions(
         [1.0, 0.0, 0.0],
         p.roll_axis.shaft_radius.mm(),
     );
+    let front_inboard_collar_surface = add_cylinder_datum(
+        &mut roll_shaft_datums,
+        "front_inboard_collar_surface",
+        [front_bearing_inboard_collar_x(p), 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        p.roll_axis.shaft_radius.mm(),
+    );
+    let front_outboard_collar_surface = add_cylinder_datum(
+        &mut roll_shaft_datums,
+        "front_outboard_collar_surface",
+        [front_bearing_outboard_collar_x(p), 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        p.roll_axis.shaft_radius.mm(),
+    );
     let roll_shaft = add_solid_definition_with_datums(
         assembly,
         "roll_shaft",
@@ -655,6 +678,29 @@ pub(super) fn build_definitions(
         Manufacturing::Purchased,
         [0.48, 0.52, 0.56, 1.0],
         roll_bearing_datums,
+    );
+    let mut roll_bearing_collar_datums = DatumSet::for_definition(assembly.next_definition_id());
+    let roll_bearing_collar_bore = add_cylinder_datum(
+        &mut roll_bearing_collar_datums,
+        "shaft_bore",
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        p.roll_axis.shaft_radius.mm(),
+    );
+    let roll_bearing_collar_face = add_plane_datum(
+        &mut roll_bearing_collar_datums,
+        "bearing_face",
+        [-roll_bearing_collar_width_mm() * 0.5, 0.0, 0.0],
+        [-1.0, 0.0, 0.0],
+    );
+    let roll_shaft_bearing_collar = add_solid_definition_with_datums(
+        assembly,
+        "roll_shaft_608_bearing_collar",
+        ComponentRole::RollShaftBearingCollar,
+        roll_bearing_collar_solid(builder, p)?,
+        Manufacturing::Purchased,
+        [0.36, 0.38, 0.41, 1.0],
+        roll_bearing_collar_datums,
     );
     let mut roll_bearing_retainer_datums = DatumSet::for_definition(assembly.next_definition_id());
     let retainer_half_thickness = roll_bearing_retainer_thickness_mm() * 0.5;
@@ -842,6 +888,8 @@ pub(super) fn build_definitions(
                 datums: RollShaftDatums {
                     front_bearing_surface,
                     rear_bearing_surface,
+                    front_inboard_collar_surface,
+                    front_outboard_collar_surface,
                 },
             },
             roll_driven,
@@ -856,6 +904,13 @@ pub(super) fn build_definitions(
                     outer_surface: roll_bearing_outer_surface,
                     negative_x_face: roll_bearing_negative_x_face,
                     positive_x_face: roll_bearing_positive_x_face,
+                },
+            },
+            roll_shaft_bearing_collar: Defined {
+                id: roll_shaft_bearing_collar,
+                datums: RollShaftBearingCollarDatums {
+                    bore: roll_bearing_collar_bore,
+                    bearing_face: roll_bearing_collar_face,
                 },
             },
             roll_bearing_retainer: Defined {

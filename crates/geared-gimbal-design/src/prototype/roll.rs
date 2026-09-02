@@ -228,6 +228,22 @@ pub(super) fn build_roll_assembly(
             location,
         );
     }
+    for (name, x, rotation, ordinal) in [
+        ("inboard", front_bearing_inboard_collar_x(p), PI, 1),
+        ("outboard", front_bearing_outboard_collar_x(p), 0.0, 2),
+    ] {
+        add_located_instance(
+            assembly,
+            &format!("roll_shaft_bearing_collar_front_{name}"),
+            d.roll.roll_shaft_bearing_collar.id,
+            roll_frame,
+            RigidTransform::translated(x, 0.0, 0.0)
+                .compose(RigidTransform::rotated(Axis3::Z, rotation)),
+            ComponentLocation::new()
+                .with_longitudinal_end(LongitudinalEnd::Front)
+                .with_ordinal(ordinal),
+        );
+    }
 }
 
 pub(super) fn build_roll_bearing_fits(
@@ -289,6 +305,59 @@ pub(super) fn build_roll_bearing_fits(
             add_roll_bearing_retainer_fastener(assembly, d, p, end, index, carrier, retainer)?;
         }
     }
+    build_roll_shaft_axial_location(assembly, d)?;
+    Ok(())
+}
+
+fn build_roll_shaft_axial_location(
+    assembly: &mut Assembly,
+    d: &Definitions,
+) -> Result<(), PrototypeError> {
+    let shaft = required_instance(assembly, ComponentRole::RollShaft, ComponentLocation::new())?;
+    let front = ComponentLocation::new().with_longitudinal_end(LongitudinalEnd::Front);
+    let bearing = required_instance(assembly, ComponentRole::RollBearing, front)?;
+    let inboard = required_instance(
+        assembly,
+        ComponentRole::RollShaftBearingCollar,
+        front.with_ordinal(1),
+    )?;
+    let outboard = required_instance(
+        assembly,
+        ComponentRole::RollShaftBearingCollar,
+        front.with_ordinal(2),
+    )?;
+    add_cylindrical_fit(
+        assembly,
+        shaft,
+        d.roll.roll_shaft.datums.front_inboard_collar_surface,
+        inboard,
+        d.roll.roll_shaft_bearing_collar.datums.bore,
+        0.0,
+    )?;
+    add_cylindrical_fit(
+        assembly,
+        shaft,
+        d.roll.roll_shaft.datums.front_outboard_collar_surface,
+        outboard,
+        d.roll.roll_shaft_bearing_collar.datums.bore,
+        0.0,
+    )?;
+    add_surface_contact(
+        assembly,
+        bearing,
+        d.roll.roll_bearing.datums.negative_x_face,
+        inboard,
+        d.roll.roll_shaft_bearing_collar.datums.bearing_face,
+        40.0,
+    )?;
+    add_surface_contact(
+        assembly,
+        bearing,
+        d.roll.roll_bearing.datums.positive_x_face,
+        outboard,
+        d.roll.roll_shaft_bearing_collar.datums.bearing_face,
+        40.0,
+    )?;
     Ok(())
 }
 
@@ -702,6 +771,37 @@ pub(super) const fn roll_bearing_retainer_thickness_mm() -> f64 {
     3.0
 }
 
+// NBK NSCS-8-8-SB1, a clamping collar intended for the 608ZZ inner race.
+// https://www.nbk1560.com/images/en/product/setcollar/NSCS-SB/NSCS-SB_1.pdf
+pub(super) const fn roll_bearing_collar_width_mm() -> f64 {
+    8.5
+}
+
+pub(super) const fn roll_bearing_collar_body_width_mm() -> f64 {
+    7.5
+}
+
+pub(super) const fn roll_bearing_collar_outer_radius_mm() -> f64 {
+    10.0
+}
+
+pub(super) const fn roll_bearing_collar_boss_radius_mm() -> f64 {
+    5.85
+}
+
+pub(super) fn front_bearing_inboard_collar_x(p: &PrototypeParameters) -> f64 {
+    p.roll_axis.bearing_station.mm() + roll_bearing_center_offset_x(p)
+        - p.roll_axis.bearing_width.mm() * 0.5
+        - roll_bearing_collar_width_mm() * 0.5
+}
+
+pub(super) fn front_bearing_outboard_collar_x(p: &PrototypeParameters) -> f64 {
+    p.roll_axis.bearing_station.mm()
+        + roll_bearing_center_offset_x(p)
+        + p.roll_axis.bearing_width.mm() * 0.5
+        + roll_bearing_collar_width_mm() * 0.5
+}
+
 pub(super) fn roll_bearing_center_offset_x(p: &PrototypeParameters) -> f64 {
     (p.frame.bearing_pedestal_thickness.mm() - p.roll_axis.bearing_width.mm()) * 0.5
 }
@@ -822,6 +922,24 @@ pub(super) fn roll_bearing_retainer_solid(
         roll_bearing_retainer_inner_radius_mm(p),
         thickness,
     )?;
+    // The collar's 20 mm body starts 1 mm beyond the bearing face. Keep the
+    // 1 mm lip that retains the outer race, then counterbore the remaining
+    // retainer thickness so the inner-race collar cannot touch it.
+    let counterbore_width = thickness - 1.0;
+    let counterbore = cylinder_x(
+        builder,
+        roll_bearing_collar_outer_radius_mm() + 0.2,
+        counterbore_width + 0.2,
+    )?;
+    let counterbore = builder.translate(
+        counterbore,
+        Translation3 {
+            x: thickness * 0.5 - counterbore_width * 0.5 + 0.1,
+            y: 0.0,
+            z: 0.0,
+        },
+    )?;
+    retainer = builder.boolean(BooleanOperation::Difference, retainer, counterbore)?;
     for [y, z] in roll_bearing_retainer_hole_centres(p) {
         retainer = subtract_x_bore_at(
             builder,
@@ -833,6 +951,46 @@ pub(super) fn roll_bearing_retainer_solid(
         )?;
     }
     Ok(retainer)
+}
+
+pub(super) fn roll_bearing_collar_solid(
+    builder: &mut FeatureBuilder,
+    p: &PrototypeParameters,
+) -> Result<SolidId, PrototypeError> {
+    let total_width = roll_bearing_collar_width_mm();
+    let body_width = roll_bearing_collar_body_width_mm();
+    let boss_width = total_width - body_width;
+    let body = annulus_solid_x(
+        builder,
+        roll_bearing_collar_outer_radius_mm(),
+        p.roll_axis.shaft_radius.mm(),
+        body_width,
+    )?;
+    let body = builder.translate(
+        body,
+        Translation3 {
+            x: boss_width * 0.5,
+            y: 0.0,
+            z: 0.0,
+        },
+    )?;
+    let boss = annulus_solid_x(
+        builder,
+        roll_bearing_collar_boss_radius_mm(),
+        p.roll_axis.shaft_radius.mm(),
+        boss_width,
+    )?;
+    let boss = builder.translate(
+        boss,
+        Translation3 {
+            x: -body_width * 0.5,
+            y: 0.0,
+            z: 0.0,
+        },
+    )?;
+    builder
+        .boolean(BooleanOperation::Union, body, boss)
+        .map_err(PrototypeError::Feature)
 }
 
 fn subtract_x_bore_at(

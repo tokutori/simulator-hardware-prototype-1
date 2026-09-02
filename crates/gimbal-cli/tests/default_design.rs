@@ -1425,8 +1425,8 @@ fn roll_bearings_use_typed_inner_and_outer_cylindrical_fits() {
         .collect::<Vec<_>>();
     assert_eq!(
         fits.len(),
-        4,
-        "each roll bearing needs inner and outer fits"
+        6,
+        "two bearing journals, two outer-race fits, and two locating collars are required"
     );
 
     let role_of = |instance_id| {
@@ -1442,6 +1442,7 @@ fn roll_bearings_use_typed_inner_and_outer_cylindrical_fits() {
     };
     let mut shaft_to_bearing = 0;
     let mut bearing_to_carrier = 0;
+    let mut shaft_to_collar = 0;
     for (_, fit) in &fits {
         match (role_of(fit.shaft.instance), role_of(fit.bore.instance)) {
             (ComponentRole::RollShaft, ComponentRole::RollBearing) => {
@@ -1452,11 +1453,16 @@ fn roll_bearings_use_typed_inner_and_outer_cylindrical_fits() {
                 bearing_to_carrier += 1;
                 assert!(fit.target_radial_clearance.as_mm().abs() < 1.0e-8);
             }
+            (ComponentRole::RollShaft, ComponentRole::RollShaftBearingCollar) => {
+                shaft_to_collar += 1;
+                assert!(fit.target_radial_clearance.as_mm().abs() < 1.0e-8);
+            }
             pair => panic!("unexpected cylindrical fit role pair: {pair:?}"),
         }
     }
     assert_eq!(shaft_to_bearing, 2);
     assert_eq!(bearing_to_carrier, 2);
+    assert_eq!(shaft_to_collar, 2);
 
     let report = validate_assembly(&design, ValidationProfile::STRUCTURAL_STATIC)
         .expect("structural validation query succeeds");
@@ -1474,6 +1480,118 @@ fn roll_bearings_use_typed_inner_and_outer_cylindrical_fits() {
             .iter()
             .all(|issue| !is_cylindrical_fit_issue(issue.kind)),
         "roll bearing fit datums must satisfy the typed relation"
+    );
+}
+
+#[test]
+fn front_bearing_locates_the_roll_shaft_while_rear_bearing_can_float_axially() {
+    let design = load_design();
+    assert_eq!(
+        count_role(&design, ComponentRole::RollShaftBearingCollar),
+        2
+    );
+
+    let shaft = selected_instance(&design, singleton(ComponentRole::RollShaft));
+    let front = ComponentLocation::new().with_longitudinal_end(LongitudinalEnd::Front);
+    let rear = ComponentLocation::new().with_longitudinal_end(LongitudinalEnd::Rear);
+    let front_bearing = located(ComponentRole::RollBearing, front);
+    let rear_bearing = selected_instance(&design, located(ComponentRole::RollBearing, rear));
+    let collars = [
+        located(ComponentRole::RollShaftBearingCollar, front.with_ordinal(1)),
+        located(ComponentRole::RollShaftBearingCollar, front.with_ordinal(2)),
+    ];
+    for collar in collars {
+        assert_eq!(selected_instance(&design, collar).frame, shaft.frame);
+    }
+    assert!(
+        design
+            .assembly
+            .instances_with_role(ComponentRole::RollShaftBearingCollar)
+            .all(|(_, instance)| instance.location.longitudinal_end == Some(LongitudinalEnd::Front)),
+        "the rear bearing must remain axially floating instead of being over-constrained"
+    );
+
+    let role_of = |instance_id| {
+        let instance = design
+            .assembly
+            .instance(instance_id)
+            .expect("contact participant exists");
+        design
+            .assembly
+            .definition(instance.definition)
+            .expect("contact participant definition exists")
+            .role
+    };
+    let bearing_collar_contacts = design
+        .assembly
+        .relations_with_ids()
+        .filter_map(|(relation_id, relation)| {
+            let AssemblyRelation::SurfaceContact(contact) = relation else {
+                return None;
+            };
+            matches!(
+                (
+                    role_of(contact.first.instance),
+                    role_of(contact.second.instance)
+                ),
+                (
+                    ComponentRole::RollBearing,
+                    ComponentRole::RollShaftBearingCollar
+                )
+            )
+            .then_some((relation_id, *contact))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(bearing_collar_contacts.len(), 2);
+    assert!(
+        bearing_collar_contacts
+            .iter()
+            .all(|(_, contact)| contact.first.instance
+                != design
+                    .assembly
+                    .instance_by_identity(located(ComponentRole::RollBearing, rear))
+                    .expect("rear bearing exists")),
+        "the floating rear inner race must not be trapped by a collar contact"
+    );
+    let report = validate_assembly(&design, ValidationProfile::STRUCTURAL_STATIC)
+        .expect("structural validation query succeeds");
+    for (relation_id, _) in &bearing_collar_contacts {
+        let check = report
+            .relation_checks
+            .iter()
+            .find(|check| check.relation == *relation_id)
+            .expect("each collar contact has a coverage result");
+        assert_eq!(check.status, RelationValidationStatus::Validated);
+    }
+
+    let mut evaluator = Evaluator::new(&design.graph);
+    let carrier = located(ComponentRole::RollBearingCarrierEnd, front);
+    let retainer = located(ComponentRole::RollBearingRetainer, front);
+    for collar in collars {
+        for (other, label) in [
+            (front_bearing, "bearing"),
+            (carrier, "carrier"),
+            (retainer, "outer-race retainer"),
+            (singleton(ComponentRole::RollShaft), "shaft"),
+        ] {
+            let overlap = evaluator
+                .intersection_volume_transformed(
+                    instance_solid(&design, collar),
+                    instance_pose(&design, collar, 0.0, 0.0),
+                    instance_solid(&design, other),
+                    instance_pose(&design, other, 0.0, 0.0),
+                )
+                .expect("shaft collar intersection query succeeds");
+            assert!(
+                overlap <= 1.0e-7,
+                "shaft collar has {overlap} mm^3 of positive-volume interference with {label}"
+            );
+        }
+    }
+
+    assert_ne!(
+        rear_bearing.frame, shaft.frame,
+        "bearing outer races remain on the pitch carrier while collars follow the roll shaft"
     );
 }
 

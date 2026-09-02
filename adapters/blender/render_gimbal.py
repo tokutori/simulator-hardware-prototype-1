@@ -422,6 +422,7 @@ def main() -> None:
                 "MovingDriveMountArm",
                 "RollBearingCarrierEnd",
                 "RollBearing",
+                "RollShaftBearingCollar",
                 "RollBearingRetainer",
             )
         ),

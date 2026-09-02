@@ -168,6 +168,9 @@ pub(super) fn validate(parameters: &PrototypeParameters) -> Result<(), Prototype
         <= parameters.roll_axis.shaft_radius.mm() + 2.0
         || parameters.roll_axis.bearing_width.mm() + 0.8
             > parameters.frame.bearing_pedestal_thickness.mm()
+        || front_bearing_outboard_collar_x(parameters) + roll_bearing_collar_width_mm() * 0.5 + 1.0
+            > parameters.roll_axis.drive_station.mm()
+                - parameters.pitch_sector.face_width.mm() * 0.5
     {
         return Err(PrototypeError::InvalidRollBearing);
     }
