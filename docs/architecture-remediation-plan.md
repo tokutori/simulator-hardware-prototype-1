@@ -230,3 +230,5 @@ Exit criteria:
 - A4のmodule分割checkpointとして、kernel validatorを`report.rs`、`instance.rs`、`interference.rs`、`proximity.rs`、`relations.rs`、`tests.rs`へ分離した。`mod.rs`はpublic error、validator contextおよびmodule wiringだけを保持する。
 - `ValidationPlan`を`plan.rs`へ追加し、検査対象definition集合をcallerが明示する構造へ変更した。kernel validatorから`ComponentRole::has_high_detail_gear_geometry()`への依存を撤去し、CLI composition rootだけが既定prototypeの高精細gear除外policyを組み立てる。
 - report、plan、instance world geometry、interference、proximity、relation検証およびtestの変更理由をmodule境界へ反映し、A4のexit criteriaを満たしたため完了とした。
+- A5の最初のcheckpointとして、単一の`prototype.rs`を`parameters`、`validation`、`definitions`、`fixed_frame`、`pitch_unit`、`pitch_geometry`、`roll`、`component_geometry`および`tests`へ振舞いを変えず分割した。`mod.rs`は設計構築順序を示すcomposition rootだけを主に保持する。
+- 平坦だった`Definitions`をfixed frame、pitch unit、rollおよびhardwareへgroup化し、datumを持つdefinitionは`Defined<D>`でdefinition IDとdatum bundleを一体にした。各subsystemへdefinition構築自体を移す作業が残るため、A5は引き続き進行中とする。
