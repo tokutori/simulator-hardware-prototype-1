@@ -57,6 +57,47 @@ pub struct CylindricalFit {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MetricThread {
+    M3,
+}
+
+impl MetricThread {
+    pub const fn nominal_diameter_mm(self) -> f64 {
+        match self {
+            Self::M3 => 3.0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FastenerHeadSide {
+    First,
+    Second,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FastenerHardware {
+    pub bolt: ComponentInstanceId,
+    pub nut: ComponentInstanceId,
+    pub first_washer: Option<ComponentInstanceId>,
+    pub second_washer: Option<ComponentInstanceId>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FastenedJoint {
+    pub first_hole: DatumEndpoint<CylinderDatum>,
+    pub second_hole: DatumEndpoint<CylinderDatum>,
+    pub first_seat: DatumEndpoint<PlaneDatum>,
+    pub second_seat: DatumEndpoint<PlaneDatum>,
+    pub hardware: FastenerHardware,
+    pub thread: MetricThread,
+    pub target_hole_radial_clearance: NonNegativeLength,
+    pub grip_length: PositiveLength,
+    pub head_side: FastenerHeadSide,
+    pub tolerance: EngineeringTolerance,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GearMeshKind {
     External,
     Internal,
@@ -79,6 +120,7 @@ pub struct GearMesh {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum AssemblyRelation {
     SurfaceContact(SurfaceContact),
+    Fastened(FastenedJoint),
     CylindricalFit(CylindricalFit),
     GearMesh(GearMesh),
 }
@@ -119,6 +161,12 @@ impl AssemblyRelation {
                 None,
                 None,
             ],
+            Self::Fastened(joint) => [
+                Some(erased(joint.first_hole, DatumKind::Cylinder)),
+                Some(erased(joint.second_hole, DatumKind::Cylinder)),
+                Some(erased(joint.first_seat, DatumKind::Plane)),
+                Some(erased(joint.second_seat, DatumKind::Plane)),
+            ],
             Self::CylindricalFit(fit) => [
                 Some(erased(fit.shaft, DatumKind::Cylinder)),
                 Some(erased(fit.bore, DatumKind::Cylinder)),
@@ -137,8 +185,26 @@ impl AssemblyRelation {
     pub(crate) const fn instance_pair(self) -> [ComponentInstanceId; 2] {
         match self {
             Self::SurfaceContact(contact) => [contact.first.instance, contact.second.instance],
+            Self::Fastened(joint) => [joint.first_hole.instance, joint.second_hole.instance],
             Self::CylindricalFit(fit) => [fit.shaft.instance, fit.bore.instance],
             Self::GearMesh(mesh) => [mesh.first_axis.instance, mesh.second_axis.instance],
+        }
+    }
+
+    pub(crate) const fn participant_instances(self) -> [Option<ComponentInstanceId>; 6] {
+        match self {
+            Self::Fastened(joint) => [
+                Some(joint.first_hole.instance),
+                Some(joint.second_hole.instance),
+                Some(joint.hardware.bolt),
+                Some(joint.hardware.nut),
+                joint.hardware.first_washer,
+                joint.hardware.second_washer,
+            ],
+            _ => {
+                let [first, second] = self.instance_pair();
+                [Some(first), Some(second), None, None, None, None]
+            }
         }
     }
 }

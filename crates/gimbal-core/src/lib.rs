@@ -47,7 +47,8 @@ pub use prototype::{
 };
 pub use relation::{
     AssemblyRelation, AssemblyRelationId, CylindricalFit, DatumEndpoint, EngineeringTolerance,
-    GearMesh, GearMeshKind, NumericalTolerance, SurfaceContact,
+    FastenedJoint, FastenerHardware, FastenerHeadSide, GearMesh, GearMeshKind, MetricThread,
+    NumericalTolerance, SurfaceContact,
 };
 pub use units::{
     Angle, Length, NonNegativeAngle, NonNegativeLength, PositiveAngle, PositiveArea,

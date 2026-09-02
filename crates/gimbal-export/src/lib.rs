@@ -11,7 +11,7 @@ use gimbal_core::{ComponentDefinitionId, FrameId, Manufacturing, RigidTransform,
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-pub use dxf::write_dxf_profile;
+pub use dxf::{write_dxf_profile, write_dxf_sheet_profile};
 pub use gltf::{AnimationParameters, write_animated_gltf};
 pub use mesh_files::{write_binary_stl, write_obj};
 pub use three_mf::{write_3mf, write_mesh_3mf};

@@ -85,6 +85,9 @@ pub enum ComponentRole {
     RollGearboxPlate,
     RollGearboxMount,
     MovingDriveMountArm,
+    M3Bolt,
+    M3Nut,
+    M3Washer,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]

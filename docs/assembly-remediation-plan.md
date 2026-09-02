@@ -583,6 +583,9 @@ Exit criteria:
 - post接合面をsector端の内歯歯先包絡より2.39 mm内側へ移し、upper rail下面を外歯歯先包絡より1.20 mm上へ移した。両clearanceをparameter検証へ追加し、sector一体supportとpost/railのface contactは維持した。修正後は全136 fixed pairと全44 contact pairで正体積交差0を確認した。
 - 修正後の38 definition・187 instanceからinspection model、Blender model、静止画8枚およびMP4 3本を再生成した。manifestの20 artifactは全SHA-256一致、動画はすべてH.264、720×540、12 fps、6秒である。
 - Phase 3最終gateとしてworkspace test 46件、format、warning-as-error Clippy、native/wasm32の`gimbal-core no_std` checkが成功した。Blender modelで固定frame、sector一体support、post、upper/lower railおよび矩形crossmemberの端面接続を確認し、Phase 3のexit criteriaを満たしたためPhase 3を完了、Phase 4を進行中へ変更した。
+- Phase 4の基盤として、`Body::Sheet`をouter contourと複数cutoutを保持する構造へ拡張し、DXFへ各contourを閉じた`CUT` polylineとして出力・再読込検証する経路を追加した。現prototypeをFDM前提とする方針は変えず、次prototypeのlaser部品で同じnominal hole geometryを使用できるようにする。
+- M3 bolt/nut/washerを個別のPurchased component roleとして型付けし、2部材のhole cylinder datum、座面plane datum、head/nut側、radial clearanceおよびgrip長を持つ`FastenedJoint`を追加した。relation挿入時にdatum所属、全participant IDの存在・一意性とhardware roleを検査し、kernel validatorで穴軸、穴径、座面法線およびgrip長を検査する。これはrelation/DXF基盤のcheckpointであり、prototype実部品への実穴・hardware配置・工具空間適用は未完了である。
+- このcheckpointでworkspace test 49件、format、warning-as-error Clippy、native/wasm32の`gimbal-core no_std` checkが成功した。hardware role検査追加後の対象unit testも再実行して成功した。
 
 次の作業はPhase 4として、FDM前提の固定frame接合をM3通しbolt、実穴、washer/nut座面および工具空間を持つ実jointへ置換することである。LaserCutの`Body::Sheet` hole表現とDXF経路は次prototype向けに維持するが、現prototypeのcustom partはFDMを前提とする。
 

@@ -17,24 +17,25 @@ pub struct ComponentInstanceId(u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct FrameId(u32);
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Body {
     Solid(SolidId),
     Sheet {
-        profile: RegionId,
+        outer: RegionId,
+        cutouts: Vec<RegionId>,
         thickness: Length,
         assembly_solid: SolidId,
     },
 }
 
 impl Body {
-    pub const fn assembly_solid(self) -> SolidId {
+    pub const fn assembly_solid(&self) -> SolidId {
         match self {
             Self::Solid(solid)
             | Self::Sheet {
                 assembly_solid: solid,
                 ..
-            } => solid,
+            } => *solid,
         }
     }
 }
@@ -91,6 +92,16 @@ pub enum AssemblyError {
         actual: DatumKind,
     },
     SelfRelation(ComponentInstanceId),
+    RelationEndpointInstanceMismatch {
+        first: ComponentInstanceId,
+        second: ComponentInstanceId,
+    },
+    RelationParticipantRoleMismatch {
+        instance: ComponentInstanceId,
+        expected: ComponentRole,
+        actual: ComponentRole,
+    },
+    DuplicateRelationParticipant(ComponentInstanceId),
     DuplicateRelation(AssemblyRelationId),
     DuplicateComponentIdentity {
         first: ComponentInstanceId,
@@ -327,9 +338,60 @@ impl Assembly {
         &mut self,
         relation: AssemblyRelation,
     ) -> Result<AssemblyRelationId, AssemblyError> {
+        if let AssemblyRelation::Fastened(joint) = relation {
+            for (hole, seat) in [
+                (joint.first_hole.instance, joint.first_seat.instance),
+                (joint.second_hole.instance, joint.second_seat.instance),
+            ] {
+                if hole != seat {
+                    return Err(AssemblyError::RelationEndpointInstanceMismatch {
+                        first: hole,
+                        second: seat,
+                    });
+                }
+            }
+        }
         let [first, second] = relation.instance_pair();
         if first == second {
             return Err(AssemblyError::SelfRelation(first));
+        }
+        let participants = relation.participant_instances();
+        for participant in participants.into_iter().flatten() {
+            if participant.index() >= self.instances.len() {
+                return Err(AssemblyError::InvalidInstance(participant));
+            }
+        }
+        for (index, participant) in participants.iter().copied().flatten().enumerate() {
+            if participants
+                .iter()
+                .copied()
+                .skip(index + 1)
+                .flatten()
+                .any(|other| other == participant)
+            {
+                return Err(AssemblyError::DuplicateRelationParticipant(participant));
+            }
+        }
+        if let AssemblyRelation::Fastened(joint) = relation {
+            for (participant, expected) in [
+                (Some(joint.hardware.bolt), ComponentRole::M3Bolt),
+                (Some(joint.hardware.nut), ComponentRole::M3Nut),
+                (joint.hardware.first_washer, ComponentRole::M3Washer),
+                (joint.hardware.second_washer, ComponentRole::M3Washer),
+            ] {
+                let Some(participant) = participant else {
+                    continue;
+                };
+                let actual =
+                    self.definitions[self.instances[participant.index()].definition.index()].role;
+                if actual != expected {
+                    return Err(AssemblyError::RelationParticipantRoleMismatch {
+                        instance: participant,
+                        expected,
+                        actual,
+                    });
+                }
+            }
         }
         let endpoints = relation.endpoint_refs();
         for endpoint in endpoints.into_iter().flatten() {
@@ -559,9 +621,10 @@ mod tests {
 
     use super::*;
     use crate::{
-        DatumEndpoint, EngineeringTolerance, FeatureBuilder, Manufacturing, NonNegativeAngle,
-        NonNegativeLength, PlaneDatum, Point3, PositiveArea, Primitive3, SurfaceContact,
-        UnitVector3,
+        AxisDatum, CylinderDatum, DatumEndpoint, EngineeringTolerance, FastenedJoint,
+        FastenerHardware, FastenerHeadSide, FeatureBuilder, Manufacturing, MetricThread,
+        NonNegativeAngle, NonNegativeLength, PlaneDatum, Point3, PositiveArea, PositiveLength,
+        Primitive3, SurfaceContact, UnitVector3,
     };
 
     #[test]
@@ -741,5 +804,133 @@ mod tests {
                 actual: DatumKind::Axis,
             }) if instance == second
         ));
+    }
+
+    #[test]
+    fn fastened_relation_requires_distinct_valid_hardware_and_member_datums() {
+        let mut builder = FeatureBuilder::new();
+        let solid = builder.primitive(Primitive3::Box {
+            x: Length::positive_mm(10.0).expect("positive length"),
+            y: Length::positive_mm(10.0).expect("positive length"),
+            z: Length::positive_mm(3.0).expect("positive length"),
+            centered: true,
+        });
+        let origin = Point3::from_mm([0.0, 0.0, 0.0]).expect("finite point");
+        let axis = AxisDatum {
+            origin,
+            direction: UnitVector3::new([0.0, 0.0, 1.0]).expect("valid direction"),
+        };
+        let mut member_datums = DatumSet::new();
+        let hole = member_datums.add(
+            "m3_clearance_hole".to_string(),
+            CylinderDatum {
+                axis,
+                radius: PositiveLength::mm(1.7).expect("positive radius"),
+            },
+        );
+        let seat = member_datums.add(
+            "washer_seat".to_string(),
+            PlaneDatum {
+                origin,
+                normal: UnitVector3::new([0.0, 0.0, 1.0]).expect("valid normal"),
+            },
+        );
+        let mut assembly = Assembly::new();
+        let member_definition = assembly.add_definition(ComponentDefinition {
+            name: "member".to_string(),
+            role: ComponentRole::FixedCrossmember,
+            body: Body::Solid(solid),
+            manufacturing: Manufacturing::Fdm,
+            color_rgba: [1.0; 4],
+            datums: member_datums,
+        });
+        let first = assembly.add_instance(ComponentInstance {
+            name: "first_member".to_string(),
+            definition: member_definition,
+            frame: FrameGraph::new().world(),
+            local_pose: RigidTransform::IDENTITY,
+            location: ComponentLocation::default(),
+        });
+        let second = assembly.add_instance(ComponentInstance {
+            name: "second_member".to_string(),
+            definition: member_definition,
+            frame: FrameGraph::new().world(),
+            local_pose: RigidTransform::translated(0.0, 0.0, 3.0),
+            location: ComponentLocation::default(),
+        });
+        let mut add_hardware = |name: &str, role| {
+            let definition = assembly.add_definition(ComponentDefinition {
+                name: name.to_string(),
+                role,
+                body: Body::Solid(solid),
+                manufacturing: Manufacturing::Purchased,
+                color_rgba: [1.0; 4],
+                datums: DatumSet::new(),
+            });
+            assembly.add_instance(ComponentInstance {
+                name: name.to_string(),
+                definition,
+                frame: FrameGraph::new().world(),
+                local_pose: RigidTransform::IDENTITY,
+                location: ComponentLocation::default(),
+            })
+        };
+        let bolt = add_hardware("m3_bolt", ComponentRole::M3Bolt);
+        let nut = add_hardware("m3_nut", ComponentRole::M3Nut);
+        let wrong_nut = add_hardware("wrong_nut", ComponentRole::M3Bolt);
+        let tolerance = EngineeringTolerance {
+            linear: NonNegativeLength::mm(0.05).expect("non-negative tolerance"),
+            angular: NonNegativeAngle::degrees(0.2).expect("non-negative tolerance"),
+        };
+        let relation = AssemblyRelation::Fastened(FastenedJoint {
+            first_hole: DatumEndpoint::new(first, hole),
+            second_hole: DatumEndpoint::new(second, hole),
+            first_seat: DatumEndpoint::new(first, seat),
+            second_seat: DatumEndpoint::new(second, seat),
+            hardware: FastenerHardware {
+                bolt,
+                nut,
+                first_washer: None,
+                second_washer: None,
+            },
+            thread: MetricThread::M3,
+            target_hole_radial_clearance: NonNegativeLength::mm(0.2)
+                .expect("non-negative clearance"),
+            grip_length: PositiveLength::mm(6.0).expect("positive grip"),
+            head_side: FastenerHeadSide::First,
+            tolerance,
+        });
+        assembly
+            .add_relation(relation)
+            .expect("valid fastened relation");
+
+        let AssemblyRelation::Fastened(joint) = relation else {
+            unreachable!();
+        };
+        let mut mismatched = joint;
+        mismatched.first_seat = DatumEndpoint::new(second, seat);
+        assert!(matches!(
+            assembly.add_relation(AssemblyRelation::Fastened(mismatched)),
+            Err(AssemblyError::RelationEndpointInstanceMismatch {
+                first: actual_first,
+                second: actual_second,
+            }) if actual_first == first && actual_second == second
+        ));
+        let mut aliased = joint;
+        aliased.hardware.nut = bolt;
+        assert_eq!(
+            assembly.add_relation(AssemblyRelation::Fastened(aliased)),
+            Err(AssemblyError::DuplicateRelationParticipant(bolt))
+        );
+        let mut wrong_role = joint;
+        wrong_role.hardware.nut = wrong_nut;
+        assert_eq!(
+            assembly.add_relation(AssemblyRelation::Fastened(wrong_role)),
+            Err(AssemblyError::RelationParticipantRoleMismatch {
+                instance: wrong_nut,
+                expected: ComponentRole::M3Nut,
+                actual: ComponentRole::M3Bolt,
+            })
+        );
     }
 }

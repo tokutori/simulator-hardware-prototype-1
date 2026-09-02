@@ -2,8 +2,8 @@
 
 use gimbal_core::{
     Assembly, AssemblyPose, AssemblyRelation, AssemblyRelationId, ComponentDefinitionId,
-    ComponentIdentity, ComponentInstanceId, ComponentInstancePair, ComponentRole, DatumEndpoint,
-    FeatureGraph, NonNegativeLength, NumericalTolerance, PlaneDatum,
+    ComponentIdentity, ComponentInstanceId, ComponentInstancePair, ComponentRole, CylinderDatum,
+    DatumEndpoint, FeatureGraph, NonNegativeLength, NumericalTolerance, PlaneDatum,
 };
 use manifold_rust::manifold::Manifold;
 use manifold_rust::types::{BooleanEngine, Error as ManifoldStatus};
@@ -74,7 +74,10 @@ impl ValidationScope {
                 | ComponentRole::RollBearing
                 | ComponentRole::RollGearboxPlate
                 | ComponentRole::RollGearboxMount
-                | ComponentRole::MovingDriveMountArm => true,
+                | ComponentRole::MovingDriveMountArm
+                | ComponentRole::M3Bolt
+                | ComponentRole::M3Nut
+                | ComponentRole::M3Washer => true,
             },
         }
     }
@@ -102,6 +105,29 @@ pub enum ValidationIssueKind {
     SurfaceContactAreaInsufficient {
         contact_area_mm2: f64,
         minimum_area_mm2: f64,
+    },
+    FastenerHoleAxisSeparation {
+        distance_mm: f64,
+        allowed_mm: f64,
+    },
+    FastenerHoleAxisMismatch {
+        error_radians: f64,
+        allowed_radians: f64,
+    },
+    FastenerHoleRadiusMismatch {
+        first_radius_mm: f64,
+        second_radius_mm: f64,
+        expected_radius_mm: f64,
+        allowed_mm: f64,
+    },
+    FastenerSeatNormalMismatch {
+        error_radians: f64,
+        allowed_radians: f64,
+    },
+    FastenerGripLengthMismatch {
+        actual_mm: f64,
+        expected_mm: f64,
+        allowed_mm: f64,
     },
     UnspecifiedProximity {
         gap_mm: f64,
@@ -578,6 +604,111 @@ impl<'a> AssemblyValidator<'a> {
                 }
             }
         }
+        for (relation_id, relation) in self.assembly.relations_with_ids() {
+            let AssemblyRelation::Fastened(joint) = *relation else {
+                continue;
+            };
+            let pair = ComponentInstancePair {
+                first: joint.first_hole.instance,
+                second: joint.second_hole.instance,
+            };
+            if instances[pair.first.index()].is_none() || instances[pair.second.index()].is_none() {
+                skipped += 1;
+                continue;
+            }
+            let first_hole = world_cylinder(joint.first_hole, self.assembly, instances);
+            let second_hole = world_cylinder(joint.second_hole, self.assembly, instances);
+            let axis_delta = subtract(second_hole.origin, first_hole.origin);
+            let axis_distance_mm = magnitude(cross(axis_delta, first_hole.direction));
+            let allowed_mm = joint.tolerance.linear.as_mm();
+            if axis_distance_mm > allowed_mm {
+                issues.push(ValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    pair: Some(pair),
+                    relation: Some(relation_id),
+                    kind: ValidationIssueKind::FastenerHoleAxisSeparation {
+                        distance_mm: axis_distance_mm,
+                        allowed_mm,
+                    },
+                });
+            }
+            let axis_error_radians = dot(first_hole.direction, second_hole.direction)
+                .abs()
+                .clamp(-1.0, 1.0)
+                .acos();
+            let allowed_radians = joint.tolerance.angular.as_radians();
+            if axis_error_radians > allowed_radians {
+                issues.push(ValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    pair: Some(pair),
+                    relation: Some(relation_id),
+                    kind: ValidationIssueKind::FastenerHoleAxisMismatch {
+                        error_radians: axis_error_radians,
+                        allowed_radians,
+                    },
+                });
+            }
+            let expected_radius_mm = joint.thread.nominal_diameter_mm() * 0.5
+                + joint.target_hole_radial_clearance.as_mm();
+            if (first_hole.radius_mm - expected_radius_mm).abs() > allowed_mm
+                || (second_hole.radius_mm - expected_radius_mm).abs() > allowed_mm
+            {
+                issues.push(ValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    pair: Some(pair),
+                    relation: Some(relation_id),
+                    kind: ValidationIssueKind::FastenerHoleRadiusMismatch {
+                        first_radius_mm: first_hole.radius_mm,
+                        second_radius_mm: second_hole.radius_mm,
+                        expected_radius_mm,
+                        allowed_mm,
+                    },
+                });
+            }
+            let first_seat = world_plane(joint.first_seat, self.assembly, instances);
+            let second_seat = world_plane(joint.second_seat, self.assembly, instances);
+            let first_axis_error = dot(first_seat.normal, first_hole.direction)
+                .abs()
+                .clamp(-1.0, 1.0)
+                .acos();
+            let second_axis_error = dot(second_seat.normal, first_hole.direction)
+                .abs()
+                .clamp(-1.0, 1.0)
+                .acos();
+            let opposed_error = (-dot(first_seat.normal, second_seat.normal))
+                .clamp(-1.0, 1.0)
+                .acos();
+            let seat_error_radians = first_axis_error.max(second_axis_error).max(opposed_error);
+            if seat_error_radians > allowed_radians {
+                issues.push(ValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    pair: Some(pair),
+                    relation: Some(relation_id),
+                    kind: ValidationIssueKind::FastenerSeatNormalMismatch {
+                        error_radians: seat_error_radians,
+                        allowed_radians,
+                    },
+                });
+            }
+            let actual_grip_mm = dot(
+                subtract(second_seat.origin, first_seat.origin),
+                first_hole.direction,
+            )
+            .abs();
+            let expected_grip_mm = joint.grip_length.as_mm();
+            if (actual_grip_mm - expected_grip_mm).abs() > allowed_mm {
+                issues.push(ValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    pair: Some(pair),
+                    relation: Some(relation_id),
+                    kind: ValidationIssueKind::FastenerGripLengthMismatch {
+                        actual_mm: actual_grip_mm,
+                        expected_mm: expected_grip_mm,
+                        allowed_mm,
+                    },
+                });
+            }
+        }
         skipped
     }
 }
@@ -592,6 +723,39 @@ struct InstanceGeometry {
 struct WorldPlane {
     origin: [f64; 3],
     normal: [f64; 3],
+}
+
+#[derive(Clone, Copy)]
+struct WorldCylinder {
+    origin: [f64; 3],
+    direction: [f64; 3],
+    radius_mm: f64,
+}
+
+fn world_cylinder(
+    endpoint: DatumEndpoint<CylinderDatum>,
+    assembly: &Assembly,
+    instances: &[Option<InstanceGeometry>],
+) -> WorldCylinder {
+    let instance = assembly
+        .instance(endpoint.instance)
+        .expect("relation endpoint was validated when inserted");
+    let definition = assembly
+        .definition(instance.definition)
+        .expect("inserted instance references a definition");
+    let cylinder = definition
+        .datums
+        .get(endpoint.datum)
+        .expect("relation datum kind was validated when inserted");
+    let pose = instances[endpoint.instance.index()]
+        .as_ref()
+        .expect("fastened endpoint is included in this validation scope")
+        .world_pose;
+    WorldCylinder {
+        origin: pose.transform_point(cylinder.axis.origin.coordinates_mm()),
+        direction: pose.transform_vector(cylinder.axis.direction.components()),
+        radius_mm: cylinder.radius.as_mm(),
+    }
 }
 
 fn world_plane(
@@ -625,6 +789,18 @@ fn subtract(lhs: [f64; 3], rhs: [f64; 3]) -> [f64; 3] {
 
 fn dot(lhs: [f64; 3], rhs: [f64; 3]) -> f64 {
     lhs[0] * rhs[0] + lhs[1] * rhs[1] + lhs[2] * rhs[2]
+}
+
+fn cross(lhs: [f64; 3], rhs: [f64; 3]) -> [f64; 3] {
+    [
+        lhs[1] * rhs[2] - lhs[2] * rhs[1],
+        lhs[2] * rhs[0] - lhs[0] * rhs[2],
+        lhs[0] * rhs[1] - lhs[1] * rhs[0],
+    ]
+}
+
+fn magnitude(vector: [f64; 3]) -> f64 {
+    dot(vector, vector).sqrt()
 }
 
 fn contact_area(
@@ -739,11 +915,12 @@ impl Aabb3 {
 #[cfg(test)]
 mod tests {
     use gimbal_core::{
-        Angle, AssemblyRelation, Body, ComponentDefinition, ComponentInstance, ComponentLocation,
-        ComponentRole, DatumEndpoint, DatumSet, EngineeringTolerance, FeatureBuilder, FrameGraph,
-        Kinematics, Manufacturing, NonNegativeAngle, NonNegativeLength, PitchRollCommand,
-        PlaneDatum, Point3, PositiveArea, PositiveLength, PositiveVolume, Primitive3,
-        RigidTransform, SurfaceContact, UnitVector3,
+        Angle, AssemblyRelation, AxisDatum, Body, ComponentDefinition, ComponentInstance,
+        ComponentLocation, ComponentRole, CylinderDatum, DatumEndpoint, DatumSet,
+        EngineeringTolerance, FastenedJoint, FastenerHardware, FastenerHeadSide, FeatureBuilder,
+        FrameGraph, Kinematics, Manufacturing, MetricThread, NonNegativeAngle, NonNegativeLength,
+        PitchRollCommand, PlaneDatum, Point3, PositiveArea, PositiveLength, PositiveVolume,
+        Primitive3, RigidTransform, SurfaceContact, UnitVector3,
     };
 
     use super::*;
@@ -954,6 +1131,157 @@ mod tests {
             issue.kind,
             ValidationIssueKind::SurfaceContactSeparation { distance_mm, .. }
                 if (distance_mm - 0.1).abs() < 1.0e-8
+        )));
+    }
+
+    #[test]
+    fn fastened_relation_validates_hole_axes_radii_seats_and_grip() {
+        let mut builder = FeatureBuilder::new();
+        let member = builder.primitive(Primitive3::Box {
+            x: gimbal_core::Length::positive_mm(10.0).expect("positive length"),
+            y: gimbal_core::Length::positive_mm(10.0).expect("positive length"),
+            z: gimbal_core::Length::positive_mm(2.0).expect("positive length"),
+            centered: true,
+        });
+        let hardware = builder.primitive(Primitive3::Box {
+            x: gimbal_core::Length::positive_mm(1.0).expect("positive length"),
+            y: gimbal_core::Length::positive_mm(1.0).expect("positive length"),
+            z: gimbal_core::Length::positive_mm(1.0).expect("positive length"),
+            centered: true,
+        });
+        let graph = builder.finish();
+        let frames = FrameGraph::new();
+        let world = frames.world();
+        let pose = Kinematics::new(
+            frames,
+            Angle::degrees(1.0).expect("finite limit"),
+            Angle::degrees(1.0).expect("finite limit"),
+        )
+        .pose(PitchRollCommand {
+            pitch: Angle::degrees(0.0).expect("finite angle"),
+            roll: Angle::degrees(0.0).expect("finite angle"),
+        })
+        .expect("zero pose");
+
+        let report_for_offset = |second_x: f64, second_radius: f64| {
+            let member_datums = |seat_z: f64, seat_normal: [f64; 3], radius: f64| {
+                let mut datums = DatumSet::new();
+                let hole = datums.add(
+                    "m3_clearance_hole".into(),
+                    CylinderDatum {
+                        axis: AxisDatum {
+                            origin: Point3::from_mm([0.0, 0.0, 0.0]).expect("finite point"),
+                            direction: UnitVector3::new([0.0, 0.0, 1.0]).expect("valid direction"),
+                        },
+                        radius: PositiveLength::mm(radius).expect("positive radius"),
+                    },
+                );
+                let seat = datums.add(
+                    "washer_seat".into(),
+                    PlaneDatum {
+                        origin: Point3::from_mm([0.0, 0.0, seat_z]).expect("finite point"),
+                        normal: UnitVector3::new(seat_normal).expect("valid normal"),
+                    },
+                );
+                (datums, hole, seat)
+            };
+            let (first_datums, first_hole, first_seat) = member_datums(-1.0, [0.0, 0.0, -1.0], 1.7);
+            let (second_datums, second_hole, second_seat) =
+                member_datums(1.0, [0.0, 0.0, 1.0], second_radius);
+            let mut assembly = Assembly::new();
+            let first_definition = assembly.add_definition(ComponentDefinition {
+                name: "first_member".into(),
+                role: ComponentRole::FixedCarrierPost,
+                body: Body::Solid(member),
+                manufacturing: Manufacturing::Fdm,
+                color_rgba: [1.0; 4],
+                datums: first_datums,
+            });
+            let second_definition = assembly.add_definition(ComponentDefinition {
+                name: "second_member".into(),
+                role: ComponentRole::FixedCarrierRail,
+                body: Body::Solid(member),
+                manufacturing: Manufacturing::Fdm,
+                color_rgba: [1.0; 4],
+                datums: second_datums,
+            });
+            let first = assembly.add_instance(ComponentInstance {
+                name: "first_member".into(),
+                definition: first_definition,
+                frame: world,
+                local_pose: RigidTransform::translated(0.0, 0.0, -1.0),
+                location: ComponentLocation::new(),
+            });
+            let second = assembly.add_instance(ComponentInstance {
+                name: "second_member".into(),
+                definition: second_definition,
+                frame: world,
+                local_pose: RigidTransform::translated(second_x, 0.0, 1.0),
+                location: ComponentLocation::new(),
+            });
+            let mut add_hardware = |name: &str, role, x: f64| {
+                let definition = assembly.add_definition(ComponentDefinition {
+                    name: name.into(),
+                    role,
+                    body: Body::Solid(hardware),
+                    manufacturing: Manufacturing::Purchased,
+                    color_rgba: [1.0; 4],
+                    datums: DatumSet::new(),
+                });
+                assembly.add_instance(ComponentInstance {
+                    name: name.into(),
+                    definition,
+                    frame: world,
+                    local_pose: RigidTransform::translated(x, 0.0, 0.0),
+                    location: ComponentLocation::new(),
+                })
+            };
+            let bolt = add_hardware("m3_bolt", ComponentRole::M3Bolt, 20.0);
+            let nut = add_hardware("m3_nut", ComponentRole::M3Nut, 22.0);
+            assembly
+                .add_relation(AssemblyRelation::Fastened(FastenedJoint {
+                    first_hole: DatumEndpoint::new(first, first_hole),
+                    second_hole: DatumEndpoint::new(second, second_hole),
+                    first_seat: DatumEndpoint::new(first, first_seat),
+                    second_seat: DatumEndpoint::new(second, second_seat),
+                    hardware: FastenerHardware {
+                        bolt,
+                        nut,
+                        first_washer: None,
+                        second_washer: None,
+                    },
+                    thread: MetricThread::M3,
+                    target_hole_radial_clearance: NonNegativeLength::mm(0.2)
+                        .expect("non-negative clearance"),
+                    grip_length: PositiveLength::mm(4.0).expect("positive grip"),
+                    head_side: FastenerHeadSide::First,
+                    tolerance: EngineeringTolerance {
+                        linear: NonNegativeLength::mm(0.05).expect("valid tolerance"),
+                        angular: NonNegativeAngle::degrees(0.1).expect("valid tolerance"),
+                    },
+                }))
+                .expect("valid fastened relation");
+            AssemblyValidator::new(&graph, &assembly, &pose, settings())
+                .validate()
+                .expect("validation query succeeds")
+        };
+
+        assert!(report_for_offset(0.0, 1.7).is_valid());
+        let axis_error = report_for_offset(0.2, 1.7);
+        assert!(axis_error.issues.iter().any(|issue| matches!(
+            issue.kind,
+            ValidationIssueKind::FastenerHoleAxisSeparation { distance_mm, .. }
+                if (distance_mm - 0.2).abs() < 1.0e-8
+        )));
+        let radius_error = report_for_offset(0.0, 1.9);
+        assert!(radius_error.issues.iter().any(|issue| matches!(
+            issue.kind,
+            ValidationIssueKind::FastenerHoleRadiusMismatch {
+                second_radius_mm,
+                expected_radius_mm,
+                ..
+            } if (second_radius_mm - 1.9).abs() < 1.0e-8
+                && (expected_radius_mm - 1.7).abs() < 1.0e-8
         )));
     }
 

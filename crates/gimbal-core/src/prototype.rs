@@ -2895,7 +2895,8 @@ fn sheet_box_definition_with_faces(
         name: name.to_string(),
         role: style.role,
         body: Body::Sheet {
-            profile,
+            outer: profile,
+            cutouts: Vec::new(),
             thickness,
             assembly_solid: solid,
         },

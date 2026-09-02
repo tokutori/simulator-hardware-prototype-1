@@ -14,7 +14,7 @@ use gimbal_core::{
 };
 use gimbal_export::{
     AnimationParameters, ExportPart, sha256_file, write_3mf, write_animated_gltf, write_binary_stl,
-    write_dxf_profile, write_mesh_3mf, write_obj,
+    write_dxf_sheet_profile, write_mesh_3mf, write_obj,
 };
 use gimbal_kernel_manifold::{
     AssemblyValidator, Evaluator, UnrelatedProximityPolicy, ValidationIssueKind,
@@ -154,18 +154,25 @@ fn generate(
                 fabrication_artifacts.push(path);
             }
             (GenerationMode::Validated, Manufacturing::LaserCut) => {
-                let Body::Sheet { profile, .. } = definition.body else {
+                let Body::Sheet { outer, cutouts, .. } = &definition.body else {
                     return Err(format!(
                         "laser definition {:?} does not retain a nominal 2D profile",
                         definition.name
                     )
                     .into());
                 };
-                let Some(RegionNode::Polygon(points)) = design.graph.region(profile) else {
+                let Some(RegionNode::Polygon(outer_points)) = design.graph.region(*outer) else {
                     return Err("laser profile references an unknown region".into());
                 };
+                let cutout_points = cutouts
+                    .iter()
+                    .map(|cutout| match design.graph.region(*cutout) {
+                        Some(RegionNode::Polygon(points)) => Ok(points.as_slice()),
+                        None => Err("laser cutout references an unknown region"),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
                 let path = laser_dir.join(format!("{}.dxf", definition.name));
-                write_dxf_profile(points, &path)?;
+                write_dxf_sheet_profile(outer_points, &cutout_points, &path)?;
                 fabrication_artifacts.push(path);
             }
             (GenerationMode::Validated, Manufacturing::Purchased) => {}
@@ -499,6 +506,59 @@ fn validation_report_json(design: &PrototypeDesign, report: &ValidationReport) -
                     json!({
                         "contact_area_mm2": contact_area_mm2,
                         "minimum_area_mm2": minimum_area_mm2
+                    }),
+                ),
+                ValidationIssueKind::FastenerHoleAxisSeparation {
+                    distance_mm,
+                    allowed_mm,
+                } => (
+                    "fastener_hole_axis_separation",
+                    json!({ "distance_mm": distance_mm, "allowed_mm": allowed_mm }),
+                ),
+                ValidationIssueKind::FastenerHoleAxisMismatch {
+                    error_radians,
+                    allowed_radians,
+                } => (
+                    "fastener_hole_axis_mismatch",
+                    json!({
+                        "error_radians": error_radians,
+                        "allowed_radians": allowed_radians
+                    }),
+                ),
+                ValidationIssueKind::FastenerHoleRadiusMismatch {
+                    first_radius_mm,
+                    second_radius_mm,
+                    expected_radius_mm,
+                    allowed_mm,
+                } => (
+                    "fastener_hole_radius_mismatch",
+                    json!({
+                        "first_radius_mm": first_radius_mm,
+                        "second_radius_mm": second_radius_mm,
+                        "expected_radius_mm": expected_radius_mm,
+                        "allowed_mm": allowed_mm
+                    }),
+                ),
+                ValidationIssueKind::FastenerSeatNormalMismatch {
+                    error_radians,
+                    allowed_radians,
+                } => (
+                    "fastener_seat_normal_mismatch",
+                    json!({
+                        "error_radians": error_radians,
+                        "allowed_radians": allowed_radians
+                    }),
+                ),
+                ValidationIssueKind::FastenerGripLengthMismatch {
+                    actual_mm,
+                    expected_mm,
+                    allowed_mm,
+                } => (
+                    "fastener_grip_length_mismatch",
+                    json!({
+                        "actual_mm": actual_mm,
+                        "expected_mm": expected_mm,
+                        "allowed_mm": allowed_mm
                     }),
                 ),
                 ValidationIssueKind::UnspecifiedProximity {
@@ -915,6 +975,9 @@ mod tests {
                 AssemblyRelation::SurfaceContact(contact) => {
                     (contact.first.instance, contact.second.instance)
                 }
+                AssemblyRelation::Fastened(joint) => {
+                    (joint.first_hole.instance, joint.second_hole.instance)
+                }
                 AssemblyRelation::CylindricalFit(fit) => (fit.shaft.instance, fit.bore.instance),
                 AssemblyRelation::GearMesh(mesh) => {
                     (mesh.first_axis.instance, mesh.second_axis.instance)
@@ -1069,6 +1132,9 @@ mod tests {
                     .filter(|(_, relation)| match relation {
                         AssemblyRelation::SurfaceContact(contact) => {
                             contact.first.instance == post || contact.second.instance == post
+                        }
+                        AssemblyRelation::Fastened(joint) => {
+                            joint.first_hole.instance == post || joint.second_hole.instance == post
                         }
                         AssemblyRelation::CylindricalFit(fit) => {
                             fit.shaft.instance == post || fit.bore.instance == post
