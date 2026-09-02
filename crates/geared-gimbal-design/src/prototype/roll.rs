@@ -2,6 +2,48 @@
 
 use super::*;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RollBearingPosition {
+    Locating,
+    Floating,
+}
+
+impl RollBearingPosition {
+    pub(super) const fn for_end(end: LongitudinalEnd) -> Self {
+        match end {
+            LongitudinalEnd::Front => Self::Locating,
+            LongitudinalEnd::Rear => Self::Floating,
+        }
+    }
+
+    pub(super) const fn suffix(self) -> &'static str {
+        match self {
+            Self::Locating => "locating",
+            Self::Floating => "floating",
+        }
+    }
+}
+
+fn roll_bearing_carrier_definition(
+    definitions: &Definitions,
+    end: LongitudinalEnd,
+) -> Defined<CarrierEndDatums> {
+    match RollBearingPosition::for_end(end) {
+        RollBearingPosition::Locating => definitions.roll.locating_bearing_carrier_end,
+        RollBearingPosition::Floating => definitions.roll.floating_bearing_carrier_end,
+    }
+}
+
+fn roll_bearing_retainer_definition(
+    definitions: &Definitions,
+    end: LongitudinalEnd,
+) -> Defined<RollBearingRetainerDatums> {
+    match RollBearingPosition::for_end(end) {
+        RollBearingPosition::Locating => definitions.roll.locating_bearing_retainer,
+        RollBearingPosition::Floating => definitions.roll.floating_bearing_retainer,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_roll_assembly(
     assembly: &mut Assembly,
@@ -54,6 +96,7 @@ pub(super) fn build_roll_assembly(
     }
     for (end, outward) in [(LongitudinalEnd::Front, 1.0), (LongitudinalEnd::Rear, -1.0)] {
         let location = ComponentLocation::new().with_longitudinal_end(end);
+        let carrier_definition = roll_bearing_carrier_definition(d, end);
         let end = end.as_str();
         let gear_x = outward * p.roll_axis.drive_station.mm();
         // Only the roll reduction itself remains below the roll axis. Its
@@ -66,7 +109,7 @@ pub(super) fn build_roll_assembly(
         add_located_instance(
             assembly,
             &format!("roll_bearing_carrier_end_{end}"),
-            d.roll.roll_bearing_carrier_end.id,
+            carrier_definition.id,
             pitch_frame,
             RigidTransform::translated(outward * p.roll_axis.bearing_station.mm(), 0.0, 0.0)
                 .compose(RigidTransform::rotated(
@@ -202,6 +245,7 @@ pub(super) fn build_roll_assembly(
     }
     for (end, outward) in [(LongitudinalEnd::Front, 1.0), (LongitudinalEnd::Rear, -1.0)] {
         let location = ComponentLocation::new().with_longitudinal_end(end);
+        let retainer_definition = roll_bearing_retainer_definition(d, end);
         let end = end.as_str();
         let end_rotation = if outward > 0.0 { 0.0 } else { PI };
         let x = outward * (p.roll_axis.bearing_station.mm() + roll_bearing_center_offset_x(p));
@@ -221,26 +265,52 @@ pub(super) fn build_roll_assembly(
         add_located_instance(
             assembly,
             &format!("roll_bearing_retainer_{end}"),
-            d.roll.roll_bearing_retainer.id,
+            retainer_definition.id,
             pitch_frame,
             RigidTransform::translated(retainer_x, 0.0, 0.0)
                 .compose(RigidTransform::rotated(Axis3::Z, end_rotation)),
             location,
         );
     }
-    for (name, x, rotation, ordinal) in [
-        ("inboard", front_bearing_inboard_collar_x(p), PI, 1),
-        ("outboard", front_bearing_outboard_collar_x(p), 0.0, 2),
+    for (end, name, x, rotation, ordinal) in [
+        (
+            LongitudinalEnd::Front,
+            "inboard",
+            front_bearing_inboard_collar_x(p),
+            PI,
+            1,
+        ),
+        (
+            LongitudinalEnd::Front,
+            "outboard",
+            front_bearing_outboard_collar_x(p),
+            0.0,
+            2,
+        ),
+        (
+            LongitudinalEnd::Rear,
+            "inboard",
+            rear_bearing_inboard_collar_x(p),
+            0.0,
+            1,
+        ),
+        (
+            LongitudinalEnd::Rear,
+            "outboard",
+            rear_bearing_outboard_collar_x(p),
+            PI,
+            2,
+        ),
     ] {
         add_located_instance(
             assembly,
-            &format!("roll_shaft_bearing_collar_front_{name}"),
+            &format!("roll_shaft_bearing_collar_{}_{name}", end.as_str()),
             d.roll.roll_shaft_bearing_collar.id,
             roll_frame,
             RigidTransform::translated(x, 0.0, 0.0)
                 .compose(RigidTransform::rotated(Axis3::Z, rotation)),
             ComponentLocation::new()
-                .with_longitudinal_end(LongitudinalEnd::Front)
+                .with_longitudinal_end(end)
                 .with_ordinal(ordinal),
         );
     }
@@ -254,6 +324,9 @@ pub(super) fn build_roll_bearing_fits(
     let shaft = required_instance(assembly, ComponentRole::RollShaft, ComponentLocation::new())?;
     for end in [LongitudinalEnd::Front, LongitudinalEnd::Rear] {
         let location = ComponentLocation::new().with_longitudinal_end(end);
+        let position = RollBearingPosition::for_end(end);
+        let carrier_definition = roll_bearing_carrier_definition(d, end);
+        let retainer_definition = roll_bearing_retainer_definition(d, end);
         let bearing = required_instance(assembly, ComponentRole::RollBearing, location)?;
         let carrier = required_instance(assembly, ComponentRole::RollBearingCarrierEnd, location)?;
         let retainer = required_instance(assembly, ComponentRole::RollBearingRetainer, location)?;
@@ -274,31 +347,42 @@ pub(super) fn build_roll_bearing_fits(
             bearing,
             d.roll.roll_bearing.datums.outer_surface,
             carrier,
-            d.roll.roll_bearing_carrier_end.datums.bearing_bore,
-            roll_bearing_carrier_radial_clearance_mm(),
+            carrier_definition.datums.bearing_bore,
+            roll_bearing_carrier_radial_clearance_mm(position),
         )?;
         add_surface_contact(
             assembly,
             bearing,
             d.roll.roll_bearing.datums.negative_x_face,
             carrier,
-            d.roll.roll_bearing_carrier_end.datums.bearing_shoulder_face,
+            carrier_definition.datums.bearing_shoulder_face,
             100.0,
         )?;
+        match position {
+            RollBearingPosition::Locating => add_surface_contact(
+                assembly,
+                bearing,
+                d.roll.roll_bearing.datums.positive_x_face,
+                retainer,
+                retainer_definition.datums.bearing_face,
+                100.0,
+            )?,
+            RollBearingPosition::Floating => add_plane_clearance(
+                assembly,
+                bearing,
+                d.roll.roll_bearing.datums.positive_x_face,
+                retainer,
+                retainer_definition.datums.bearing_face,
+                roll_bearing_axial_float_mm(),
+                100.0,
+            )?,
+        }
         add_surface_contact(
             assembly,
-            bearing,
-            d.roll.roll_bearing.datums.positive_x_face,
             retainer,
-            d.roll.roll_bearing_retainer.datums.bearing_face,
-            100.0,
-        )?;
-        add_surface_contact(
-            assembly,
-            retainer,
-            d.roll.roll_bearing_retainer.datums.carrier_face,
+            retainer_definition.datums.carrier_face,
             carrier,
-            d.roll.roll_bearing_carrier_end.datums.outer_face,
+            carrier_definition.datums.outer_face,
             500.0,
         )?;
         for index in 0..3 {
@@ -314,50 +398,89 @@ fn build_roll_shaft_axial_location(
     d: &Definitions,
 ) -> Result<(), PrototypeError> {
     let shaft = required_instance(assembly, ComponentRole::RollShaft, ComponentLocation::new())?;
-    let front = ComponentLocation::new().with_longitudinal_end(LongitudinalEnd::Front);
-    let bearing = required_instance(assembly, ComponentRole::RollBearing, front)?;
-    let inboard = required_instance(
-        assembly,
-        ComponentRole::RollShaftBearingCollar,
-        front.with_ordinal(1),
-    )?;
-    let outboard = required_instance(
-        assembly,
-        ComponentRole::RollShaftBearingCollar,
-        front.with_ordinal(2),
-    )?;
-    add_cylindrical_fit(
-        assembly,
-        shaft,
-        d.roll.roll_shaft.datums.front_inboard_collar_surface,
-        inboard,
-        d.roll.roll_shaft_bearing_collar.datums.bore,
-        0.0,
-    )?;
-    add_cylindrical_fit(
-        assembly,
-        shaft,
-        d.roll.roll_shaft.datums.front_outboard_collar_surface,
-        outboard,
-        d.roll.roll_shaft_bearing_collar.datums.bore,
-        0.0,
-    )?;
-    add_surface_contact(
-        assembly,
-        bearing,
-        d.roll.roll_bearing.datums.negative_x_face,
-        inboard,
-        d.roll.roll_shaft_bearing_collar.datums.bearing_face,
-        40.0,
-    )?;
-    add_surface_contact(
-        assembly,
-        bearing,
-        d.roll.roll_bearing.datums.positive_x_face,
-        outboard,
-        d.roll.roll_shaft_bearing_collar.datums.bearing_face,
-        40.0,
-    )?;
+    for end in [LongitudinalEnd::Front, LongitudinalEnd::Rear] {
+        let location = ComponentLocation::new().with_longitudinal_end(end);
+        let bearing = required_instance(assembly, ComponentRole::RollBearing, location)?;
+        let inboard = required_instance(
+            assembly,
+            ComponentRole::RollShaftBearingCollar,
+            location.with_ordinal(1),
+        )?;
+        let outboard = required_instance(
+            assembly,
+            ComponentRole::RollShaftBearingCollar,
+            location.with_ordinal(2),
+        )?;
+        let (inboard_surface, outboard_surface, inboard_face, outboard_face) = match end {
+            LongitudinalEnd::Front => (
+                d.roll.roll_shaft.datums.front_inboard_collar_surface,
+                d.roll.roll_shaft.datums.front_outboard_collar_surface,
+                d.roll.roll_bearing.datums.negative_x_face,
+                d.roll.roll_bearing.datums.positive_x_face,
+            ),
+            LongitudinalEnd::Rear => (
+                d.roll.roll_shaft.datums.rear_inboard_collar_surface,
+                d.roll.roll_shaft.datums.rear_outboard_collar_surface,
+                d.roll.roll_bearing.datums.negative_x_face,
+                d.roll.roll_bearing.datums.positive_x_face,
+            ),
+        };
+        for (collar, shaft_surface) in [(inboard, inboard_surface), (outboard, outboard_surface)] {
+            add_cylindrical_fit(
+                assembly,
+                shaft,
+                shaft_surface,
+                collar,
+                d.roll.roll_shaft_bearing_collar.datums.bore,
+                0.0,
+            )?;
+        }
+        add_surface_contact(
+            assembly,
+            bearing,
+            inboard_face,
+            inboard,
+            d.roll.roll_shaft_bearing_collar.datums.bearing_face,
+            40.0,
+        )?;
+        add_surface_contact(
+            assembly,
+            bearing,
+            outboard_face,
+            outboard,
+            d.roll.roll_shaft_bearing_collar.datums.bearing_face,
+            40.0,
+        )?;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_plane_clearance(
+    assembly: &mut Assembly,
+    first: ComponentInstanceId,
+    first_plane: DatumId<PlaneDatum>,
+    second: ComponentInstanceId,
+    second_plane: DatumId<PlaneDatum>,
+    target_separation_mm: f64,
+    minimum_overlap_area_mm2: f64,
+) -> Result<(), PrototypeError> {
+    assembly
+        .add_relation(AssemblyRelation::PlaneClearance(PlaneClearance {
+            first: DatumEndpoint::new(first, first_plane),
+            second: DatumEndpoint::new(second, second_plane),
+            target_separation: NonNegativeLength::mm(target_separation_mm)
+                .expect("bearing axial clearance is non-negative"),
+            minimum_overlap_area: PositiveArea::square_mm(minimum_overlap_area_mm2)
+                .expect("bearing stop overlap is positive"),
+            tolerance: EngineeringTolerance {
+                linear: NonNegativeLength::mm(0.02)
+                    .expect("bearing clearance tolerance is non-negative"),
+                angular: NonNegativeAngle::degrees(0.1)
+                    .expect("bearing clearance angular tolerance is non-negative"),
+            },
+        }))
+        .map_err(PrototypeError::Assembly)?;
     Ok(())
 }
 
@@ -434,8 +557,10 @@ fn add_roll_bearing_retainer_fastener(
         pose(-carrier_half - WASHER_THICKNESS - NUT_THICKNESS * 0.5),
         base_location,
     );
-    let retainer_datums = d.roll.roll_bearing_retainer.datums.fasteners[index];
-    let carrier_datums = d.roll.roll_bearing_carrier_end.datums.retainer_fasteners[index];
+    let retainer_datums = roll_bearing_retainer_definition(d, end).datums.fasteners[index];
+    let carrier_datums = roll_bearing_carrier_definition(d, end)
+        .datums
+        .retainer_fasteners[index];
     assembly
         .add_relation(AssemblyRelation::Fastened(FastenedJoint {
             first_hole: DatumEndpoint::new(retainer, retainer_datums.hole),
@@ -533,6 +658,7 @@ pub(super) fn build_moving_carrier_contacts(
 
     for end in [LongitudinalEnd::Front, LongitudinalEnd::Rear] {
         let end_location = ComponentLocation::new().with_longitudinal_end(end);
+        let carrier_definition = roll_bearing_carrier_definition(d, end);
         let carrier_end =
             required_instance(assembly, ComponentRole::RollBearingCarrierEnd, end_location)?;
         let rail_end_face = match end {
@@ -550,7 +676,7 @@ pub(super) fn build_moving_carrier_contacts(
                 rail,
                 rail_end_face,
                 carrier_end,
-                d.roll.roll_bearing_carrier_end.datums.rail_face,
+                carrier_definition.datums.rail_face,
                 120.0,
             )?;
 
@@ -588,7 +714,7 @@ pub(super) fn build_moving_carrier_contacts(
             add_surface_contact(
                 assembly,
                 carrier_end,
-                d.roll.roll_bearing_carrier_end.datums.arm_face,
+                carrier_definition.datums.arm_face,
                 arm,
                 d.roll.moving_drive_mount_arm.datums.carrier_face,
                 100.0,
@@ -763,12 +889,19 @@ pub(super) const fn roll_bearing_inner_radial_clearance_mm() -> f64 {
     0.0
 }
 
-pub(super) const fn roll_bearing_carrier_radial_clearance_mm() -> f64 {
-    0.0
+pub(super) const fn roll_bearing_carrier_radial_clearance_mm(position: RollBearingPosition) -> f64 {
+    match position {
+        RollBearingPosition::Locating => 0.0,
+        RollBearingPosition::Floating => 0.15,
+    }
 }
 
 pub(super) const fn roll_bearing_retainer_thickness_mm() -> f64 {
     3.0
+}
+
+pub(super) const fn roll_bearing_axial_float_mm() -> f64 {
+    1.0
 }
 
 // NBK NSCS-8-8-SB1, a clamping collar intended for the 608ZZ inner race.
@@ -802,6 +935,14 @@ pub(super) fn front_bearing_outboard_collar_x(p: &PrototypeParameters) -> f64 {
         + roll_bearing_collar_width_mm() * 0.5
 }
 
+pub(super) fn rear_bearing_inboard_collar_x(p: &PrototypeParameters) -> f64 {
+    -front_bearing_inboard_collar_x(p)
+}
+
+pub(super) fn rear_bearing_outboard_collar_x(p: &PrototypeParameters) -> f64 {
+    -front_bearing_outboard_collar_x(p)
+}
+
 pub(super) fn roll_bearing_center_offset_x(p: &PrototypeParameters) -> f64 {
     (p.frame.bearing_pedestal_thickness.mm() - p.roll_axis.bearing_width.mm()) * 0.5
 }
@@ -831,6 +972,7 @@ fn roll_bearing_retainer_inner_radius_mm(p: &PrototypeParameters) -> f64 {
 pub(super) fn roll_bearing_carrier_end_solid(
     builder: &mut FeatureBuilder,
     p: &PrototypeParameters,
+    position: RollBearingPosition,
 ) -> Result<SolidId, PrototypeError> {
     let thickness = p.frame.bearing_pedestal_thickness.mm();
     let boss_center = [0.0, 0.0];
@@ -880,7 +1022,7 @@ pub(super) fn roll_bearing_carrier_end_solid(
     let pocket_width = pocket_outer_x - pocket_inner_x;
     let pocket = cylinder_x(
         builder,
-        p.roll_axis.bearing_outer_radius.mm() + roll_bearing_carrier_radial_clearance_mm(),
+        p.roll_axis.bearing_outer_radius.mm() + roll_bearing_carrier_radial_clearance_mm(position),
         pocket_width,
     )?;
     let pocket = builder.translate(
@@ -914,6 +1056,7 @@ pub(super) fn roll_bearing_carrier_end_solid(
 pub(super) fn roll_bearing_retainer_solid(
     builder: &mut FeatureBuilder,
     p: &PrototypeParameters,
+    position: RollBearingPosition,
 ) -> Result<SolidId, PrototypeError> {
     let thickness = roll_bearing_retainer_thickness_mm();
     let mut retainer = annulus_solid_x(
@@ -940,6 +1083,23 @@ pub(super) fn roll_bearing_retainer_solid(
         },
     )?;
     retainer = builder.boolean(BooleanOperation::Difference, retainer, counterbore)?;
+    if position == RollBearingPosition::Floating {
+        let clearance = roll_bearing_axial_float_mm();
+        let recess = cylinder_x(
+            builder,
+            p.roll_axis.bearing_outer_radius.mm() + 0.2,
+            clearance + 0.2,
+        )?;
+        let recess = builder.translate(
+            recess,
+            Translation3 {
+                x: -thickness * 0.5 + clearance * 0.5 - 0.1,
+                y: 0.0,
+                z: 0.0,
+            },
+        )?;
+        retainer = builder.boolean(BooleanOperation::Difference, retainer, recess)?;
+    }
     for [y, z] in roll_bearing_retainer_hole_centres(p) {
         retainer = subtract_x_bore_at(
             builder,

@@ -13,9 +13,9 @@ use crate::{
     CylindricalFit, DatumEndpoint, DatumId, DatumSet, EngineeringTolerance, ExternalGearPair,
     FastenedJoint, FastenerHardware, FeatureBuilder, FeatureError, FeatureGraph, FrameGraph,
     FrameId, InternalGearPair, Joint, Kinematics, Length, LongitudinalEnd, Manufacturing,
-    MetricThread, NonNegativeAngle, NonNegativeLength, NutHardware, PlaneDatum, Point2, Point3,
-    PositiveArea, PositiveLength, Primitive3, RigidTransform, Rotation3, Side, SolidId, SpurGear,
-    SurfaceContact, Translation3, UnitVector3, VerticalEnd, WasherHardware,
+    MetricThread, NonNegativeAngle, NonNegativeLength, NutHardware, PlaneClearance, PlaneDatum,
+    Point2, Point3, PositiveArea, PositiveLength, Primitive3, RigidTransform, Rotation3, Side,
+    SolidId, SpurGear, SurfaceContact, Translation3, UnitVector3, VerticalEnd, WasherHardware,
 };
 
 mod component_geometry;

@@ -98,6 +98,7 @@ Frame / Joint       = kinematic motion
 | A-30 | High | floor clearance testが手書きした一部instanceだけを対象とし、`RollGearboxMount`を漏らしていた | pitch端での床干渉を成功扱いする | 4, 7 |
 | A-31 | High | `DatumId<T>`が発行元definitionを保持せず、同kind・同indexの別definition datumを誤受理し得る | relationが意図しない接続面・軸を参照する | 1 |
 | A-32 | High | relation validatorが未対応relationを黙って通過し、reportが`complete: true`になり得る | 未検証jointを検証済みと誤表示する | 2, 5, 6 |
+| A-33 | High | non-locating側608の内輪をshaft上でfloatさせる誤った配置を一時採用した | 回転嵌合面の摺動・frettingと軸位置不安定を招く | 5 |
 
 この一覧は完了条件ではない。Phase 2以降の全instance監査で新たに発見した問題も、この表へ追加する。
 
@@ -191,6 +192,7 @@ engineering toleranceは要求clearance、fit、公差および許容interferenc
 ```rust
 enum AssemblyRelation {
     SurfaceContact(SurfaceContact),
+    PlaneClearance(PlaneClearance),
     Fastened(FastenedJoint),
     CylindricalFit(CylindricalFit),
     Bearing(BearingJoint),
@@ -660,7 +662,9 @@ Exit criteria:
 - roll shaftの軸方向位置決めを前側608だけで行い、後側608をaxially floatingとする構成を採用した。前側内輪の両面へ、NBK公式の608ZZ用`NSCS-8-8-SB1`寸法に基づく8 mm clamp collarを2個配置した。購入部品のnominal body modelは外径20 mm、幅8.5 mm、内輪当接boss径11.7 mmであり、outboard側retainerには1 mmの外輪保持lipを残した段付きcounterboreを追加してcollar本体との干渉を避ける。2件のcollar–shaft `CylindricalFit`、2件のcollar–inner-race `SurfaceContact`および全関連pairのexact non-intersectionを回帰testにした。後側へcollarを置かないこともtestし、両bearingを軸方向に剛固定する過拘束を防ぐ。付属M3 clamp screwの突出・工具envelope、collar保持力、shaft公差およびFDM bore補正は未検証なのでPhase 5は継続する。
 - commit `bc5c7dc`から旧`output`を全消去し、37 definition・261 instanceのinspection model、Blender model、静止画8枚およびMP4 3本を再生成した。roll gearbox detailへ前側608の内外2個のshaft collarを追加し、isometric、frontおよびdetailを目視してcamera見切れ、白飛びまたは新規部品の明白な干渉がないことを確認した。manifest記載18 artifactのSHA-256は全件一致し、3動画はいずれもH.264、720 × 540、12 fps、6秒である。正式加工可否は引き続き`preview_only=true`、`validation.valid=false`である。
 
-次の作業はPhase 4とPhase 5を依存順に進める。残る全instanceとdefinition内featureの存在理由監査を続け、不要形状を削除した上で、FDM前提の固定frame接合をM3通しbolt、実穴、washer/nut座面および工具空間を持つ実jointへ置換する。同時にroll軸系は実bearing規格、inner/outer race、軸方向保持と製造公差を確定して、今回登録したreference fitを製造可能なfitへ置換する。relation coverage reportは実装済みであり、今後追加するrelationも未対応なら`Unsupported`として正式生成を失敗させる。LaserCutの`Body::Sheet` hole表現とDXF経路は次prototype向けに維持するが、現prototypeのcustom partはFDMを前提とする。
+- 上記の「後側にcollarを置かず内輪をshaft上でfloatさせる」判断は撤回する。SKFのlocating/non-locating bearing arrangementでは、回転軸へinterference fitする内輪を両側で軸方向に固定し、非分離型軸受の反対側ringをhousing seat上で移動させる。両608内輪をそれぞれ2個のcollarでshaftへ固定し、後側外輪だけへcarrier boreのnominal 0.15 mm radial slide clearanceとoutboard stopまで1.0 mmのaxial travelを与える構成へ修正した。後側retainerはbearing zoneを1.0 mm recessした専用definitionとし、`PlaneClearance` relationで外輪端面とstopの距離、法線および投影重なり面積を検証する。前側外輪は従来どおりshoulder/retainerで位置決めする。この訂正により、inner ringが回転shaft上で摺動・frettingする誤った荷重経路を除いた。
+
+次の作業はPhase 4とPhase 5を依存順に進める。残る全instanceとdefinition内featureの存在理由監査を続け、不要形状を削除した上で、FDM前提の固定frame接合をM3通しbolt、実穴、washer/nut座面および工具空間を持つ実jointへ置換する。同時にroll軸系はcollar clamp screwの工具空間、保持力、購入shaft公差、後側外輪slide fitおよびFDM bore補正を確定する。relation coverage reportは実装済みであり、今後追加するrelationも未対応なら`Unsupported`として正式生成を失敗させる。LaserCutの`Body::Sheet` hole表現とDXF経路は次prototype向けに維持するが、現prototypeのcustom partはFDMを前提とする。
 
 ## 9. 完成の定義
 
@@ -680,4 +684,6 @@ Exit criteria:
 - [KHK Spur Gears — Technical Information](https://khkgears.net/pdf/2023/spur-gears.pdf)
 - [UltiMaker: Design for FDM 3D printing](https://ultimaker.com/learn/design-for-fff-3d-printing-maximize-your-success/)
 - [NBK NSCS-SB: Set Collars for Securing Bearing](https://www.nbk1560.com/images/en/product/setcollar/NSCS-SB/NSCS-SB_1.pdf)
+- [SKF Super-precision bearings catalogue: locating and non-locating bearing arrangements](https://cdn.skfmediahub.skf.com/api/public/0901d19680495562/pdf_preview_medium/Super-precision_bearings_catalogue_-_13383_2_EN_pdf_preview_medium.pdf)
+- [SKF High-speed spherical roller bearings: non-locating outer-ring displacement](https://cdn.skfmediahub.skf.com/api/public/0901d1968080459c/pdf_preview_medium/17857_EN_VA991_High_speed_spherical_roller_bearings_pdf_preview_medium.pdf)
 - [開発方針](https://zenn.dev/bem130/articles/1b352797de94e7)
