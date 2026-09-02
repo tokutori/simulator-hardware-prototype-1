@@ -23,6 +23,16 @@ pub struct ExportPart {
     pub local_pose: RigidTransform,
     pub static_pose: RigidTransform,
     pub color_rgba: [f32; 4],
+    pub semantics: ExportSemantics,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ExportSemantics {
+    pub role: String,
+    pub side: Option<String>,
+    pub longitudinal_end: Option<String>,
+    pub vertical_end: Option<String>,
+    pub ordinal: Option<u16>,
 }
 
 #[derive(Debug, Error)]

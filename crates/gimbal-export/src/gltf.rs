@@ -116,7 +116,8 @@ pub fn write_animated_gltf(
             "name": part.name,
             "mesh": definition_meshes[&part.definition],
             "translation": core_translation_mm_to_gltf_m(transform.translation),
-            "rotation": core_rotation_to_gltf(transform.rotation)
+            "rotation": core_rotation_to_gltf(transform.rotation),
+            "extras": semantic_extras(&part.semantics)
         }));
     }
 
@@ -317,6 +318,16 @@ fn position_bounds(positions: &[f32]) -> ([f32; 3], [f32; 3]) {
     (minimum, maximum)
 }
 
+fn semantic_extras(semantics: &crate::ExportSemantics) -> Value {
+    json!({
+        "component_role": semantics.role,
+        "side": semantics.side,
+        "longitudinal_end": semantics.longitudinal_end,
+        "vertical_end": semantics.vertical_end,
+        "ordinal": semantics.ordinal,
+    })
+}
+
 /// Convert the core's right-handed Z-up millimetre coordinates to glTF's
 /// right-handed Y-up metre coordinates.
 fn core_point_mm_to_gltf_m(point: [f64; 3]) -> [f32; 3] {
@@ -380,5 +391,21 @@ mod tests {
             .map(|window| (window[1].2 - window[0].2).abs() * 18.0)
             .fold(0.0_f64, f64::max);
         assert!(maximum_input_step < 180.0);
+    }
+
+    #[test]
+    fn component_semantics_are_preserved_as_gltf_extras() {
+        let extras = semantic_extras(&crate::ExportSemantics {
+            role: "PitchDrivePinion".to_string(),
+            side: Some("right".to_string()),
+            longitudinal_end: Some("front".to_string()),
+            vertical_end: None,
+            ordinal: Some(2),
+        });
+        assert_eq!(extras["component_role"], "PitchDrivePinion");
+        assert_eq!(extras["side"], "right");
+        assert_eq!(extras["longitudinal_end"], "front");
+        assert!(extras["vertical_end"].is_null());
+        assert_eq!(extras["ordinal"], 2);
     }
 }

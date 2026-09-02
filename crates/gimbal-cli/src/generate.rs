@@ -8,8 +8,8 @@ use crate::validate::{
 use geared_gimbal_design::build_prototype;
 use gimbal_core::{Angle, Body, Manufacturing, PitchRollCommand, RegionNode, TriangleMesh};
 use gimbal_export::{
-    AnimationParameters, ExportPart, write_3mf, write_animated_gltf, write_binary_stl,
-    write_dxf_sheet_profile, write_mesh_3mf, write_obj,
+    AnimationParameters, ExportPart, ExportSemantics, write_3mf, write_animated_gltf,
+    write_binary_stl, write_dxf_sheet_profile, write_mesh_3mf, write_obj,
 };
 use gimbal_kernel_manifold::{Evaluator, ValidationProfile};
 use serde_json::json;
@@ -153,6 +153,22 @@ pub(crate) fn generate(
             local_pose: instance.local_pose,
             static_pose,
             color_rgba: definition.color_rgba,
+            semantics: ExportSemantics {
+                role: format!("{:?}", definition.role),
+                side: instance
+                    .location
+                    .side
+                    .map(|value| value.as_str().to_string()),
+                longitudinal_end: instance
+                    .location
+                    .longitudinal_end
+                    .map(|value| value.as_str().to_string()),
+                vertical_end: instance
+                    .location
+                    .vertical_end
+                    .map(|value| value.as_str().to_string()),
+                ordinal: instance.location.ordinal,
+            },
         });
     }
 

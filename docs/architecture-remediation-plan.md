@@ -237,3 +237,4 @@ Exit criteria:
 - A6の最初のcheckpointとして、既定prototypeのparameter、validation、geometry、definition、instance、relationおよび`build_prototype`を`no_std + alloc`の`geared-gimbal-design` crateへ移した。CLIはcomposition rootでdesign crateを選択し、`gimbal-core`は具体設計をexportしない。
 - `ComponentRole`とpitch/roll固定のcoordinate adapterはまだgeneric core側に残るため、A6は進行中とする。
 - A8の独立checkpointとして、任意fileのSHA-256計算を`gimbal-export`から`gimbal-cli::manifest`へ移した。export crateはmesh/CAD形式のserializationだけを担当し、artifact provenanceはCLI shellが担当する。
+- glTF nodeの`extras`へrole、side、longitudinal end、vertical endおよびordinalを出力し、Blender adapterのdetail対象選択をobject名prefixからsemantic custom propertyへ移行した。撤去済み部品名がadapterに残って別物を選ぶ経路を廃止した。全233 nodeへのmetadata出力、Rust unit testおよびBlender 5.1.2によるcustom property選択・静止画8枚・動画3本の再生成を確認した。

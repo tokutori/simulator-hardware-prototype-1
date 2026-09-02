@@ -241,12 +241,32 @@ def render_animation(
     print(f"rendered {output}")
 
 
-def select_named(
-    meshes: list[bpy.types.Object], prefixes: tuple[str, ...]
+def matches_semantics(
+    obj: bpy.types.Object,
+    *,
+    roles: frozenset[str],
+    side: str | None = None,
+    longitudinal_end: str | None = None,
+    vertical_ends: frozenset[str] | None = None,
+    ordinal: int | None = None,
+) -> bool:
+    if obj.get("component_role") not in roles:
+        return False
+    if side is not None and obj.get("side") != side:
+        return False
+    if longitudinal_end is not None and obj.get("longitudinal_end") != longitudinal_end:
+        return False
+    if vertical_ends is not None and obj.get("vertical_end") not in vertical_ends:
+        return False
+    return ordinal is None or obj.get("ordinal") == ordinal
+
+
+def select_semantic(
+    meshes: list[bpy.types.Object], label: str, **criteria: object
 ) -> list[bpy.types.Object]:
-    selected = [obj for obj in meshes if obj.name.startswith(prefixes)]
+    selected = [obj for obj in meshes if matches_semantics(obj, **criteria)]
     if not selected:
-        raise RuntimeError(f"no mesh objects matched {prefixes!r}")
+        raise RuntimeError(f"no mesh objects matched semantic group {label!r}")
     return selected
 
 
@@ -303,8 +323,21 @@ def main() -> None:
     scene = bpy.context.scene
     configure_animation_range(scene)
     scene.frame_set(scene.frame_start)
+    missing_semantics = [obj.name for obj in meshes if "component_role" not in obj]
+    if missing_semantics:
+        raise RuntimeError(f"glTF nodes have no component semantics: {missing_semantics[:5]!r}")
     detail_object = next(
-        (obj for obj in meshes if obj.name.startswith("pitch_drive_right_front_1")),
+        (
+            obj
+            for obj in meshes
+            if matches_semantics(
+                obj,
+                roles=frozenset(("PitchDrivePinion",)),
+                side="right",
+                longitudinal_end="front",
+                ordinal=1,
+            )
+        ),
         None,
     )
     detail_target = (
@@ -340,31 +373,72 @@ def main() -> None:
             args.still_height,
         )
 
-    pitch_gearbox = select_named(
-        meshes,
+    pitch_roles = frozenset(
         (
-            "pitch_gearbox_right_front_",
-            "pitch_drive_right_front_",
-            "pitch_retention_right_front",
-            "pitch_contact_right_front_",
-        ),
+            "PitchDrivePinion",
+            "PitchRetentionPinion",
+            "PitchDriveFlange",
+            "PitchRetentionFlange",
+            "PitchDriveShaft",
+            "PitchRetentionShaft",
+            "PitchGearboxSmallGear",
+            "PitchGearboxDistributionGear",
+            "PitchGearboxLargeGear",
+            "PitchContactOutboardPlate",
+            "PitchContactCarriagePlate",
+            "PitchGearboxFarPlate",
+            "PitchGearboxShaft",
+        )
     )
-    roll_gearbox = select_named(
+    pitch_gearbox = select_semantic(
         meshes,
-        (
-            "roll_gearbox_front_",
-            "roll_output_pinion_front",
-            "roll_driven_gear_front",
-        ),
+        "right-front pitch gearbox",
+        roles=pitch_roles,
+        side="right",
+        longitudinal_end="front",
     )
-    pitch_sector_reinforcement = select_named(
+    pitch_gearbox.extend(
+        obj
+        for obj in meshes
+        if matches_semantics(
+            obj,
+            roles=frozenset(("M3Bolt", "M3Nut", "M3Washer")),
+            side="right",
+            longitudinal_end="front",
+        )
+        and obj.get("vertical_end") is None
+    )
+    roll_gearbox = select_semantic(
         meshes,
-        (
-            "pitch_sector_left_front",
-            "pitch_carrier_left_upper_rail",
-            "pitch_carrier_left_lower_rail",
-            "pitch_carrier_left_front_lower_",
+        "front roll gearbox",
+        roles=frozenset(
+            (
+                "RollDrivenGear",
+                "RollInputPinion",
+                "RollGearboxSmallGear",
+                "RollGearboxLargeGear",
+                "RollGearboxShaft",
+                "RollGearboxPlate",
+                "MovingDriveMountArm",
+            )
         ),
+        longitudinal_end="front",
+    )
+    pitch_sector_reinforcement = select_semantic(
+        meshes,
+        "left-front sector support",
+        roles=frozenset(("PitchSector", "FixedCarrierPost")),
+        side="left",
+        longitudinal_end="front",
+    )
+    pitch_sector_reinforcement.extend(
+        select_semantic(
+            meshes,
+            "left carrier rails",
+            roles=frozenset(("FixedCarrierRail",)),
+            side="left",
+            vertical_ends=frozenset(("upper", "lower")),
+        )
     )
     detail_direction = Vector((1.0, -1.35, 0.75))
     for objects, filename in (
