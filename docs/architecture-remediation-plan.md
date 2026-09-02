@@ -237,5 +237,7 @@ Exit criteria:
 - A6の最初のcheckpointとして、既定prototypeのparameter、validation、geometry、definition、instance、relationおよび`build_prototype`を`no_std + alloc`の`geared-gimbal-design` crateへ移した。CLIはcomposition rootでdesign crateを選択し、`gimbal-core`は具体設計をexportしない。
 - `ComponentRole`とpitch/roll固定のcoordinate adapterはまだgeneric core側に残るため、A6は進行中とする。
 - A8の独立checkpointとして、任意fileのSHA-256計算を`gimbal-export`から`gimbal-cli::manifest`へ移した。export crateはmesh/CAD形式のserializationだけを担当し、artifact provenanceはCLI shellが担当する。
-- A9のCI checkpointをAssembly Phase 10より前倒しし、push/PRでformat、workspace check、warning-as-error Clippy、workspace test、generic coreと固有designのnative/WASM `no_std` checkを行うworkflowを追加した。依存監査は`Cargo.lock`に対してversion固定した`cargo-audit`を実行する。公開前artifact gate、rustdoc、README同期およびremote CI結果の確認が残るためA9は進行中とする。
+- A9のCI checkpointをAssembly Phase 10より前倒しし、push/PRでformat、workspace check、warning-as-error Clippy、workspace test、generic coreと固有designのnative/WASM `no_std` checkを行うworkflowを追加した。依存監査は`Cargo.lock`に対してversion固定した`cargo-audit`を実行する。公開前artifact gate、rustdocおよびREADME同期が残るためA9は進行中とする。
 - glTF nodeの`extras`へrole、side、longitudinal end、vertical endおよびordinalを出力し、Blender adapterのdetail対象選択をobject名prefixからsemantic custom propertyへ移行した。撤去済み部品名がadapterに残って別物を選ぶ経路を廃止した。全233 nodeへのmetadata出力、Rust unit testおよびBlender 5.1.2によるcustom property選択・静止画8枚・動画3本の再生成を確認した。
+- 最初のLinux CIでRust 1.98の新しいClippy lintを検出し、MSRV 1.88でstableな`slice::as_chunks`へ修正した。Node.js 20非推奨のcheckout v4も公式v7.0.1のcommit SHA固定へ更新した。再run `33681538072`ではRust quality gatesとRustSec auditの両jobが成功した。
+- relation dispatcherの次の実装として`CylindricalFit`を追加し、datum origin、軸方向およびtarget radial clearanceをengineering toleranceで検証するようにした。正常、0.2 mm偏心、軸傾斜およびclearance不一致fixtureを追加し、未実装relationのcoverage testは`GearMesh`へ移した。

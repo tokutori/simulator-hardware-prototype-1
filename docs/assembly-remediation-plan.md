@@ -649,6 +649,8 @@ Exit criteria:
 - 上記変更後に旧`output`を全消去し、35 definition・233 instanceのpreview model、静止画8枚、`.blend`、`gimbal-motion.mp4`およびpitch/roll gearbox動画を再生成した。manifest記載20 artifactのSHA-256は全件一致し、3動画はいずれもH.264、720×540、12 fps、6秒である。static structural-proxy validationは高精細gear 10 definitionを除外した25 definitionから221件のconservative candidateを報告して失敗しており、正式加工可能とは扱わない。
 - このcheckpointでworkspace test 55件、format、warning-as-error Clippy、`gimbal-core`と`geared-gimbal-design`のnative/wasm32 `no_std` checkが成功した。
 - Phase 10を待たず、push/PRごとにformat、workspace check、warning-as-error Clippy、workspace test、両`no_std` crateのnative/WASM checkおよび`cargo-audit 0.22.2`を実行するGitHub Actions workflowを追加した。これはA-17の基本gate部分だけを前倒しするものであり、structured validator reportのartifact保存、検証対象SHAとの照合、branch protectionおよび公開前監査はPhase 10に残す。
+- GitHub Actions再run `33681538072`でRust quality gatesは7分8秒、dependency auditは3分1秒で成功した。Linux Rust 1.98でのみ先行して有効になったClippy lintも修正済みであり、基本CIを実行可能なgateとして確認した。
+- `CylindricalFit`の共通validatorを実装し、datum originの一致、軸方向、shaft/bore半径差とtarget radial clearanceをengineering toleranceで検証するようにした。これでrelation variantのうち`SurfaceContact`、`Fastened`、`CylindricalFit`が検証可能となり、未実装は`GearMesh`だけになった。実prototypeのroll shaft/bearing datumとrelation登録はPhase 5の次checkpointとする。
 
 次の作業はPhase 4として、残る全instanceとdefinition内featureの存在理由監査を続け、不要形状を削除した上で、FDM前提の固定frame接合をM3通しbolt、実穴、washer/nut座面および工具空間を持つ実jointへ置換する。relation coverage reportは実装済みであり、今後追加するrelationも未対応なら`Unsupported`として正式生成を失敗させる。LaserCutの`Body::Sheet` hole表現とDXF経路は次prototype向けに維持するが、現prototypeのcustom partはFDMを前提とする。
 

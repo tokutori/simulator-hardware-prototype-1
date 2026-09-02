@@ -1,10 +1,11 @@
 use gimbal_core::{
     Angle, AssemblyRelation, AxisDatum, Body, BoltHardware, ComponentDefinition, ComponentInstance,
     ComponentLocation, ComponentRole, CylinderDatum, CylindricalFit, DatumEndpoint, DatumSet,
-    EngineeringTolerance, FastenedJoint, FastenerHardware, FeatureBuilder, FrameGraph, Kinematics,
-    Manufacturing, MetricThread, NonNegativeAngle, NonNegativeLength, NumericalTolerance,
-    NutHardware, PitchRollCommand, PlaneDatum, Point3, PositiveArea, PositiveLength,
-    PositiveVolume, Primitive3, RigidTransform, SurfaceContact, UnitVector3,
+    EngineeringTolerance, FastenedJoint, FastenerHardware, FeatureBuilder, FrameGraph, GearMesh,
+    GearMeshKind, Kinematics, Manufacturing, MetricThread, NonNegativeAngle, NonNegativeLength,
+    NumericalTolerance, NutHardware, PitchRollCommand, PlaneDatum, Point3, PositiveAngle,
+    PositiveArea, PositiveLength, PositiveVolume, Primitive3, RigidTransform, SurfaceContact,
+    UnitVector3,
 };
 
 use super::*;
@@ -218,6 +219,152 @@ fn surface_contact_validates_semantic_planes_with_engineering_tolerance() {
 }
 
 #[test]
+fn cylindrical_fit_validates_datum_alignment_and_radial_clearance() {
+    let mut builder = FeatureBuilder::new();
+    let cube = builder.primitive(Primitive3::Box {
+        x: gimbal_core::Length::positive_mm(2.0).expect("positive length"),
+        y: gimbal_core::Length::positive_mm(2.0).expect("positive length"),
+        z: gimbal_core::Length::positive_mm(2.0).expect("positive length"),
+        centered: true,
+    });
+    let shaft_solid = builder
+        .translate(
+            cube,
+            gimbal_core::Translation3 {
+                x: -20.0,
+                y: 0.0,
+                z: 0.0,
+            },
+        )
+        .expect("fixture translation");
+    let bore_solid = builder
+        .translate(
+            cube,
+            gimbal_core::Translation3 {
+                x: 20.0,
+                y: 0.0,
+                z: 0.0,
+            },
+        )
+        .expect("fixture translation");
+    let graph = builder.finish();
+    let frames = FrameGraph::new();
+    let world = frames.world();
+    let pose = Kinematics::new(
+        frames,
+        Angle::degrees(1.0).expect("finite limit"),
+        Angle::degrees(1.0).expect("finite limit"),
+    )
+    .pose(PitchRollCommand {
+        pitch: Angle::degrees(0.0).expect("finite angle"),
+        roll: Angle::degrees(0.0).expect("finite angle"),
+    })
+    .expect("zero pose");
+
+    let report_for = |bore_offset_y: f64, bore_radius: f64, bore_direction: [f64; 3]| {
+        let mut assembly = Assembly::new();
+        let mut shaft_datums = DatumSet::for_definition(assembly.next_definition_id());
+        let shaft_surface = shaft_datums.add(
+            "shaft_surface".into(),
+            CylinderDatum {
+                axis: AxisDatum {
+                    origin: Point3::from_mm([0.0; 3]).expect("finite point"),
+                    direction: UnitVector3::new([1.0, 0.0, 0.0]).expect("valid direction"),
+                },
+                radius: PositiveLength::mm(4.0).expect("positive radius"),
+            },
+        );
+        let shaft_definition = assembly.add_definition(ComponentDefinition {
+            name: "shaft".into(),
+            role: ComponentRole::RollShaft,
+            body: Body::Solid(shaft_solid),
+            manufacturing: Manufacturing::Purchased,
+            color_rgba: [1.0; 4],
+            datums: shaft_datums,
+        });
+        let mut bore_datums = DatumSet::for_definition(assembly.next_definition_id());
+        let bore_surface = bore_datums.add(
+            "bore_surface".into(),
+            CylinderDatum {
+                axis: AxisDatum {
+                    origin: Point3::from_mm([0.0; 3]).expect("finite point"),
+                    direction: UnitVector3::new(bore_direction).expect("valid direction"),
+                },
+                radius: PositiveLength::mm(bore_radius).expect("positive radius"),
+            },
+        );
+        let bore_definition = assembly.add_definition(ComponentDefinition {
+            name: "bore".into(),
+            role: ComponentRole::RollBearing,
+            body: Body::Solid(bore_solid),
+            manufacturing: Manufacturing::Purchased,
+            color_rgba: [1.0; 4],
+            datums: bore_datums,
+        });
+        let shaft = assembly.add_instance(ComponentInstance {
+            name: "shaft".into(),
+            definition: shaft_definition,
+            frame: world,
+            local_pose: RigidTransform::IDENTITY,
+            location: ComponentLocation::new(),
+        });
+        let bore = assembly.add_instance(ComponentInstance {
+            name: "bore".into(),
+            definition: bore_definition,
+            frame: world,
+            local_pose: RigidTransform::translated(0.0, bore_offset_y, 0.0),
+            location: ComponentLocation::new(),
+        });
+        assembly
+            .add_relation(AssemblyRelation::CylindricalFit(CylindricalFit {
+                shaft: DatumEndpoint::new(shaft, shaft_surface),
+                bore: DatumEndpoint::new(bore, bore_surface),
+                target_radial_clearance: NonNegativeLength::mm(0.15)
+                    .expect("non-negative clearance"),
+                tolerance: EngineeringTolerance {
+                    linear: NonNegativeLength::mm(0.05).expect("valid tolerance"),
+                    angular: NonNegativeAngle::degrees(0.1).expect("valid tolerance"),
+                },
+            }))
+            .expect("valid fit relation");
+        AssemblyValidator::new(&graph, &assembly, &pose, settings())
+            .validate()
+            .expect("validation query succeeds")
+    };
+
+    let valid = report_for(0.0, 4.15, [1.0, 0.0, 0.0]);
+    assert!(valid.is_valid(), "{valid:#?}");
+    assert_eq!(
+        valid.relation_checks[0].status,
+        RelationValidationStatus::Validated
+    );
+
+    let separated = report_for(0.2, 4.15, [1.0, 0.0, 0.0]);
+    assert!(separated.issues.iter().any(|issue| matches!(
+        issue.kind,
+        ValidationIssueKind::CylindricalFitOriginSeparation { distance_mm, .. }
+            if (distance_mm - 0.2).abs() < 1.0e-8
+    )));
+
+    let tilted = report_for(0.0, 4.15, [1.0, 0.01, 0.0]);
+    assert!(tilted.issues.iter().any(|issue| matches!(
+        issue.kind,
+        ValidationIssueKind::CylindricalFitAxisMismatch { .. }
+    )));
+
+    let wrong_clearance = report_for(0.0, 4.35, [1.0, 0.0, 0.0]);
+    assert!(wrong_clearance.issues.iter().any(|issue| matches!(
+        issue.kind,
+        ValidationIssueKind::CylindricalFitClearanceMismatch {
+            actual_radial_clearance_mm,
+            target_radial_clearance_mm,
+            ..
+        } if (actual_radial_clearance_mm - 0.35).abs() < 1.0e-8
+            && (target_radial_clearance_mm - 0.15).abs() < 1.0e-8
+    )));
+}
+
+#[test]
 fn unsupported_relation_prevents_a_complete_or_valid_report() {
     let mut builder = FeatureBuilder::new();
     let solid = builder.primitive(Primitive3::Box {
@@ -240,16 +387,20 @@ fn unsupported_relation_prevents_a_complete_or_valid_report() {
     })
     .expect("zero pose");
     let mut assembly = Assembly::new();
-    let add_definition = |assembly: &mut Assembly, name: &str, radius: f64| {
+    let add_definition = |assembly: &mut Assembly, name: &str| {
         let mut datums = DatumSet::for_definition(assembly.next_definition_id());
-        let cylinder = datums.add(
-            format!("{name}_cylinder"),
-            CylinderDatum {
-                axis: AxisDatum {
-                    origin: Point3::from_mm([0.0; 3]).expect("finite point"),
-                    direction: UnitVector3::new([0.0, 0.0, 1.0]).expect("valid direction"),
-                },
-                radius: PositiveLength::mm(radius).expect("positive radius"),
+        let axis = datums.add(
+            format!("{name}_axis"),
+            AxisDatum {
+                origin: Point3::from_mm([0.0; 3]).expect("finite point"),
+                direction: UnitVector3::new([0.0, 0.0, 1.0]).expect("valid direction"),
+            },
+        );
+        let mid_plane = datums.add(
+            format!("{name}_mid_plane"),
+            PlaneDatum {
+                origin: Point3::from_mm([0.0; 3]).expect("finite point"),
+                normal: UnitVector3::new([0.0, 0.0, 1.0]).expect("valid normal"),
             },
         );
         let definition = assembly.add_definition(ComponentDefinition {
@@ -260,29 +411,37 @@ fn unsupported_relation_prevents_a_complete_or_valid_report() {
             color_rgba: [1.0; 4],
             datums,
         });
-        (definition, cylinder)
+        (definition, axis, mid_plane)
     };
-    let (shaft_definition, shaft_datum) = add_definition(&mut assembly, "shaft", 1.0);
-    let (bore_definition, bore_datum) = add_definition(&mut assembly, "bore", 1.1);
-    let shaft = assembly.add_instance(ComponentInstance {
-        name: "shaft".into(),
-        definition: shaft_definition,
+    let (first_definition, first_axis, first_mid_plane) =
+        add_definition(&mut assembly, "first_gear");
+    let (second_definition, second_axis, second_mid_plane) =
+        add_definition(&mut assembly, "second_gear");
+    let first = assembly.add_instance(ComponentInstance {
+        name: "first_gear".into(),
+        definition: first_definition,
         frame: world,
         local_pose: RigidTransform::translated(-5.0, 0.0, 0.0),
         location: ComponentLocation::new(),
     });
-    let bore = assembly.add_instance(ComponentInstance {
-        name: "bore".into(),
-        definition: bore_definition,
+    let second = assembly.add_instance(ComponentInstance {
+        name: "second_gear".into(),
+        definition: second_definition,
         frame: world,
         local_pose: RigidTransform::translated(5.0, 0.0, 0.0),
         location: ComponentLocation::new().with_ordinal(1),
     });
     assembly
-        .add_relation(AssemblyRelation::CylindricalFit(CylindricalFit {
-            shaft: DatumEndpoint::new(shaft, shaft_datum),
-            bore: DatumEndpoint::new(bore, bore_datum),
-            target_radial_clearance: NonNegativeLength::mm(0.1).expect("non-negative clearance"),
+        .add_relation(AssemblyRelation::GearMesh(GearMesh {
+            first_axis: DatumEndpoint::new(first, first_axis),
+            second_axis: DatumEndpoint::new(second, second_axis),
+            first_mid_plane: DatumEndpoint::new(first, first_mid_plane),
+            second_mid_plane: DatumEndpoint::new(second, second_mid_plane),
+            kind: GearMeshKind::External,
+            target_backlash: NonNegativeLength::mm(0.1).expect("non-negative backlash"),
+            reference_phase: Angle::degrees(0.0).expect("finite phase"),
+            tooth_period: PositiveAngle::degrees(20.0).expect("positive tooth period"),
+            phase_backlash: NonNegativeAngle::degrees(0.1).expect("non-negative backlash"),
             tolerance: EngineeringTolerance {
                 linear: NonNegativeLength::mm(0.05).expect("valid tolerance"),
                 angular: NonNegativeAngle::degrees(0.1).expect("valid tolerance"),

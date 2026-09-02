@@ -7,7 +7,8 @@ use super::{
 use crate::transform;
 use gimbal_core::{
     Assembly, AssemblyRelation, AssemblyRelationId, AxisDatum, ComponentInstanceId,
-    ComponentInstancePair, CylinderDatum, DatumEndpoint, FastenedJoint, PlaneDatum, SurfaceContact,
+    ComponentInstancePair, CylinderDatum, CylindricalFit, DatumEndpoint, FastenedJoint, PlaneDatum,
+    SurfaceContact,
 };
 use manifold_rust::manifold::Manifold;
 
@@ -27,11 +28,9 @@ impl AssemblyValidator<'_> {
                     AssemblyRelation::Fastened(joint) => {
                         self.validate_fastened_joint(relation_id, joint, instances, issues)
                     }
-                    AssemblyRelation::CylindricalFit(fit) => unsupported_relation_status(
-                        fit.shaft.instance,
-                        fit.bore.instance,
-                        instances,
-                    ),
+                    AssemblyRelation::CylindricalFit(fit) => {
+                        self.validate_cylindrical_fit(relation_id, fit, instances, issues)
+                    }
                     AssemblyRelation::GearMesh(mesh) => unsupported_relation_status(
                         mesh.first_axis.instance,
                         mesh.second_axis.instance,
@@ -44,6 +43,73 @@ impl AssemblyValidator<'_> {
                 }
             })
             .collect()
+    }
+
+    fn validate_cylindrical_fit(
+        &self,
+        relation_id: AssemblyRelationId,
+        fit: CylindricalFit,
+        instances: &[Option<InstanceGeometry>],
+        issues: &mut Vec<ValidationIssue>,
+    ) -> RelationValidationStatus {
+        let initial_issue_count = issues.len();
+        let pair = ComponentInstancePair {
+            first: fit.shaft.instance,
+            second: fit.bore.instance,
+        };
+        if instances[pair.first.index()].is_none() || instances[pair.second.index()].is_none() {
+            return RelationValidationStatus::SkippedByScope;
+        }
+
+        let shaft = world_cylinder(fit.shaft, self.assembly, instances);
+        let bore = world_cylinder(fit.bore, self.assembly, instances);
+        let allowed_mm = fit.tolerance.linear.as_mm();
+        let origin_distance_mm = magnitude(subtract(bore.origin, shaft.origin));
+        if origin_distance_mm > allowed_mm {
+            issues.push(ValidationIssue {
+                severity: ValidationSeverity::Error,
+                pair: Some(pair),
+                relation: Some(relation_id),
+                kind: ValidationIssueKind::CylindricalFitOriginSeparation {
+                    distance_mm: origin_distance_mm,
+                    allowed_mm,
+                },
+            });
+        }
+
+        let axis_error_radians = dot(shaft.direction, bore.direction)
+            .abs()
+            .clamp(-1.0, 1.0)
+            .acos();
+        let allowed_radians = fit.tolerance.angular.as_radians();
+        if axis_error_radians > allowed_radians {
+            issues.push(ValidationIssue {
+                severity: ValidationSeverity::Error,
+                pair: Some(pair),
+                relation: Some(relation_id),
+                kind: ValidationIssueKind::CylindricalFitAxisMismatch {
+                    error_radians: axis_error_radians,
+                    allowed_radians,
+                },
+            });
+        }
+
+        let actual_radial_clearance_mm = bore.radius_mm - shaft.radius_mm;
+        let target_radial_clearance_mm = fit.target_radial_clearance.as_mm();
+        if (actual_radial_clearance_mm - target_radial_clearance_mm).abs() > allowed_mm {
+            issues.push(ValidationIssue {
+                severity: ValidationSeverity::Error,
+                pair: Some(pair),
+                relation: Some(relation_id),
+                kind: ValidationIssueKind::CylindricalFitClearanceMismatch {
+                    actual_radial_clearance_mm,
+                    target_radial_clearance_mm,
+                    allowed_mm,
+                },
+            });
+        }
+
+        relation_status_after(initial_issue_count, issues)
     }
 
     fn validate_surface_contact(

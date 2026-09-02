@@ -37,6 +37,19 @@ pub enum ValidationIssueKind {
         contact_area_mm2: f64,
         minimum_area_mm2: f64,
     },
+    CylindricalFitOriginSeparation {
+        distance_mm: f64,
+        allowed_mm: f64,
+    },
+    CylindricalFitAxisMismatch {
+        error_radians: f64,
+        allowed_radians: f64,
+    },
+    CylindricalFitClearanceMismatch {
+        actual_radial_clearance_mm: f64,
+        target_radial_clearance_mm: f64,
+        allowed_mm: f64,
+    },
     FastenerHoleAxisSeparation {
         distance_mm: f64,
         allowed_mm: f64,

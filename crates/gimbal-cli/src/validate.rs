@@ -202,6 +202,35 @@ pub(crate) fn validation_report_json(design: &PrototypeDesign, report: &Validati
                         "minimum_area_mm2": minimum_area_mm2
                     }),
                 ),
+                ValidationIssueKind::CylindricalFitOriginSeparation {
+                    distance_mm,
+                    allowed_mm,
+                } => (
+                    "cylindrical_fit_origin_separation",
+                    json!({ "distance_mm": distance_mm, "allowed_mm": allowed_mm }),
+                ),
+                ValidationIssueKind::CylindricalFitAxisMismatch {
+                    error_radians,
+                    allowed_radians,
+                } => (
+                    "cylindrical_fit_axis_mismatch",
+                    json!({
+                        "error_radians": error_radians,
+                        "allowed_radians": allowed_radians
+                    }),
+                ),
+                ValidationIssueKind::CylindricalFitClearanceMismatch {
+                    actual_radial_clearance_mm,
+                    target_radial_clearance_mm,
+                    allowed_mm,
+                } => (
+                    "cylindrical_fit_clearance_mismatch",
+                    json!({
+                        "actual_radial_clearance_mm": actual_radial_clearance_mm,
+                        "target_radial_clearance_mm": target_radial_clearance_mm,
+                        "allowed_mm": allowed_mm
+                    }),
+                ),
                 ValidationIssueKind::FastenerHoleAxisSeparation {
                     distance_mm,
                     allowed_mm,
