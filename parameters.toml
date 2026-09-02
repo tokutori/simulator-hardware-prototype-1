@@ -22,6 +22,11 @@ encoder_shaft_diameter_mm = 4.0
 drive_flange_clearance_mm = 0.70
 encoder_flange_clearance_mm = 0.35
 flange_thickness_mm = 1.2
+retention_flexure_length_mm = 18.0
+retention_flexure_beam_width_mm = 1.2
+retention_flexure_bridge_width_mm = 4.0
+retention_bearing_island_radius_mm = 6.0
+outboard_support_plate_offset_mm = 8.0
 
 [pitch_gearbox]
 module_mm = 0.6

@@ -71,12 +71,14 @@ reference teethは仮想full circleのpitch geometryを定義する値であり�
 - 2段compound reduction gearbox
 - 2本へのdistribution gear
 - input shaftと将来encoder interface shaft
-- encoder bearing blockと平行leaf spring 2枚
+- inner/outboard支持板へ一体化したretention bearing islandと、各面2本の平行flexure beam
 - 軸受bossをribで結んだside plate、shaft、上側carrier connectionおよびmount
 
 接触pinionは18 teeth、module 0.8、外径約16 mmである。外側2個のdrive pinionはunit中央から±7.5度、中心間約40.7 mmに配置する。prototype全体ではdrive pinion 8個、retention pinion 4個、接触歯車合計12個となる。
 
 各unitの2 drive pinionと1 retention pinionは一箇所へ密集させず、利用可能なsector長の範囲で接触点間隔を広げる。これにより移動carriageの支持スパンを確保する。ただし複数meshの荷重が自動的に均等化されるとは扱わず、drive 2軸の位相整合、carriage剛性およびretention側の弾性予圧を別々に検証する。
+
+retention軸は、別体のrigid bearing blockと外観だけのleaf springを併設せず、inner/outboard両支持板の一体flexureで案内する。各flexureはbearing island、radial方向の変位を許す平行beam、moving/fixed bridgeおよびrigid plateへ荷重を戻すanchor ribから成る。外側支持板にはpitch-sector mid-planeから8.0 mmの専用offsetを与え、drive/retention flangeとの最小0.25 mm隙間をparameter validationとexact Boolean testで検査する。現時点ではflexureのばね定数、予圧量、疲労寿命およびABS/PLAの材料差は未検証であり、Phase 5で実変位拘束とtest couponを含めて確定する。
 
 pitch gearboxはmodule 0.6である。離した2本の18T branch gearを共通54T distribution gearへ接続し、その後18/54 teethの3:1を2段直列にする。distribution段の1:3と後段の9:1を相殺すると、固定外歯referenceと18T drive pinionの比を含む移動体上の入力軸からpitch角までの相対回転比の大きさは62:1となる。この値はprototypeの手回し確認用であり、本番減速比ではない。
 

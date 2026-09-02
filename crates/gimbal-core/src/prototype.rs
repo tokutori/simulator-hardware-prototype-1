@@ -37,6 +37,12 @@ pub struct ContactUnitParameters {
     pub drive_flange_clearance: Length,
     pub encoder_flange_clearance: Length,
     pub flange_thickness: Length,
+    pub retention_flexure_length: Length,
+    pub retention_flexure_beam_width: Length,
+    pub retention_flexure_bridge_width: Length,
+    pub retention_bearing_island_radius: Length,
+    /// Distance from the pitch-sector mid-plane toward the outside support plate.
+    pub outboard_support_plate_offset: Length,
 }
 
 #[derive(Clone, Debug)]
@@ -134,6 +140,8 @@ pub enum PrototypeError {
     InvalidCockpitSuspension,
     InvalidGearboxGeometry,
     InvalidGearboxPlacement,
+    InvalidRetentionFlexure,
+    OutboardSupportHitsFlange,
     InvalidMovingCarrier,
     SectorSpineHitsDrive,
     SectorSupportHitsPost,
@@ -266,6 +274,29 @@ fn validate(parameters: &PrototypeParameters) -> Result<(), PrototypeError> {
         2.0 * drive_radius * libm::sin(parameters.contact_unit.branch_angle_offset.as_radians());
     if center_separation <= parameters.contact_unit.drive_pinion.outside_diameter() + 1.0 {
         return Err(PrototypeError::DrivePinionsOverlap);
+    }
+    let contact = &parameters.contact_unit;
+    if contact.retention_bearing_island_radius.mm() <= contact.encoder_shaft_radius.mm() + 1.5
+        || contact.retention_flexure_length.mm()
+            <= contact.retention_bearing_island_radius.mm() * 2.0
+        || contact.retention_flexure_beam_width.mm() >= contact.retention_bearing_island_radius.mm()
+        || contact.retention_flexure_bridge_width.mm() <= contact.retention_flexure_beam_width.mm()
+    {
+        return Err(PrototypeError::InvalidRetentionFlexure);
+    }
+    let plate_half = parameters.pitch_gearbox.side_plate_thickness.mm() * 0.5;
+    let drive_flange_outer_extent = parameters.pitch_sector.face_width.mm() * 0.5
+        + contact.drive_flange_clearance.mm()
+        + contact.flange_thickness.mm();
+    let encoder_flange_outer_extent = parameters.pitch_sector.face_width.mm() * 0.5
+        + contact.encoder_flange_clearance.mm()
+        + contact.flange_thickness.mm();
+    const MINIMUM_OUTBOARD_PLATE_GAP_MM: f64 = 0.25;
+    if contact.outboard_support_plate_offset.mm() - plate_half
+        < libm::fmax(drive_flange_outer_extent, encoder_flange_outer_extent)
+            + MINIMUM_OUTBOARD_PLATE_GAP_MM
+    {
+        return Err(PrototypeError::OutboardSupportHitsFlange);
     }
     let drive_vertical_extent = drive_radius
         * libm::sin(parameters.contact_unit.branch_angle_offset.as_radians())
@@ -462,8 +493,6 @@ struct Definitions {
     pitch_gearbox_far_plate: ComponentDefinitionId,
     pitch_gearbox_far_plate_fasteners: [FastenerMemberDatums; 3],
     pitch_gearbox_shaft: ComponentDefinitionId,
-    leaf_spring: ComponentDefinitionId,
-    bearing_block: ComponentDefinitionId,
     cockpit: ComponentDefinitionId,
     cockpit_top_face: DatumId<PlaneDatum>,
     cockpit_hanger: ComponentDefinitionId,
@@ -723,22 +752,6 @@ fn build_definitions(
         Manufacturing::Purchased,
         [0.62, 0.66, 0.70, 1.0],
     );
-    let leaf_spring = add_solid_definition(
-        assembly,
-        "encoder_leaf_spring",
-        ComponentRole::RetentionLeafSpring,
-        centered_box(builder, [22.0, 0.8, 4.0]),
-        Manufacturing::Purchased,
-        [0.74, 0.76, 0.78, 1.0],
-    );
-    let bearing_block = add_solid_definition(
-        assembly,
-        "encoder_bearing_block",
-        ComponentRole::RetentionBearingBlock,
-        encoder_bearing_block_solid(builder, p)?,
-        fdm,
-        [0.16, 0.52, 0.26, 1.0],
-    );
     let cockpit_size = [
         p.cockpit.length.mm(),
         p.cockpit.width.mm(),
@@ -980,8 +993,6 @@ fn build_definitions(
         pitch_gearbox_far_plate,
         pitch_gearbox_far_plate_fasteners,
         pitch_gearbox_shaft,
-        leaf_spring,
-        bearing_block,
         cockpit,
         cockpit_top_face: cockpit_faces.positive_z,
         cockpit_hanger,
@@ -1633,32 +1644,8 @@ fn build_contact_unit(
 
     let radial = [libm::cos(end_angle), libm::sin(end_angle)];
     let tangent = [-radial[1], radial[0]];
-    let block_center = encoder_center;
-    let outboard_support_plane_y = y + side_sign * p.pitch_gearbox.near_plate_inboard_offset.mm();
-    add_located_instance(
-        assembly,
-        &format!("{encoder_stem}_bearing_block"),
-        d.bearing_block,
-        pitch_frame,
-        RigidTransform::translated(block_center[0], outboard_support_plane_y, block_center[1])
-            .compose(RigidTransform::rotated(Axis3::Y, -end_angle)),
-        base_location,
-    );
-    for (index, tangent_offset) in [-7.0, 7.0].into_iter().enumerate() {
-        add_located_instance(
-            assembly,
-            &format!("{encoder_stem}_leaf_spring_{}", index + 1),
-            d.leaf_spring,
-            pitch_frame,
-            RigidTransform::translated(
-                block_center[0] - radial[0] * 7.0 + tangent[0] * tangent_offset,
-                outboard_support_plane_y,
-                block_center[1] - radial[1] * 7.0 + tangent[1] * tangent_offset,
-            )
-            .compose(RigidTransform::rotated(Axis3::Y, -end_angle)),
-            base_location.with_ordinal((index + 1) as u16),
-        );
-    }
+    let outboard_support_plane_y =
+        y + side_sign * p.contact_unit.outboard_support_plate_offset.mm();
 
     let branch_distance = p.pitch_gearbox.distribution_gear.pitch_radius()
         + p.pitch_gearbox.small_gear.pitch_radius();
@@ -2661,33 +2648,13 @@ fn pitch_contact_carriage_plate_solid(
         plate = builder.boolean(BooleanOperation::Union, plate, rib)?;
         plate = subtract_y_bore(builder, plate, 1.7, thickness + 2.0, tie[0], tie[1])?;
     }
-    let encoder_anchor = [
+    let retention_center = [
         p.pitch_sector.sector.internal_reference().pitch_radius()
             - p.contact_unit.encoder_pinion.pitch_radius()
-            - 18.0
             - layout.plate_center[0],
         -layout.plate_center[1],
     ];
-    let anchor_boss = cylinder_y(builder, 5.0, thickness)?;
-    let anchor_boss = builder.translate(
-        anchor_boss,
-        Translation3 {
-            x: encoder_anchor[0],
-            y: 0.0,
-            z: encoder_anchor[1],
-        },
-    )?;
-    plate = builder.boolean(BooleanOperation::Union, plate, anchor_boss)?;
-    let anchor_rib = beam_xz(builder, centers[1], encoder_anchor, thickness, 6.0)?;
-    plate = builder.boolean(BooleanOperation::Union, plate, anchor_rib)?;
-    plate = subtract_y_bore(
-        builder,
-        plate,
-        1.7,
-        thickness + 2.0,
-        encoder_anchor[0],
-        encoder_anchor[1],
-    )?;
+    plate = add_retention_flexure(builder, plate, retention_center, centers[0], thickness, p)?;
     let brace_origin = [
         layout.branch_midpoint[0] - layout.plate_center[0],
         layout.branch_midpoint[1] - layout.plate_center[1],
@@ -2756,10 +2723,6 @@ fn pitch_contact_outboard_plate_solid(
             layout.branches[1][0] - layout.branch_midpoint[0],
             layout.branches[1][1] - layout.branch_midpoint[1],
         ],
-        [
-            encoder[0] - layout.branch_midpoint[0],
-            encoder[1] - layout.branch_midpoint[1],
-        ],
         [0.0, 0.0],
     ];
     let mut plate = cylinder_y(builder, 5.5, thickness)?;
@@ -2783,29 +2746,25 @@ fn pitch_contact_outboard_plate_solid(
         )?;
         plate = builder.boolean(BooleanOperation::Union, plate, boss)?;
     }
-    for (a, b) in [
-        (centers[0], centers[3]),
-        (centers[1], centers[3]),
-        (centers[2], centers[3]),
-    ] {
+    for (a, b) in [(centers[0], centers[2]), (centers[1], centers[2])] {
         let rib = beam_xz(builder, a, b, thickness, 5.0)?;
         plate = builder.boolean(BooleanOperation::Union, plate, rib)?;
     }
-    for center in centers.into_iter().take(3) {
-        let radius = if center == centers[2] {
-            p.contact_unit.encoder_shaft_radius.mm() + 0.35
-        } else {
-            p.contact_unit.drive_shaft_radius.mm() + 0.35
-        };
+    for center in centers.into_iter().take(2) {
         plate = subtract_y_bore(
             builder,
             plate,
-            radius,
+            p.contact_unit.drive_shaft_radius.mm() + 0.35,
             thickness + 2.0,
             center[0],
             center[1],
         )?;
     }
+    let retention_center = [
+        encoder[0] - layout.branch_midpoint[0],
+        encoder[1] - layout.branch_midpoint[1],
+    ];
+    plate = add_retention_flexure(builder, plate, retention_center, centers[2], thickness, p)?;
     subtract_y_bore(builder, plate, 1.7, thickness + 2.0, 0.0, 0.0)
 }
 
@@ -2916,18 +2875,78 @@ fn pitch_gearbox_plate_fastener_datums(
     })
 }
 
-fn encoder_bearing_block_solid(
+fn add_retention_flexure(
     builder: &mut FeatureBuilder,
+    mut plate: SolidId,
+    bearing_center: [f64; 2],
+    rigid_anchor: [f64; 2],
+    thickness: f64,
     p: &PrototypeParameters,
 ) -> Result<SolidId, PrototypeError> {
-    let block = centered_box(builder, [16.0, 3.0, 18.0]);
+    let contact = &p.contact_unit;
+    let length = contact.retention_flexure_length.mm();
+    let beam_width = contact.retention_flexure_beam_width.mm();
+    let bridge_width = contact.retention_flexure_bridge_width.mm();
+    let island_radius = contact.retention_bearing_island_radius.mm();
+    let beam_offset = island_radius * 0.65;
+    let fixed_bridge_center = [bearing_center[0], bearing_center[1] - length];
+
+    let island = cylinder_y(builder, island_radius, thickness)?;
+    let island = builder.translate(
+        island,
+        Translation3 {
+            x: bearing_center[0],
+            y: 0.0,
+            z: bearing_center[1],
+        },
+    )?;
+    plate = builder.boolean(BooleanOperation::Union, plate, island)?;
+
+    for x in [
+        bearing_center[0] - beam_offset,
+        bearing_center[0] + beam_offset,
+    ] {
+        let beam = beam_xz(
+            builder,
+            [x, bearing_center[1]],
+            [x, fixed_bridge_center[1]],
+            thickness,
+            beam_width,
+        )?;
+        plate = builder.boolean(BooleanOperation::Union, plate, beam)?;
+    }
+    let moving_bridge = beam_xz(
+        builder,
+        [bearing_center[0] - beam_offset, bearing_center[1]],
+        [bearing_center[0] + beam_offset, bearing_center[1]],
+        thickness,
+        bridge_width,
+    )?;
+    plate = builder.boolean(BooleanOperation::Union, plate, moving_bridge)?;
+    let fixed_bridge = beam_xz(
+        builder,
+        [bearing_center[0] - beam_offset, fixed_bridge_center[1]],
+        [bearing_center[0] + beam_offset, fixed_bridge_center[1]],
+        thickness,
+        bridge_width,
+    )?;
+    plate = builder.boolean(BooleanOperation::Union, plate, fixed_bridge)?;
+    let anchor_rib = beam_xz(
+        builder,
+        fixed_bridge_center,
+        rigid_anchor,
+        thickness,
+        bridge_width,
+    )?;
+    plate = builder.boolean(BooleanOperation::Union, plate, anchor_rib)?;
+
     subtract_y_bore(
         builder,
-        block,
-        p.contact_unit.encoder_shaft_radius.mm() + 0.35,
-        5.0,
-        0.0,
-        0.0,
+        plate,
+        contact.encoder_shaft_radius.mm() + 0.35,
+        thickness + 2.0,
+        bearing_center[0],
+        bearing_center[1],
     )
 }
 

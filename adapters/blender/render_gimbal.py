@@ -347,7 +347,6 @@ def main() -> None:
             "pitch_drive_right_front_",
             "pitch_retention_right_front",
             "pitch_contact_right_front_",
-            "pitch_moving_crossbar_front",
         ),
     )
     roll_gearbox = select_named(
@@ -356,7 +355,6 @@ def main() -> None:
             "roll_gearbox_front_",
             "roll_output_pinion_front",
             "roll_driven_gear_front",
-            "pitch_moving_crossbar_front",
         ),
     )
     pitch_sector_reinforcement = select_named(

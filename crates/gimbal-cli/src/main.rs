@@ -312,6 +312,7 @@ fn generate(
             "fixed_rail_length_mm": loaded.parameters.frame.fixed_rail_length.mm(),
             "fixed_rail_depth_mm": loaded.parameters.frame.fixed_rail_depth.mm(),
             "floor_top_below_axis_mm": loaded.parameters.frame.floor_top_below_axis.mm(),
+            "pitch_contact_outboard_support_plate_offset_mm": loaded.parameters.contact_unit.outboard_support_plate_offset.mm(),
             "pitch_gearbox_near_plate_inboard_offset_mm": loaded.parameters.pitch_gearbox.near_plate_inboard_offset.mm(),
             "pitch_gearbox_gear_plane_inboard_offset_mm": loaded.parameters.pitch_gearbox.gear_plane_inboard_offset.mm(),
             "pitch_gearbox_far_plate_inboard_offset_mm": loaded.parameters.pitch_gearbox.far_plate_inboard_offset.mm()
@@ -1649,28 +1650,33 @@ mod tests {
     }
 
     #[test]
-    fn retention_supports_are_not_fixed_to_the_outer_frame() {
+    fn retention_flexures_are_integrated_into_the_moving_support_plates() {
         let design = load_design();
+        assert!(
+            design.assembly.instances().iter().all(|instance| {
+                !instance.name.contains("bearing_block") && !instance.name.contains("leaf_spring")
+            }),
+            "obsolete rigid bearing blocks and decorative leaf springs must remain absent"
+        );
         for component in [
             located(
-                ComponentRole::RetentionBearingBlock,
+                ComponentRole::PitchContactOutboardPlate,
                 ComponentLocation::new()
                     .with_side(Side::Left)
                     .with_longitudinal_end(LongitudinalEnd::Front),
             ),
             located(
-                ComponentRole::RetentionLeafSpring,
+                ComponentRole::PitchContactCarriagePlate,
                 ComponentLocation::new()
                     .with_side(Side::Right)
-                    .with_longitudinal_end(LongitudinalEnd::Rear)
-                    .with_ordinal(1),
+                    .with_longitudinal_end(LongitudinalEnd::Rear),
             ),
         ] {
             let zero = instance_pose(&design, component, 0.0, 0.0);
             let pitched = instance_pose(&design, component, 20.0, 0.0);
             assert_ne!(
                 zero, pitched,
-                "{component:?} must travel with the pitch unit"
+                "the integrated retention flexure support {component:?} must travel with the pitch unit"
             );
         }
     }
@@ -1990,6 +1996,18 @@ mod tests {
                     located(ComponentRole::PitchDriveShaft, right_front.with_ordinal(1)),
                     located(ComponentRole::PitchDriveShaft, right_front.with_ordinal(2)),
                     located(ComponentRole::PitchRetentionShaft, right_front),
+                    located(ComponentRole::PitchDriveFlange, right_front.with_ordinal(1)),
+                    located(ComponentRole::PitchDriveFlange, right_front.with_ordinal(2)),
+                    located(ComponentRole::PitchDriveFlange, right_front.with_ordinal(3)),
+                    located(ComponentRole::PitchDriveFlange, right_front.with_ordinal(4)),
+                    located(
+                        ComponentRole::PitchRetentionFlange,
+                        right_front.with_ordinal(1),
+                    ),
+                    located(
+                        ComponentRole::PitchRetentionFlange,
+                        right_front.with_ordinal(2),
+                    ),
                 ],
             ),
             (

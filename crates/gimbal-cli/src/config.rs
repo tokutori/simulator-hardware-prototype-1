@@ -47,6 +47,11 @@ struct RawContactUnit {
     drive_flange_clearance_mm: f64,
     encoder_flange_clearance_mm: f64,
     flange_thickness_mm: f64,
+    retention_flexure_length_mm: f64,
+    retention_flexure_beam_width_mm: f64,
+    retention_flexure_bridge_width_mm: f64,
+    retention_bearing_island_radius_mm: f64,
+    outboard_support_plate_offset_mm: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -332,6 +337,26 @@ pub fn load(parameters_path: &Path, fabrication_path: &Path) -> Result<LoadedCon
                 flange_thickness: positive(
                     raw.contact_unit.flange_thickness_mm,
                     "contact_unit.flange_thickness_mm",
+                )?,
+                retention_flexure_length: positive(
+                    raw.contact_unit.retention_flexure_length_mm,
+                    "contact_unit.retention_flexure_length_mm",
+                )?,
+                retention_flexure_beam_width: positive(
+                    raw.contact_unit.retention_flexure_beam_width_mm,
+                    "contact_unit.retention_flexure_beam_width_mm",
+                )?,
+                retention_flexure_bridge_width: positive(
+                    raw.contact_unit.retention_flexure_bridge_width_mm,
+                    "contact_unit.retention_flexure_bridge_width_mm",
+                )?,
+                retention_bearing_island_radius: positive(
+                    raw.contact_unit.retention_bearing_island_radius_mm,
+                    "contact_unit.retention_bearing_island_radius_mm",
+                )?,
+                outboard_support_plate_offset: positive(
+                    raw.contact_unit.outboard_support_plate_offset_mm,
+                    "contact_unit.outboard_support_plate_offset_mm",
                 )?,
             },
             pitch_gearbox: PitchGearboxParameters {

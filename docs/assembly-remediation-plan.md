@@ -540,8 +540,8 @@ Exit criteria:
 | sector上下support | 維持 | 歯面荷重をpostへ渡し、中央のpinion通過域を空ける現在の荷重経路である |
 | sector両側clevis cheek | 維持 | sector/postのface contactをM3で締結する現在のjoint形状である |
 | `PitchGearboxTieRod` | 削除・置換済み | head/nut/washerのない仮円柱role/definition/12 instanceを撤去し、各gearbox 3本のM3x25 bolt、nut、両washer、実穴および`FastenedJoint`へ置換した |
-| outboard plateのretention軸boss/boreと別`RetentionBearingBlock` | 再設計 | rigid bossとspring支持を同時に置いた重複拘束である。可動bearing carrierとleaf-spring anchorへ一本化する |
-| `RetentionLeafSpring` | 再設計 | spring rate、固定端、可動端が未定義であり、現在のbox形状を完成部品扱いしない |
+| outboard plateのretention軸boss/boreと別`RetentionBearingBlock` | 削除・置換済み | rigid bossと別blockによる重複拘束を撤去し、inner/outboard支持板にbearing island、平行flexure、bridge、anchor ribを一体化した |
+| `RetentionLeafSpring` | 削除・置換済み | 固定端・可動端のない8個のbox形状を撤去し、各支持板solid内の2本のradial flexure beamへ置換した。ばね定数、予圧および疲労はPhase 5で検証する |
 | cockpit hangerのcockpit内2 mm延長 | 削除 | 接続をpenetrationで代用した旧featureを撤去し、cockpit上面とhanger下面を型付き`SurfaceContact`へ置換した。cockpit本体の実締結方式はPhase 5で確定する |
 | `RollDrivenHub`と`RollDrivenKey` | 再設計 | 現在はgear/shaftへ重なる別solidであり、clamping hub、keywayまたは一体gearのいずれかへ一本化する |
 | drive/retention flange | 維持・再検証 | sectorからの軸方向脱落防止という現行機能を持つ。Phase 5でshaft retentionと工具accessを含めて再検証する |
@@ -573,6 +573,14 @@ Exit criteria:
 - Phase 3相当の矩形post/crossmember試作はPhase 0 commitへ混在させず、relation validator導入後に再実装する方針とした。
 - `cargo fmt --all -- --check`、`cargo check --workspace`、`cargo clippy --workspace --all-targets --all-features -- -D warnings`および`cargo test --workspace`が成功した。workspace testは28件成功、失敗0件だった。
 - `gimbal-core`のnative `no_std` checkと`wasm32-unknown-unknown` `no_std` checkが成功した。
+
+### 2026-09-03
+
+- retention軸を同時に剛体拘束していた別`RetentionBearingBlock` 4 instanceと、固定端・可動端を持たない`RetentionLeafSpring` 8 instanceを撤去した。
+- inner carriageとoutboard supportの双方に、bearing island、2本の平行flexure beam、moving/fixed bridgeおよびanchor ribを同一solidとして構成した。旧inboard encoder anchor boss/rib/holeも不要形状として撤去した。
+- outboard support位置がpitch gearbox plateの寸法へ偶然依存していたため、`outboard_support_plate_offset`へ分離した。drive/retention flange外端との最小0.25 mm隙間をparameter validationで要求した。
+- outboard supportとdrive/retention pinion、shaft、全flangeの高精細Boolean regressionが成功した。軽量structural routeは高精細gearを除外したまま維持する。
+- 変更前の40 definitions・251 instancesから、38 definitions・239 instancesへ削減した。別部品を増やさず、必要機能を既存支持板の意味ある形状へ統合した。
 - Phase 0のexit criteriaを満たしたため、Phase 0を完了、Phase 1を進行中へ変更した。
 - Phase 1の最初のcheckpointとして、`ComponentInstanceId`、`AssemblyRelationId`、typed `DatumId<T>`およびappend-onlyなdatum setを実装した。
 - stable semantic datumとしてpoint、axis、plane、cylinderを導入し、kernelのface番号や評価順に依存しないcomponent-local geometryとして保持する構造にした。
