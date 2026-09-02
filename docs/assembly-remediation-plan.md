@@ -242,6 +242,8 @@ validatorは`#[cfg(test)]`内へ閉じ込めない。CLIとtestが同じ実装�
 
 状態は`未着手`、`進行中`、`検証中`、`完了`、`保留`のいずれかとする。完了は、記載したexit criteriaをすべて満たした場合だけ付ける。
 
+巨大moduleとprototype固有依存の分離は[`architecture-remediation-plan.md`](architecture-remediation-plan.md)で別trackとして管理する。機械形状変更とsoftware refactorは同一commitへ混在させず、relation validationの網羅化をPhase 4完了前、振舞いを変えない主要module分割をPhase 5着手前に行う。
+
 | Phase | 内容 | 状態 | 主な依存 |
 | ---: | --- | --- | --- |
 | 0 | 誤った不変条件の撤去とbaseline固定 | 完了 | なし |
@@ -633,8 +635,9 @@ Exit criteria:
 - `PitchGearboxTieRod`という名称だけM3だった12本の円柱を削除し、既存の両plate実穴をstable cylinder datumとして公開した。4 unitそれぞれをM3x25 bolt 3本、nut、両washerおよび計12件の`FastenedJoint`で締結する構成へ置換し、全joint participant pairのexact intersection volumeが0であることを確認した。
 - commit `5e98bc1`から旧outputを全消去してpreviewを再生成した。40 definition、251 instanceのassembly、静止画8枚、`.blend`、`gimbal-motion.mp4`およびpitch/roll gearbox動画を同じglTFから生成し、manifest記載18 artifactのSHA-256が全件一致した。正式加工可否は引き続き`preview_only=true`、`validation.valid=false`である。
 - 2026-09-03の追加監査で、`DatumId<T>`が発行元definitionを保持しないため、同kind・同indexのforeign datumを誤受理できることを確認した。`DatumSet`をdefinition IDに所有させ、relation endpoint検証でinstance definitionとの一致を必須にした。異なるdefinitionの`PlaneDatum[0]`を借用する回帰testで`DatumOwnerMismatch`を確認した。空のdatum setだけはdatumを発行できないためunownedを許容する。
+- `FastenerHardware`をinstance IDだけでなく、boltの軸・頭下面・shank先端、nutの軸・bearing面・外面、washerの軸・両面をtyped datumで参照する構造へ変更した。共通validatorは全hardware軸の同軸度、member–washer–bolt/nut間の座面接触、M3 nutの最小full-thread engagement 2.4 mmおよびbolt先端の1 pitch以上の突出を検査する。意図的にhardware軸を0.2 mmずらしたfixtureと短いbolt fixtureが失敗し、現prototypeのsector–post 8 jointとpitch gearbox 12 jointが新検査を通過した。
 
-次の作業はPhase 4として、M3 hardware自身へ軸・座面・thread engagement datumを追加し、bolt、washer、nutの実配置を共通validatorで検査する。その後、残る全instanceとdefinition内featureの存在理由監査を行い、不要形状を削除した上で、FDM前提の固定frame接合をM3通しbolt、実穴、washer/nut座面および工具空間を持つ実jointへ置換する。LaserCutの`Body::Sheet` hole表現とDXF経路は次prototype向けに維持するが、現prototypeのcustom partはFDMを前提とする。
+次の作業はPhase 4として、残る全instanceとdefinition内featureの存在理由監査を行い、不要形状を削除した上で、FDM前提の固定frame接合をM3通しbolt、実穴、washer/nut座面および工具空間を持つ実jointへ置換する。並行して、未対応relationを黙って通過させないvalidation coverage reportへ改修する。LaserCutの`Body::Sheet` hole表現とDXF経路は次prototype向けに維持するが、現prototypeのcustom partはFDMを前提とする。
 
 ## 9. 完成の定義
 
