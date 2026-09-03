@@ -53,6 +53,11 @@ pub struct PitchGearboxParameters {
     pub distribution_gear: SpurGear,
     pub gear_face_width: Length,
     pub shaft_radius: Length,
+    /// Nominal outer radius of the purchased flanged miniature bearing.
+    pub flanged_bearing_outer_radius: Length,
+    pub flanged_bearing_width: Length,
+    pub flanged_bearing_flange_radius: Length,
+    pub flanged_bearing_flange_width: Length,
     pub side_plate_thickness: Length,
     /// Distance from the pitch-sector mid-plane toward the opposite sector.
     pub near_plate_inboard_offset: Length,
@@ -132,6 +137,7 @@ pub enum PrototypeError {
     InvalidCockpitSuspension,
     InvalidGearboxGeometry,
     InvalidGearboxPlacement,
+    InvalidPitchGearboxBearing,
     InvalidRollBearing,
     InvalidRetentionFlexure,
     OutboardSupportHitsFlange,

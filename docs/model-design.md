@@ -84,6 +84,10 @@ retention軸は、別体のrigid bearing blockと外観だけのleaf springを�
 
 pitch gearboxはmodule 0.6である。離した2本の18T branch gearを共通54T distribution gearへ接続し、その後18/54 teethの3:1を2段直列にする。distribution段の1:3と後段の9:1を相殺すると、固定外歯referenceと18T drive pinionの比を含む移動体上の入力軸からpitch角までの相対回転比の大きさは62:1となる。この値はprototypeの手回し確認用であり、本番減速比ではない。
 
+pitch unitの4 mm shaftは、3DP支持板の遊び穴へ直接通さず、MinebeaMitsumi公式寸法に基づくフランジ付き`DDLF-840ZZ`（内径4 mm、外径8 mm、幅3 mm、フランジ径9.2 mm、フランジ幅0.6 mm）で両側支持する（<https://product.minebeamitsumi.com/product/category/bearing/miniature_small/parts/DDLF840ZZ.html>）。各unitはoutboard plateに3個、near/carriage plateに6個、far plateに3個、合計12個を使用し、prototype全体では48個となる。軸受内輪と4 mm shaft、外輪と8 mm seatはnominal radial clearance 0 mmの`CylindricalFit`、フランジと支持板外面は`SurfaceContact`として検証する。実FDM seatの圧入代、shaft公差、内輪の軸方向保持およびbearing調達コストは未確定であり、nominal datumとprocess compensationを混同しない。
+
+Manifoldで完全一致する円筒境界をBoolean評価すると退化入力になり得るため、nominal datumは4.000/8.000 mmを維持し、評価meshだけへ半径0.01 mmのnumerical reliefを与える。これはengineering clearanceではなくkernel安定化量であり、加工寸法へ転記しない。
+
 固定sector上を公転する各pinionの、移動体に対する相対回転は次である。
 
 ```text

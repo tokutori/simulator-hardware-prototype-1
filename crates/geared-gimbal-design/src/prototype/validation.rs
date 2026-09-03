@@ -98,6 +98,19 @@ pub(super) fn validate(parameters: &PrototypeParameters) -> Result<(), Prototype
         return Err(PrototypeError::InvalidGearboxGeometry);
     }
     let gearbox = &parameters.pitch_gearbox;
+    const PITCH_GEARBOX_BOSS_RADIUS_MM: f64 = 5.5;
+    const MINIMUM_FDM_WALL_MM: f64 = 0.8;
+    if gearbox.flanged_bearing_outer_radius.mm() <= gearbox.shaft_radius.mm()
+        || gearbox.flanged_bearing_flange_radius.mm() <= gearbox.flanged_bearing_outer_radius.mm()
+        || gearbox.flanged_bearing_flange_width.mm() >= gearbox.flanged_bearing_width.mm()
+        || (gearbox.flanged_bearing_width.mm() - gearbox.side_plate_thickness.mm()).abs() > 1.0e-6
+        || gearbox.flanged_bearing_flange_radius.mm() + MINIMUM_FDM_WALL_MM
+            > PITCH_GEARBOX_BOSS_RADIUS_MM
+        || gearbox.flanged_bearing_flange_radius.mm() + MINIMUM_FDM_WALL_MM
+            > parameters.contact_unit.retention_bearing_island_radius.mm()
+    {
+        return Err(PrototypeError::InvalidPitchGearboxBearing);
+    }
     let plate_half = gearbox.side_plate_thickness.mm() * 0.5;
     let gear_half = gearbox.gear_face_width.mm() * 0.5;
     let layer_pitch = gearbox.gear_face_width.mm() + 1.0;

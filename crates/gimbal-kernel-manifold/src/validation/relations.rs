@@ -67,14 +67,27 @@ impl AssemblyValidator<'_> {
         let shaft = world_cylinder(fit.shaft, self.assembly, instances);
         let bore = world_cylinder(fit.bore, self.assembly, instances);
         let allowed_mm = fit.tolerance.linear.as_mm();
-        let origin_distance_mm = magnitude(subtract(bore.origin, shaft.origin));
-        if origin_distance_mm > allowed_mm {
+        // Datum origins may legitimately differ along a common shaft axis
+        // (for example two bearings supporting one shaft).  A cylindrical
+        // fit constrains the centre lines, not an arbitrary axial origin.
+        let origin_delta = subtract(bore.origin, shaft.origin);
+        let axial_projection = dot(origin_delta, shaft.direction);
+        let perpendicular_delta = subtract(
+            origin_delta,
+            [
+                shaft.direction[0] * axial_projection,
+                shaft.direction[1] * axial_projection,
+                shaft.direction[2] * axial_projection,
+            ],
+        );
+        let axis_separation_mm = magnitude(perpendicular_delta);
+        if axis_separation_mm > allowed_mm {
             issues.push(ValidationIssue {
                 severity: ValidationSeverity::Error,
                 pair: Some(pair),
                 relation: Some(relation_id),
-                kind: ValidationIssueKind::CylindricalFitOriginSeparation {
-                    distance_mm: origin_distance_mm,
+                kind: ValidationIssueKind::CylindricalFitAxisSeparation {
+                    distance_mm: axis_separation_mm,
                     allowed_mm,
                 },
             });

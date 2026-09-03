@@ -69,6 +69,10 @@ struct RawPitchGearbox {
     chord_tolerance_mm: f64,
     gear_face_width_mm: f64,
     shaft_diameter_mm: f64,
+    flanged_bearing_outer_diameter_mm: f64,
+    flanged_bearing_width_mm: f64,
+    flanged_bearing_flange_diameter_mm: f64,
+    flanged_bearing_flange_width_mm: f64,
     side_plate_thickness_mm: f64,
     near_plate_inboard_offset_mm: f64,
     gear_plane_inboard_offset_mm: f64,
@@ -390,6 +394,22 @@ pub fn load(parameters_path: &Path, fabrication_path: &Path) -> Result<LoadedCon
                 shaft_radius: positive(
                     raw.pitch_gearbox.shaft_diameter_mm * 0.5,
                     "pitch_gearbox.shaft_diameter_mm",
+                )?,
+                flanged_bearing_outer_radius: positive(
+                    raw.pitch_gearbox.flanged_bearing_outer_diameter_mm * 0.5,
+                    "pitch_gearbox.flanged_bearing_outer_diameter_mm",
+                )?,
+                flanged_bearing_width: positive(
+                    raw.pitch_gearbox.flanged_bearing_width_mm,
+                    "pitch_gearbox.flanged_bearing_width_mm",
+                )?,
+                flanged_bearing_flange_radius: positive(
+                    raw.pitch_gearbox.flanged_bearing_flange_diameter_mm * 0.5,
+                    "pitch_gearbox.flanged_bearing_flange_diameter_mm",
+                )?,
+                flanged_bearing_flange_width: positive(
+                    raw.pitch_gearbox.flanged_bearing_flange_width_mm,
+                    "pitch_gearbox.flanged_bearing_flange_width_mm",
                 )?,
                 side_plate_thickness: positive(
                     raw.pitch_gearbox.side_plate_thickness_mm,

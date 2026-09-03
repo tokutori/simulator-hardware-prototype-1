@@ -41,7 +41,7 @@ fn is_fastener_validation_issue(kind: ValidationIssueKind) -> bool {
 fn is_cylindrical_fit_issue(kind: ValidationIssueKind) -> bool {
     matches!(
         kind,
-        ValidationIssueKind::CylindricalFitOriginSeparation { .. }
+        ValidationIssueKind::CylindricalFitAxisSeparation { .. }
             | ValidationIssueKind::CylindricalFitAxisMismatch { .. }
             | ValidationIssueKind::CylindricalFitClearanceMismatch { .. }
     )
@@ -1499,22 +1499,6 @@ fn roll_d_interfaces_replace_obsolete_overlapping_hubs_and_keys() {
 #[test]
 fn roll_bearings_use_typed_inner_and_outer_cylindrical_fits() {
     let design = load_design();
-    let fits = design
-        .assembly
-        .relations_with_ids()
-        .filter_map(|(id, relation)| {
-            let AssemblyRelation::CylindricalFit(fit) = relation else {
-                return None;
-            };
-            Some((id, *fit))
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        fits.len(),
-        8,
-        "two bearing journals, two outer-race fits, and four inner-race collars are required"
-    );
-
     let role_of = |instance_id| {
         let instance = design
             .assembly
@@ -1526,6 +1510,35 @@ fn roll_bearings_use_typed_inner_and_outer_cylindrical_fits() {
             .expect("fit participant definition exists")
             .role
     };
+    let fits = design
+        .assembly
+        .relations_with_ids()
+        .filter_map(|(id, relation)| {
+            let AssemblyRelation::CylindricalFit(fit) = relation else {
+                return None;
+            };
+            let roles = (role_of(fit.shaft.instance), role_of(fit.bore.instance));
+            matches!(
+                roles,
+                (ComponentRole::RollShaft, ComponentRole::RollBearing)
+                    | (
+                        ComponentRole::RollBearing,
+                        ComponentRole::RollBearingCarrierEnd
+                    )
+                    | (
+                        ComponentRole::RollShaft,
+                        ComponentRole::RollShaftBearingCollar
+                    )
+            )
+            .then_some((id, *fit))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        fits.len(),
+        8,
+        "two bearing journals, two outer-race fits, and four inner-race collars are required"
+    );
+
     let mut shaft_to_bearing = 0;
     let mut bearing_to_carrier = 0;
     let mut shaft_to_collar = 0;
@@ -1576,6 +1589,150 @@ fn roll_bearings_use_typed_inner_and_outer_cylindrical_fits() {
             .all(|issue| !is_cylindrical_fit_issue(issue.kind)),
         "roll bearing fit datums must satisfy the typed relation"
     );
+}
+
+#[test]
+fn pitch_shafts_are_supported_by_flanged_bearings_and_nominal_fits() {
+    let design = load_design();
+    assert_eq!(count_role(&design, ComponentRole::PitchGearboxBearing), 48);
+
+    let role_of = |instance_id| {
+        let instance = design
+            .assembly
+            .instance(instance_id)
+            .expect("bearing participant exists");
+        design
+            .assembly
+            .definition(instance.definition)
+            .expect("bearing participant definition exists")
+            .role
+    };
+    let bearing_fits = design
+        .assembly
+        .relations_with_ids()
+        .filter_map(|(id, relation)| {
+            let AssemblyRelation::CylindricalFit(fit) = relation else {
+                return None;
+            };
+            (role_of(fit.shaft.instance) == ComponentRole::PitchGearboxBearing
+                || role_of(fit.bore.instance) == ComponentRole::PitchGearboxBearing)
+                .then_some((id, *fit))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        bearing_fits.len(),
+        96,
+        "each bearing needs inner and outer fits"
+    );
+    assert!(
+        bearing_fits
+            .iter()
+            .all(|(_, fit)| fit.target_radial_clearance.as_mm().abs() < 1.0e-8)
+    );
+
+    let flange_contacts = design
+        .assembly
+        .relations_with_ids()
+        .filter_map(|(id, relation)| {
+            let AssemblyRelation::SurfaceContact(contact) = relation else {
+                return None;
+            };
+            (role_of(contact.first.instance) == ComponentRole::PitchGearboxBearing
+                || role_of(contact.second.instance) == ComponentRole::PitchGearboxBearing)
+                .then_some((id, *contact))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        flange_contacts.len(),
+        48,
+        "every bearing flange must seat on a plate"
+    );
+
+    let report = validate_assembly(&design, ValidationProfile::STRUCTURAL_STATIC)
+        .expect("structural validation query succeeds");
+    for relation_id in bearing_fits
+        .iter()
+        .map(|(id, _)| *id)
+        .chain(flange_contacts.iter().map(|(id, _)| *id))
+    {
+        let check = report
+            .relation_checks
+            .iter()
+            .find(|check| check.relation == relation_id)
+            .expect("every pitch bearing relation has a coverage result");
+        assert_eq!(check.status, RelationValidationStatus::Validated);
+    }
+    assert!(
+        report
+            .issues
+            .iter()
+            .all(|issue| !is_cylindrical_fit_issue(issue.kind)),
+        "pitch bearing centre lines and nominal fits must satisfy their typed relations"
+    );
+
+    // Exact Boolean checks are intentionally limited to one complete unit;
+    // typed relations exercise all four mirrored placements while this catches
+    // a bearing flange or nominal shaft that actually penetrates its seat.
+    let sample_location = ComponentLocation::new()
+        .with_side(Side::Left)
+        .with_longitudinal_end(LongitudinalEnd::Front);
+    let sample_bearings = design
+        .assembly
+        .instances_with_role(ComponentRole::PitchGearboxBearing)
+        .filter(|(_, instance)| {
+            instance.location.side == sample_location.side
+                && instance.location.longitudinal_end == sample_location.longitudinal_end
+        })
+        .map(|(id, _)| id)
+        .collect::<Vec<_>>();
+    assert_eq!(sample_bearings.len(), 12);
+    let mut evaluator = Evaluator::new(&design.graph);
+    for bearing in sample_bearings {
+        let related = bearing_fits
+            .iter()
+            .flat_map(|(_, fit)| [fit.shaft.instance, fit.bore.instance])
+            .chain(
+                flange_contacts
+                    .iter()
+                    .flat_map(|(_, contact)| [contact.first.instance, contact.second.instance]),
+            )
+            .filter(|participant| *participant != bearing)
+            .filter(|participant| {
+                bearing_fits.iter().any(|(_, fit)| {
+                    (fit.shaft.instance == bearing && fit.bore.instance == *participant)
+                        || (fit.bore.instance == bearing && fit.shaft.instance == *participant)
+                }) || flange_contacts.iter().any(|(_, contact)| {
+                    (contact.first.instance == bearing && contact.second.instance == *participant)
+                        || (contact.second.instance == bearing
+                            && contact.first.instance == *participant)
+                })
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        for participant in related {
+            let overlap = evaluator
+                .intersection_volume_transformed(
+                    instance_solid_by_id(&design, bearing),
+                    instance_pose_by_id(&design, bearing, 0.0, 0.0),
+                    instance_solid_by_id(&design, participant),
+                    instance_pose_by_id(&design, participant, 0.0, 0.0),
+                )
+                .expect("pitch bearing intersection query succeeds");
+            assert!(
+                overlap <= 1.0e-7,
+                "bearing {} overlaps related component {} by {overlap} mm^3",
+                design
+                    .assembly
+                    .instance(bearing)
+                    .expect("bearing exists")
+                    .name,
+                design
+                    .assembly
+                    .instance(participant)
+                    .expect("related component exists")
+                    .name
+            );
+        }
+    }
 }
 
 #[test]

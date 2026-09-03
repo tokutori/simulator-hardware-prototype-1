@@ -70,6 +70,7 @@ fn build_contact_unit(
     // left/right units remain exact mirrors of one another.
     let inward_sign = -side_sign;
     let gearbox_layer_y = y + inward_sign * p.pitch_gearbox.gear_plane_inboard_offset.mm();
+    let mut branch_shafts = [None; 2];
 
     for (branch, branch_offset) in [-offset, offset].into_iter().enumerate() {
         let angle = end_angle + branch_offset;
@@ -92,14 +93,15 @@ fn build_contact_unit(
             RigidTransform::IDENTITY,
             base_location.with_ordinal((branch + 1) as u16),
         );
-        add_located_instance(
+        let drive_shaft = add_located_instance(
             assembly,
             &format!("{stem}_shaft"),
-            d.pitch_unit.drive_shaft,
+            d.pitch_unit.drive_shaft.id,
             frame,
             RigidTransform::IDENTITY,
             base_location.with_ordinal((branch + 1) as u16),
         );
+        branch_shafts[branch] = Some(drive_shaft);
         let flange_offset = p.pitch_sector.face_width.mm() * 0.5
             + p.contact_unit.drive_flange_clearance.mm()
             + p.contact_unit.flange_thickness.mm() * 0.5;
@@ -147,10 +149,10 @@ fn build_contact_unit(
         RigidTransform::IDENTITY,
         base_location,
     );
-    add_located_instance(
+    let retention_shaft = add_located_instance(
         assembly,
         &format!("{encoder_stem}_interface_shaft"),
-        d.pitch_unit.encoder_shaft,
+        d.pitch_unit.encoder_shaft.id,
         encoder_frame,
         RigidTransform::IDENTITY,
         base_location,
@@ -275,35 +277,40 @@ fn build_contact_unit(
         (central[1] + input_center[1]) * 0.5,
     ];
     let inboard_near_plane_y = y + inward_sign * p.pitch_gearbox.near_plate_inboard_offset.mm();
-    add_located_instance(
+    let outboard_plate_pose =
+        RigidTransform::translated(midpoint[0], outboard_support_plane_y, midpoint[1])
+            .compose(RigidTransform::rotated(Axis3::Y, -end_angle));
+    let outboard_plate = add_located_instance(
         assembly,
         &format!("pitch_contact_{side}_{end}_outboard_plate"),
-        d.pitch_unit.pitch_contact_outboard_plate,
+        d.pitch_unit.pitch_contact_outboard_plate.id,
         pitch_frame,
-        RigidTransform::translated(midpoint[0], outboard_support_plane_y, midpoint[1])
-            .compose(RigidTransform::rotated(Axis3::Y, -end_angle)),
+        outboard_plate_pose,
         base_location,
     );
+    let near_plate_pose =
+        RigidTransform::translated(plate_center[0], inboard_near_plane_y, plate_center[1])
+            .compose(RigidTransform::rotated(Axis3::Y, -end_angle));
     let near_plate = add_located_instance(
         assembly,
         &format!("pitch_gearbox_{side}_{end}_contact_carriage_plate"),
         d.pitch_unit.contact_carriage_plate.id,
         pitch_frame,
-        RigidTransform::translated(plate_center[0], inboard_near_plane_y, plate_center[1])
-            .compose(RigidTransform::rotated(Axis3::Y, -end_angle)),
+        near_plate_pose,
         base_location,
     );
+    let far_plate_pose = RigidTransform::translated(
+        plate_center[0],
+        y + inward_sign * p.pitch_gearbox.far_plate_inboard_offset.mm(),
+        plate_center[1],
+    )
+    .compose(RigidTransform::rotated(Axis3::Y, -end_angle));
     let far_plate = add_located_instance(
         assembly,
         &format!("pitch_gearbox_{side}_{end}_far_plate"),
         d.pitch_unit.pitch_gearbox_far_plate.id,
         pitch_frame,
-        RigidTransform::translated(
-            plate_center[0],
-            y + inward_sign * p.pitch_gearbox.far_plate_inboard_offset.mm(),
-            plate_center[1],
-        )
-        .compose(RigidTransform::rotated(Axis3::Y, -end_angle)),
+        far_plate_pose,
         base_location,
     );
     for (index, tie) in pitch_gearbox_tie_points().into_iter().enumerate() {
@@ -325,15 +332,19 @@ fn build_contact_unit(
             end,
         )?;
     }
-    for (shaft, ordinal, frame) in [
+    let mut gearbox_shafts = [None; 3];
+    for (shaft_index, (shaft, ordinal, frame)) in [
         ("distributor", 1, distributor_frame),
         ("compound", 2, compound_a_frame),
         ("input", 3, input_frame),
-    ] {
-        add_located_instance(
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let shaft_instance = add_located_instance(
             assembly,
             &format!("pitch_gearbox_{side}_{end}_{shaft}_shaft"),
-            d.pitch_unit.pitch_gearbox_shaft,
+            d.pitch_unit.pitch_gearbox_shaft.id,
             frame,
             RigidTransform::translated(
                 0.0,
@@ -346,7 +357,255 @@ fn build_contact_unit(
             ),
             base_location.with_ordinal(ordinal),
         );
+        gearbox_shafts[shaft_index] = Some(shaft_instance);
     }
+    let branch_shafts = branch_shafts.map(|shaft| shaft.expect("both branch shafts were created"));
+    let gearbox_shafts =
+        gearbox_shafts.map(|shaft| shaft.expect("all gearbox shafts were created"));
+    build_pitch_bearing_supports(
+        assembly,
+        d,
+        p,
+        pitch_frame,
+        base_location,
+        side_sign,
+        inward_sign,
+        side,
+        end,
+        outboard_plate,
+        outboard_plate_pose,
+        near_plate,
+        near_plate_pose,
+        far_plate,
+        far_plate_pose,
+        branch_shafts,
+        retention_shaft,
+        gearbox_shafts,
+    )?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_pitch_bearing_supports(
+    assembly: &mut Assembly,
+    d: &Definitions,
+    p: &PrototypeParameters,
+    pitch_frame: FrameId,
+    base_location: ComponentLocation,
+    side_sign: f64,
+    inward_sign: f64,
+    side_label: &str,
+    end_label: &str,
+    outboard_plate: ComponentInstanceId,
+    outboard_plate_pose: RigidTransform,
+    near_plate: ComponentInstanceId,
+    near_plate_pose: RigidTransform,
+    far_plate: ComponentInstanceId,
+    far_plate_pose: RigidTransform,
+    branch_shafts: [ComponentInstanceId; 2],
+    retention_shaft: ComponentInstanceId,
+    gearbox_shafts: [ComponentInstanceId; 3],
+) -> Result<(), PrototypeError> {
+    let outboard_centers = pitch_contact_outboard_bearing_centers(p)?;
+    let near_centers = pitch_contact_carriage_bearing_centers(p)?;
+    let far_centers = pitch_gearbox_far_plate_bearing_centers(p)?;
+    let outboard_face = if side_sign > 0.0 {
+        d.pitch_unit.pitch_contact_outboard_plate.datums.positive_y
+    } else {
+        d.pitch_unit.pitch_contact_outboard_plate.datums.negative_y
+    };
+    let near_face = if side_sign > 0.0 {
+        d.pitch_unit.contact_carriage_plate.datums.positive_y
+    } else {
+        d.pitch_unit.contact_carriage_plate.datums.negative_y
+    };
+    let far_face = if inward_sign > 0.0 {
+        d.pitch_unit.pitch_gearbox_far_plate.datums.positive_y
+    } else {
+        d.pitch_unit.pitch_gearbox_far_plate.datums.negative_y
+    };
+
+    let outboard_shafts = [branch_shafts[0], branch_shafts[1], retention_shaft];
+    let near_shafts = [
+        branch_shafts[0],
+        branch_shafts[1],
+        gearbox_shafts[0],
+        gearbox_shafts[1],
+        gearbox_shafts[2],
+        retention_shaft,
+    ];
+    let mut ordinal = 1_u16;
+    for index in 0..outboard_centers.len() {
+        add_pitch_bearing_support(
+            assembly,
+            d,
+            p,
+            pitch_frame,
+            base_location.with_ordinal(ordinal),
+            &format!(
+                "pitch_bearing_{side_label}_{end_label}_outboard_{}",
+                index + 1
+            ),
+            outboard_plate,
+            outboard_plate_pose,
+            outboard_centers[index],
+            d.pitch_unit
+                .pitch_contact_outboard_plate
+                .datums
+                .bearing_bores[index],
+            outboard_face,
+            outboard_shafts[index],
+            pitch_shaft_surface(d, index, true),
+            side_sign,
+        )?;
+        ordinal += 1;
+    }
+    for index in 0..near_centers.len() {
+        add_pitch_bearing_support(
+            assembly,
+            d,
+            p,
+            pitch_frame,
+            base_location.with_ordinal(ordinal),
+            &format!("pitch_bearing_{side_label}_{end_label}_near_{}", index + 1),
+            near_plate,
+            near_plate_pose,
+            near_centers[index],
+            d.pitch_unit.contact_carriage_plate.datums.bearing_bores[index],
+            near_face,
+            near_shafts[index],
+            pitch_shaft_surface(d, index, false),
+            side_sign,
+        )?;
+        ordinal += 1;
+    }
+    for index in 0..far_centers.len() {
+        add_pitch_bearing_support(
+            assembly,
+            d,
+            p,
+            pitch_frame,
+            base_location.with_ordinal(ordinal),
+            &format!("pitch_bearing_{side_label}_{end_label}_far_{}", index + 1),
+            far_plate,
+            far_plate_pose,
+            far_centers[index],
+            d.pitch_unit.pitch_gearbox_far_plate.datums.bearing_bores[index],
+            far_face,
+            gearbox_shafts[index],
+            d.pitch_unit.pitch_gearbox_shaft.datums.surface,
+            inward_sign,
+        )?;
+        ordinal += 1;
+    }
+    Ok(())
+}
+
+fn pitch_shaft_surface(
+    d: &Definitions,
+    bearing_index: usize,
+    outboard: bool,
+) -> DatumId<CylinderDatum> {
+    if bearing_index < 2 {
+        d.pitch_unit.drive_shaft.datums.surface
+    } else if outboard || bearing_index == 5 {
+        d.pitch_unit.encoder_shaft.datums.surface
+    } else {
+        d.pitch_unit.pitch_gearbox_shaft.datums.surface
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_pitch_bearing_support(
+    assembly: &mut Assembly,
+    d: &Definitions,
+    p: &PrototypeParameters,
+    pitch_frame: FrameId,
+    location: ComponentLocation,
+    name: &str,
+    plate: ComponentInstanceId,
+    plate_pose: RigidTransform,
+    local_center: [f64; 2],
+    plate_bore: DatumId<CylinderDatum>,
+    plate_face: DatumId<PlaneDatum>,
+    shaft: ComponentInstanceId,
+    shaft_surface: DatumId<CylinderDatum>,
+    flange_direction: f64,
+) -> Result<(), PrototypeError> {
+    let flange_offset = flange_direction * p.pitch_gearbox.flanged_bearing_flange_width.mm();
+    let flip = if flange_direction > 0.0 { 0.0 } else { PI };
+    let bearing_pose = plate_pose
+        .compose(RigidTransform::translated(
+            local_center[0],
+            flange_offset,
+            local_center[1],
+        ))
+        .compose(RigidTransform::rotated(Axis3::X, flip));
+    let bearing = add_located_instance(
+        assembly,
+        name,
+        d.pitch_unit.pitch_gearbox_bearing.id,
+        pitch_frame,
+        bearing_pose,
+        location,
+    );
+    add_pitch_cylindrical_fit(
+        assembly,
+        shaft,
+        shaft_surface,
+        bearing,
+        d.pitch_unit.pitch_gearbox_bearing.datums.inner_bore,
+    )?;
+    add_pitch_cylindrical_fit(
+        assembly,
+        bearing,
+        d.pitch_unit.pitch_gearbox_bearing.datums.outer_surface,
+        plate,
+        plate_bore,
+    )?;
+    assembly
+        .add_relation(AssemblyRelation::SurfaceContact(SurfaceContact {
+            first: DatumEndpoint::new(
+                bearing,
+                d.pitch_unit
+                    .pitch_gearbox_bearing
+                    .datums
+                    .flange_contact_face,
+            ),
+            second: DatumEndpoint::new(plate, plate_face),
+            minimum_contact_area: PositiveArea::square_mm(8.0)
+                .expect("bearing flange contact area is positive"),
+            tolerance: EngineeringTolerance {
+                linear: NonNegativeLength::mm(0.02)
+                    .expect("bearing seat tolerance is non-negative"),
+                angular: NonNegativeAngle::degrees(0.1)
+                    .expect("bearing seat angular tolerance is non-negative"),
+            },
+        }))
+        .map_err(PrototypeError::Assembly)?;
+    Ok(())
+}
+
+fn add_pitch_cylindrical_fit(
+    assembly: &mut Assembly,
+    shaft: ComponentInstanceId,
+    shaft_surface: DatumId<CylinderDatum>,
+    bore: ComponentInstanceId,
+    bore_surface: DatumId<CylinderDatum>,
+) -> Result<(), PrototypeError> {
+    assembly
+        .add_relation(AssemblyRelation::CylindricalFit(CylindricalFit {
+            shaft: DatumEndpoint::new(shaft, shaft_surface),
+            bore: DatumEndpoint::new(bore, bore_surface),
+            target_radial_clearance: NonNegativeLength::mm(0.0)
+                .expect("nominal bearing fit is non-negative"),
+            tolerance: EngineeringTolerance {
+                linear: NonNegativeLength::mm(0.02).expect("bearing fit tolerance is non-negative"),
+                angular: NonNegativeAngle::degrees(0.1)
+                    .expect("bearing fit angular tolerance is non-negative"),
+            },
+        }))
+        .map_err(PrototypeError::Assembly)?;
     Ok(())
 }
 

@@ -409,6 +409,7 @@ Exit criteria:
 - kinematic co-motionごとに、そのトルクまたは荷重を伝えるrelationを対応付ける。
 - 全pitch/roll gearbox input shaftへ低荷重手回し用のPH2-compatible cross recessを設け、工具accessと周囲clearanceを検証する。
 - 一体flexureは無負荷の加工形状と組付け変位後のassembly形状を分離し、自由位置、取付変位、変位方向および幾何学的ひずみ上限をparameterから導出する。押付力と疲労寿命は材料couponなしに保証しない。
+- pitch unitの4 mm shaftを3DP支持板の遊び穴で直接支持せず、寸法根拠を追跡できる既製軸受とtyped fitへ置換する。nominal fit、FDM process compensationおよびkernel numerical reliefを別々に管理する。
 
 Exit criteria:
 
@@ -653,8 +654,8 @@ Exit criteria:
 - このcheckpointでworkspace test 55件、format、warning-as-error Clippy、`gimbal-core`と`geared-gimbal-design`のnative/wasm32 `no_std` checkが成功した。
 - Phase 10を待たず、push/PRごとにformat、workspace check、warning-as-error Clippy、workspace test、両`no_std` crateのnative/WASM checkおよび`cargo-audit 0.22.2`を実行するGitHub Actions workflowを追加した。これはA-17の基本gate部分だけを前倒しするものであり、structured validator reportのartifact保存、検証対象SHAとの照合、branch protectionおよび公開前監査はPhase 10に残す。
 - GitHub Actions再run `33681538072`でRust quality gatesは7分8秒、dependency auditは3分1秒で成功した。Linux Rust 1.98でのみ先行して有効になったClippy lintも修正済みであり、基本CIを実行可能なgateとして確認した。
-- `CylindricalFit`の共通validatorを実装し、datum originの一致、軸方向、shaft/bore半径差とtarget radial clearanceをengineering toleranceで検証するようにした。これでrelation variantのうち`SurfaceContact`、`Fastened`、`CylindricalFit`が検証可能となり、未実装は`GearMesh`だけになった。実prototypeのroll shaft/bearing datumとrelation登録はPhase 5の次checkpointとする。
-- Phase 5の最初のrelation checkpointとして、連続roll shaftの前後journal、各bearingのinner bore/outer surfaceおよびcarrierのbearing boreをstable cylinder datumで表した。shaft–bearing内径2件とbearing外径–carrier bore 2件、合計4件の`CylindricalFit`を登録し、当初のreference clearance 0.15 mm/0.20 mm、datum origin、軸方向および半径差が共通validatorを通ることを回帰testで確認した。このreference clearanceは次の608寸法checkpointでnominal 0 mmへ置換した。
+- `CylindricalFit`の共通validatorを実装し、中心線間距離、軸方向、shaft/bore半径差とtarget radial clearanceをengineering toleranceで検証するようにした。初期実装ではdatum originの三次元一致を要求していたが、同一shaft上で軸方向位置が異なる複数bearingを誤って拒否するため撤回した。これでrelation variantのうち`SurfaceContact`、`Fastened`、`CylindricalFit`が検証可能となり、未実装は`GearMesh`だけになった。
+- Phase 5の最初のrelation checkpointとして、連続roll shaftの前後journal、各bearingのinner bore/outer surfaceおよびcarrierのbearing boreをstable cylinder datumで表した。shaft–bearing内径2件とbearing外径–carrier bore 2件、合計4件の`CylindricalFit`を登録し、当初のreference clearance 0.15 mm/0.20 mm、中心線、軸方向および半径差が共通validatorを通ることを回帰testで確認した。このreference clearanceは次の608寸法checkpointでnominal 0 mmへ置換した。
 - 8 mm連続roll shaftに対する購入軸受の寸法基準として、NTN公式product dataに基づく608 seriesの8 × 22 × 7 mm envelopeをparameterへ追加した。旧18 mm外径の無銘reference形状と、nominal geometryへ焼き付けていた0.15/0.20 mm radial clearanceは撤去し、nominal fitは0 mm、実shaft公差とFDM穴補正はprocess layerで扱う。seal形式、carrierへの挿入方法、outer/inner raceの軸方向保持は未確定である。
 - 608 envelopeへの形状変更後、旧`output`を全消去して35 definition・233 instanceのinspection model、Blender model、静止画8枚およびMP4 3本を再生成した。manifest記載18 artifactのSHA-256は全件一致し、3動画はいずれもH.264、720 × 540、12 fps、6秒である。isometric、左側面およびroll gearbox detailを目視し、軸受外径変更による明白なframe/cockpit干渉やcamera見切れがないことを確認した。正式加工可否は引き続き`preview_only=true`である。
 - 608外輪の軸方向保持として、carrier一体の1 mm内側shoulderと3 mm FDM retainer plateを追加した。各端3本、合計6本のM3x20 bolt、nutおよび両washerでretainerをcarrierへ締結し、外輪両面とshoulder/retainer、retainerとcarrierの面接触をtyped `SurfaceContact`として登録した。6件の`FastenedJoint`はhardware軸・座面・thread engagementを共通validatorで検証し、bearing/carrier/retainerの全接触pairはexact Booleanで正の体積交差が0であることを回帰testへ固定した。これはouter raceのnominal axial retentionだけを確定するcheckpointであり、inner raceとshaftの軸方向保持および実FDM fit公差は未完了である。
@@ -667,6 +668,9 @@ Exit criteria:
 - 軸受配置訂正後、workspace 61 tests、warning-as-error Clippy、generic coreと固有designのnative/WASM `no_std` checkが成功した。旧`output`を全消去し、39 definition・263 instanceのinspection model、Blender model、静止画8枚およびMP4 3本を再生成した。isometric、front、left、topおよびroll gearbox detailを目視し、追加した後側2 collarとfloating carrier/retainerによるcamera見切れ、白飛びまたは明白な新規干渉がないことを確認した。manifest記載18 artifactのSHA-256は全件一致し、3動画はいずれもH.264、720 × 540、12 fps、6秒である。正式加工可否は引き続き`preview_only=true`、`validation.valid=false`である。
 - A-31は既存実装を再監査し、`DatumId<T>`が発行元definitionを保持し、同kind・同indexでも別definition由来ならrelation登録を拒否することを確認した。問題一覧は発見記録として残すが、datum owner mismatchの誤受理経路は解消済みである。
 - pitch retention flexureへ自由状態と組付け状態の二つのsolidを導入した。自由状態はretention軸を理論mesh位置より径方向外側へ0.40 mm置き、組付け状態は固定案内梁のcubic変位曲線を用いて理論mesh位置へ戻す。`Body::Compliant`によりFDM加工形状には自由状態、assembly・animation・干渉検査には組付け状態を選ぶ。固定案内梁proxyの最大表面ひずみ`3tδ/L²`は現在約0.444%で、設計上限0.5%を超えるparameterを`InvalidRetentionFlexure`として拒否する。これは押付力、creep、疲労またはABS/PLA材料強度の検証ではないため、Phase 5は継続する。
+- pitch unitの3.7 mm表示shaftと直径4.7 mmの無根拠な支持穴を撤去し、MinebeaMitsumi公式寸法のフランジ付き`DDLF-840ZZ`（4 × 8 × 3 mm、フランジ径9.2 mm、幅0.6 mm）へ置換した。outboard/near/far支持板に1 unit 12個、全4 unit 48個を配置し、96件のshaft/inner-race・outer-race/plate `CylindricalFit`と48件のflange `SurfaceContact`を登録した。nominal datumはclearance 0 mm、評価meshだけは完全一致円筒Booleanの退化を避ける0.01 mm radial reliefを持つ。
+- 上記軸受のrepresentative 1 unitについて、12個すべてのbearing–shaft・bearing–plate pairが正の交差体積を持たないことをexact Booleanで検査した。この検査でretention boreと一部M3 boreを後段Unionが埋め戻すCSG順序不良を再検出し、near/outboard/far全支持板を「構造Union完了後に全穴を最後にDifferenceする」順序へ統一した。軸受外輪の実FDM fit、内輪の軸方向保持およびgear–shaftトルク伝達は未完了なのでPhase 5を継続する。
+- フランジ軸受checkpointでworkspace 70 tests、format、warning-as-error Clippy、generic coreと固有designのnative/WASM `no_std` checkが成功した。高精細gearを除く高速検査は保守的AABB候補423件により依然失敗するため、この段階は引き続きpreview-onlyである。
 
 次の作業はPhase 4とPhase 5を依存順に進める。残る全instanceとdefinition内featureの存在理由監査を続け、不要形状を削除した上で、FDM前提の固定frame接合をM3通しbolt、実穴、washer/nut座面および工具空間を持つ実jointへ置換する。同時にroll軸系はcollar clamp screwの工具空間、保持力、購入shaft公差、後側外輪slide fitおよびFDM bore補正を確定する。relation coverage reportは実装済みであり、今後追加するrelationも未対応なら`Unsupported`として正式生成を失敗させる。LaserCutの`Body::Sheet` hole表現とDXF経路は次prototype向けに維持するが、現prototypeのcustom partはFDMを前提とする。
 
@@ -690,4 +694,5 @@ Exit criteria:
 - [NBK NSCS-SB: Set Collars for Securing Bearing](https://www.nbk1560.com/images/en/product/setcollar/NSCS-SB/NSCS-SB_1.pdf)
 - [SKF Super-precision bearings catalogue: locating and non-locating bearing arrangements](https://cdn.skfmediahub.skf.com/api/public/0901d19680495562/pdf_preview_medium/Super-precision_bearings_catalogue_-_13383_2_EN_pdf_preview_medium.pdf)
 - [SKF High-speed spherical roller bearings: non-locating outer-ring displacement](https://cdn.skfmediahub.skf.com/api/public/0901d1968080459c/pdf_preview_medium/17857_EN_VA991_High_speed_spherical_roller_bearings_pdf_preview_medium.pdf)
+- [MinebeaMitsumi DDLF-840ZZ flanged miniature bearing](https://product.minebeamitsumi.com/product/category/bearing/miniature_small/parts/DDLF840ZZ.html)
 - [開発方針](https://zenn.dev/bem130/articles/1b352797de94e7)

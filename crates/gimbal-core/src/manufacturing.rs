@@ -67,6 +67,7 @@ pub enum ComponentRole {
     PitchContactCarriagePlate,
     PitchGearboxFarPlate,
     PitchGearboxShaft,
+    PitchGearboxBearing,
     Cockpit,
     CockpitHanger,
     RollShaft,

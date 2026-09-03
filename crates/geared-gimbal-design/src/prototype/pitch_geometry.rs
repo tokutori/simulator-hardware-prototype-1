@@ -72,6 +72,65 @@ pub(super) fn pitch_unit_layout(
     })
 }
 
+pub(super) fn pitch_contact_carriage_bearing_centers(
+    p: &PrototypeParameters,
+) -> Result<[[f64; 2]; 6], PrototypeError> {
+    let layout = pitch_unit_layout(p)?;
+    let local = |center: [f64; 2]| {
+        [
+            center[0] - layout.plate_center[0],
+            center[1] - layout.plate_center[1],
+        ]
+    };
+    Ok([
+        local(layout.branches[0]),
+        local(layout.branches[1]),
+        local(layout.distributor),
+        local(layout.compound),
+        local(layout.input),
+        local([
+            p.pitch_sector.sector.internal_reference().pitch_radius()
+                - p.contact_unit.encoder_pinion.pitch_radius(),
+            0.0,
+        ]),
+    ])
+}
+
+pub(super) fn pitch_contact_outboard_bearing_centers(
+    p: &PrototypeParameters,
+) -> Result<[[f64; 2]; 3], PrototypeError> {
+    let layout = pitch_unit_layout(p)?;
+    let local = |center: [f64; 2]| {
+        [
+            center[0] - layout.branch_midpoint[0],
+            center[1] - layout.branch_midpoint[1],
+        ]
+    };
+    Ok([
+        local(layout.branches[0]),
+        local(layout.branches[1]),
+        local([
+            p.pitch_sector.sector.internal_reference().pitch_radius()
+                - p.contact_unit.encoder_pinion.pitch_radius(),
+            0.0,
+        ]),
+    ])
+}
+
+pub(super) fn pitch_gearbox_far_plate_bearing_centers(
+    p: &PrototypeParameters,
+) -> Result<[[f64; 2]; 3], PrototypeError> {
+    let layout = pitch_unit_layout(p)?;
+    Ok(
+        [layout.distributor, layout.compound, layout.input].map(|center| {
+            [
+                center[0] - layout.plate_center[0],
+                center[1] - layout.plate_center[1],
+            ]
+        }),
+    )
+}
+
 pub(super) fn pitch_contact_carriage_plate_solids(
     builder: &mut FeatureBuilder,
     p: &PrototypeParameters,
@@ -204,8 +263,8 @@ fn pitch_contact_carriage_plate_solid(
     for tie in pitch_gearbox_tie_points() {
         plate = subtract_y_bore(builder, plate, 1.7, thickness + 2.0, tie[0], tie[1])?;
     }
-    let bore_radius = p.pitch_gearbox.shaft_radius.mm() + 0.35;
-    for center in centers {
+    let bore_radius = p.pitch_gearbox.flanged_bearing_outer_radius.mm();
+    for center in pitch_contact_carriage_bearing_centers(p)? {
         plate = subtract_y_bore(
             builder,
             plate,
@@ -276,16 +335,6 @@ fn pitch_contact_outboard_plate_solid(
         let rib = beam_xz(builder, a, b, thickness, 5.0)?;
         plate = builder.boolean(BooleanOperation::Union, plate, rib)?;
     }
-    for center in centers.into_iter().take(2) {
-        plate = subtract_y_bore(
-            builder,
-            plate,
-            p.contact_unit.drive_shaft_radius.mm() + 0.35,
-            thickness + 2.0,
-            center[0],
-            center[1],
-        )?;
-    }
     let retention_center = [
         encoder[0] - layout.branch_midpoint[0],
         encoder[1] - layout.branch_midpoint[1],
@@ -299,6 +348,18 @@ fn pitch_contact_outboard_plate_solid(
         p,
         flexure_state,
     )?;
+    // Every bearing seat is cut after the complete flexure and plate body is
+    // unioned.  Cutting earlier would let a later bridge refill the bore.
+    for center in pitch_contact_outboard_bearing_centers(p)? {
+        plate = subtract_y_bore(
+            builder,
+            plate,
+            p.pitch_gearbox.flanged_bearing_outer_radius.mm(),
+            thickness + 2.0,
+            center[0],
+            center[1],
+        )?;
+    }
     subtract_y_bore(builder, plate, 1.7, thickness + 2.0, 0.0, 0.0)
 }
 
@@ -306,14 +367,8 @@ pub(super) fn pitch_gearbox_far_plate_solid(
     builder: &mut FeatureBuilder,
     p: &PrototypeParameters,
 ) -> Result<SolidId, PrototypeError> {
-    let layout = pitch_unit_layout(p)?;
     let thickness = p.pitch_gearbox.side_plate_thickness.mm();
-    let centers = [layout.distributor, layout.compound, layout.input].map(|center| {
-        [
-            center[0] - layout.plate_center[0],
-            center[1] - layout.plate_center[1],
-        ]
-    });
+    let centers = pitch_gearbox_far_plate_bearing_centers(p)?;
     let mut plate = cylinder_y(builder, 5.5, thickness)?;
     plate = builder.translate(
         plate,
@@ -355,9 +410,11 @@ pub(super) fn pitch_gearbox_far_plate_solid(
         plate = builder.boolean(BooleanOperation::Union, plate, boss)?;
         let rib = beam_xz(builder, anchor, tie, thickness, 5.0)?;
         plate = builder.boolean(BooleanOperation::Union, plate, rib)?;
+    }
+    for tie in pitch_gearbox_tie_points() {
         plate = subtract_y_bore(builder, plate, 1.7, thickness + 2.0, tie[0], tie[1])?;
     }
-    let bore_radius = p.pitch_gearbox.shaft_radius.mm() + 0.35;
+    let bore_radius = p.pitch_gearbox.flanged_bearing_outer_radius.mm();
     for center in centers {
         plate = subtract_y_bore(
             builder,
@@ -482,14 +539,7 @@ fn add_retention_flexure(
     )?;
     plate = builder.boolean(BooleanOperation::Union, plate, anchor_rib)?;
 
-    subtract_y_bore(
-        builder,
-        plate,
-        contact.encoder_shaft_radius.mm() + 0.35,
-        thickness + 2.0,
-        moving_center[0],
-        moving_center[1],
-    )
+    Ok(plate)
 }
 
 fn flexure_beam_xz(

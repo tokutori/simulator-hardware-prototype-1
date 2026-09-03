@@ -80,12 +80,35 @@ pub(super) struct CarrierPostDatums {
 pub(super) struct ContactCarriageDatums {
     pub(super) negative_y: DatumId<PlaneDatum>,
     pub(super) positive_y: DatumId<PlaneDatum>,
+    pub(super) bearing_bores: [DatumId<CylinderDatum>; 6],
     pub(super) fasteners: [FastenerMemberDatums; 3],
 }
 
 #[derive(Clone, Copy)]
 pub(super) struct GearboxFarPlateDatums {
+    pub(super) negative_y: DatumId<PlaneDatum>,
+    pub(super) positive_y: DatumId<PlaneDatum>,
+    pub(super) bearing_bores: [DatumId<CylinderDatum>; 3],
     pub(super) fasteners: [FastenerMemberDatums; 3],
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct PitchOutboardPlateDatums {
+    pub(super) negative_y: DatumId<PlaneDatum>,
+    pub(super) positive_y: DatumId<PlaneDatum>,
+    pub(super) bearing_bores: [DatumId<CylinderDatum>; 3],
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct PitchGearboxShaftDatums {
+    pub(super) surface: DatumId<CylinderDatum>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct PitchGearboxBearingDatums {
+    pub(super) inner_bore: DatumId<CylinderDatum>,
+    pub(super) outer_surface: DatumId<CylinderDatum>,
+    pub(super) flange_contact_face: DatumId<PlaneDatum>,
 }
 
 #[derive(Clone, Copy)]
@@ -166,15 +189,16 @@ pub(super) struct PitchUnitDefinitions {
     pub(super) encoder_pinion: ComponentDefinitionId,
     pub(super) drive_flange: ComponentDefinitionId,
     pub(super) encoder_flange: ComponentDefinitionId,
-    pub(super) drive_shaft: ComponentDefinitionId,
-    pub(super) encoder_shaft: ComponentDefinitionId,
+    pub(super) drive_shaft: Defined<PitchGearboxShaftDatums>,
+    pub(super) encoder_shaft: Defined<PitchGearboxShaftDatums>,
     pub(super) gearbox_small: ComponentDefinitionId,
     pub(super) gearbox_distribution: ComponentDefinitionId,
     pub(super) gearbox_large: ComponentDefinitionId,
-    pub(super) pitch_contact_outboard_plate: ComponentDefinitionId,
+    pub(super) pitch_contact_outboard_plate: Defined<PitchOutboardPlateDatums>,
     pub(super) contact_carriage_plate: Defined<ContactCarriageDatums>,
     pub(super) pitch_gearbox_far_plate: Defined<GearboxFarPlateDatums>,
-    pub(super) pitch_gearbox_shaft: ComponentDefinitionId,
+    pub(super) pitch_gearbox_shaft: Defined<PitchGearboxShaftDatums>,
+    pub(super) pitch_gearbox_bearing: Defined<PitchGearboxBearingDatums>,
 }
 
 #[derive(Clone, Copy)]
@@ -212,6 +236,143 @@ pub(super) struct Definitions {
     pub(super) pitch_unit: PitchUnitDefinitions,
     pub(super) roll: RollDefinitions,
     pub(super) hardware: HardwareDefinitions,
+}
+
+fn pitch_bearing_bore_datums<const N: usize>(
+    datums: &mut DatumSet,
+    centers: [[f64; 2]; N],
+    p: &PrototypeParameters,
+    label: &str,
+) -> [DatumId<CylinderDatum>; N] {
+    core::array::from_fn(|index| {
+        let center = centers[index];
+        add_cylinder_datum(
+            datums,
+            &format!("{label}_bearing_bore_{}", index + 1),
+            [center[0], 0.0, center[1]],
+            [0.0, 1.0, 0.0],
+            p.pitch_gearbox.flanged_bearing_outer_radius.mm(),
+        )
+    })
+}
+
+fn pitch_shaft_definition(
+    builder: &mut FeatureBuilder,
+    assembly: &mut Assembly,
+    name: &str,
+    role: ComponentRole,
+    radius: f64,
+    length_mm: f64,
+) -> Result<Defined<PitchGearboxShaftDatums>, PrototypeError> {
+    const KERNEL_RADIAL_RELIEF_MM: f64 = 0.01;
+    let mut datums = DatumSet::for_definition(assembly.next_definition_id());
+    let surface = add_cylinder_datum(
+        &mut datums,
+        "bearing_surface",
+        [0.0; 3],
+        [0.0, 1.0, 0.0],
+        radius,
+    );
+    let id = add_solid_definition_with_datums(
+        assembly,
+        name,
+        role,
+        // Keep nominal dimensions in the datum contract.  The evaluated mesh
+        // uses a tiny numerical relief so coincident cylindrical boundaries do
+        // not form a degenerate Boolean input in the Manifold adapter.
+        cylinder_y(builder, radius - KERNEL_RADIAL_RELIEF_MM, length_mm)?,
+        Manufacturing::Purchased,
+        [0.62, 0.66, 0.70, 1.0],
+        datums,
+    );
+    Ok(Defined {
+        id,
+        datums: PitchGearboxShaftDatums { surface },
+    })
+}
+
+fn pitch_flanged_bearing_definition(
+    builder: &mut FeatureBuilder,
+    assembly: &mut Assembly,
+    p: &PrototypeParameters,
+) -> Result<Defined<PitchGearboxBearingDatums>, PrototypeError> {
+    const KERNEL_RADIAL_RELIEF_MM: f64 = 0.01;
+    let bearing = &p.pitch_gearbox;
+    let body = cylinder_y(
+        builder,
+        bearing.flanged_bearing_outer_radius.mm() - KERNEL_RADIAL_RELIEF_MM,
+        bearing.flanged_bearing_width.mm(),
+    )?;
+    let bore = cylinder_y(
+        builder,
+        bearing.shaft_radius.mm() + KERNEL_RADIAL_RELIEF_MM,
+        bearing.flanged_bearing_width.mm() + 2.0,
+    )?;
+    let body = builder.boolean(BooleanOperation::Difference, body, bore)?;
+    let flange = cylinder_y(
+        builder,
+        bearing.flanged_bearing_flange_radius.mm(),
+        bearing.flanged_bearing_flange_width.mm(),
+    )?;
+    let flange_bore = cylinder_y(
+        builder,
+        bearing.shaft_radius.mm() + KERNEL_RADIAL_RELIEF_MM,
+        bearing.flanged_bearing_flange_width.mm() + 2.0,
+    )?;
+    let flange = builder.boolean(BooleanOperation::Difference, flange, flange_bore)?;
+    let flange = builder.translate(
+        flange,
+        Translation3 {
+            x: 0.0,
+            y: (bearing.flanged_bearing_width.mm() - bearing.flanged_bearing_flange_width.mm())
+                * 0.5,
+            z: 0.0,
+        },
+    )?;
+    let solid = builder.boolean(BooleanOperation::Union, body, flange)?;
+
+    let mut datums = DatumSet::for_definition(assembly.next_definition_id());
+    let inner_bore = add_cylinder_datum(
+        &mut datums,
+        "inner_bore",
+        [0.0; 3],
+        [0.0, 1.0, 0.0],
+        bearing.shaft_radius.mm(),
+    );
+    let outer_surface = add_cylinder_datum(
+        &mut datums,
+        "outer_surface",
+        [0.0; 3],
+        [0.0, 1.0, 0.0],
+        bearing.flanged_bearing_outer_radius.mm(),
+    );
+    let flange_contact_face = add_plane_datum(
+        &mut datums,
+        "flange_contact_face",
+        [
+            0.0,
+            bearing.flanged_bearing_width.mm() * 0.5 - bearing.flanged_bearing_flange_width.mm(),
+            0.0,
+        ],
+        [0.0, -1.0, 0.0],
+    );
+    let id = add_solid_definition_with_datums(
+        assembly,
+        "pitch_gearbox_ddlf_840zz_bearing",
+        ComponentRole::PitchGearboxBearing,
+        solid,
+        Manufacturing::Purchased,
+        [0.44, 0.48, 0.52, 1.0],
+        datums,
+    );
+    Ok(Defined {
+        id,
+        datums: PitchGearboxBearingDatums {
+            inner_bore,
+            outer_surface,
+            flange_contact_face,
+        },
+    })
 }
 
 pub(super) fn build_definitions(
@@ -322,26 +483,22 @@ pub(super) fn build_definitions(
         p.contact_unit.flange_thickness.mm(),
         definition_style(ComponentRole::PitchRetentionFlange, [0.18, 0.80, 0.40, 1.0]),
     )?;
-    let drive_shaft = add_solid_definition(
+    let drive_shaft = pitch_shaft_definition(
+        builder,
         assembly,
         "drive_shaft",
         ComponentRole::PitchDriveShaft,
-        cylinder_y(builder, p.contact_unit.drive_shaft_radius.mm() - 0.15, 28.0)?,
-        Manufacturing::Purchased,
-        [0.62, 0.66, 0.70, 1.0],
-    );
-    let encoder_shaft = add_solid_definition(
+        p.contact_unit.drive_shaft_radius.mm(),
+        28.0,
+    )?;
+    let encoder_shaft = pitch_shaft_definition(
+        builder,
         assembly,
-        "encoder_interface_shaft",
+        "retention_interface_shaft",
         ComponentRole::PitchRetentionShaft,
-        cylinder_y(
-            builder,
-            p.contact_unit.encoder_shaft_radius.mm() - 0.15,
-            22.0,
-        )?,
-        Manufacturing::Purchased,
-        [0.62, 0.66, 0.70, 1.0],
-    );
+        p.contact_unit.encoder_shaft_radius.mm(),
+        22.0,
+    )?;
     let gearbox_small = gear_definition_y(
         builder,
         assembly,
@@ -383,7 +540,26 @@ pub(super) fn build_definitions(
         datums: large_definition.datums,
     });
     let outboard_solids = pitch_contact_outboard_plate_solids(builder, p)?;
-    let pitch_contact_outboard_plate = assembly.add_definition(ComponentDefinition {
+    let mut outboard_datums = DatumSet::for_definition(assembly.next_definition_id());
+    let outboard_negative_y = add_plane_datum(
+        &mut outboard_datums,
+        "negative_y",
+        [0.0, -p.pitch_gearbox.side_plate_thickness.mm() * 0.5, 0.0],
+        [0.0, -1.0, 0.0],
+    );
+    let outboard_positive_y = add_plane_datum(
+        &mut outboard_datums,
+        "positive_y",
+        [0.0, p.pitch_gearbox.side_plate_thickness.mm() * 0.5, 0.0],
+        [0.0, 1.0, 0.0],
+    );
+    let outboard_bearing_bores = pitch_bearing_bore_datums(
+        &mut outboard_datums,
+        pitch_contact_outboard_bearing_centers(p)?,
+        p,
+        "outboard",
+    );
+    let pitch_contact_outboard_plate_id = assembly.add_definition(ComponentDefinition {
         name: "pitch_contact_outboard_plate".into(),
         role: ComponentRole::PitchContactOutboardPlate,
         body: Body::Compliant {
@@ -392,8 +568,16 @@ pub(super) fn build_definitions(
         },
         manufacturing: fdm,
         color_rgba: [0.20, 0.22, 0.27, 1.0],
-        datums: DatumSet::new(),
+        datums: outboard_datums,
     });
+    let pitch_contact_outboard_plate = Defined {
+        id: pitch_contact_outboard_plate_id,
+        datums: PitchOutboardPlateDatums {
+            negative_y: outboard_negative_y,
+            positive_y: outboard_positive_y,
+            bearing_bores: outboard_bearing_bores,
+        },
+    };
     let mut contact_carriage_datums = DatumSet::for_definition(assembly.next_definition_id());
     let contact_carriage_negative_y = add_plane_datum(
         &mut contact_carriage_datums,
@@ -406,6 +590,12 @@ pub(super) fn build_definitions(
         "positive_y",
         [0.0, p.pitch_gearbox.side_plate_thickness.mm() * 0.5, 0.0],
         [0.0, 1.0, 0.0],
+    );
+    let contact_carriage_bearing_bores = pitch_bearing_bore_datums(
+        &mut contact_carriage_datums,
+        pitch_contact_carriage_bearing_centers(p)?,
+        p,
+        "near",
     );
     let contact_carriage_fasteners = pitch_gearbox_plate_fastener_datums(
         &mut contact_carriage_datums,
@@ -425,6 +615,24 @@ pub(super) fn build_definitions(
         datums: contact_carriage_datums,
     });
     let mut far_plate_datums = DatumSet::for_definition(assembly.next_definition_id());
+    let far_plate_negative_y = add_plane_datum(
+        &mut far_plate_datums,
+        "negative_y",
+        [0.0, -p.pitch_gearbox.side_plate_thickness.mm() * 0.5, 0.0],
+        [0.0, -1.0, 0.0],
+    );
+    let far_plate_positive_y = add_plane_datum(
+        &mut far_plate_datums,
+        "positive_y",
+        [0.0, p.pitch_gearbox.side_plate_thickness.mm() * 0.5, 0.0],
+        [0.0, 1.0, 0.0],
+    );
+    let far_plate_bearing_bores = pitch_bearing_bore_datums(
+        &mut far_plate_datums,
+        pitch_gearbox_far_plate_bearing_centers(p)?,
+        p,
+        "far",
+    );
     let pitch_gearbox_far_plate_fasteners = pitch_gearbox_plate_fastener_datums(
         &mut far_plate_datums,
         p.pitch_gearbox.side_plate_thickness.mm(),
@@ -439,21 +647,18 @@ pub(super) fn build_definitions(
         [0.20, 0.22, 0.27, 1.0],
         far_plate_datums,
     );
-    let pitch_gearbox_shaft = add_solid_definition(
+    let pitch_gearbox_shaft = pitch_shaft_definition(
+        builder,
         assembly,
         "pitch_gearbox_shaft",
         ComponentRole::PitchGearboxShaft,
-        cylinder_y(
-            builder,
-            p.pitch_gearbox.shaft_radius.mm() - 0.15,
-            p.pitch_gearbox.far_plate_inboard_offset.mm()
-                - p.pitch_gearbox.near_plate_inboard_offset.mm()
-                + p.pitch_gearbox.side_plate_thickness.mm()
-                + 2.0,
-        )?,
-        Manufacturing::Purchased,
-        [0.62, 0.66, 0.70, 1.0],
-    );
+        p.pitch_gearbox.shaft_radius.mm(),
+        p.pitch_gearbox.far_plate_inboard_offset.mm()
+            - p.pitch_gearbox.near_plate_inboard_offset.mm()
+            + p.pitch_gearbox.side_plate_thickness.mm()
+            + 2.0,
+    )?;
+    let pitch_gearbox_bearing = pitch_flanged_bearing_definition(builder, assembly, p)?;
     let cockpit_size = [
         p.cockpit.length.mm(),
         p.cockpit.width.mm(),
@@ -766,16 +971,21 @@ pub(super) fn build_definitions(
                 datums: ContactCarriageDatums {
                     negative_y: contact_carriage_negative_y,
                     positive_y: contact_carriage_positive_y,
+                    bearing_bores: contact_carriage_bearing_bores,
                     fasteners: contact_carriage_fasteners,
                 },
             },
             pitch_gearbox_far_plate: Defined {
                 id: pitch_gearbox_far_plate,
                 datums: GearboxFarPlateDatums {
+                    negative_y: far_plate_negative_y,
+                    positive_y: far_plate_positive_y,
+                    bearing_bores: far_plate_bearing_bores,
                     fasteners: pitch_gearbox_far_plate_fasteners,
                 },
             },
             pitch_gearbox_shaft,
+            pitch_gearbox_bearing,
         },
         roll: RollDefinitions {
             pitch_cradle_longitudinal_rail: Defined {

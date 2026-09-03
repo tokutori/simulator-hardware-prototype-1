@@ -50,7 +50,7 @@ pub enum ValidationIssueKind {
         overlap_area_mm2: f64,
         minimum_area_mm2: f64,
     },
-    CylindricalFitOriginSeparation {
+    CylindricalFitAxisSeparation {
         distance_mm: f64,
         allowed_mm: f64,
     },

@@ -242,11 +242,11 @@ pub(crate) fn validation_report_json(design: &PrototypeDesign, report: &Validati
                         "minimum_area_mm2": minimum_area_mm2
                     }),
                 ),
-                ValidationIssueKind::CylindricalFitOriginSeparation {
+                ValidationIssueKind::CylindricalFitAxisSeparation {
                     distance_mm,
                     allowed_mm,
                 } => (
-                    "cylindrical_fit_origin_separation",
+                    "cylindrical_fit_axis_separation",
                     json!({ "distance_mm": distance_mm, "allowed_mm": allowed_mm }),
                 ),
                 ValidationIssueKind::CylindricalFitAxisMismatch {

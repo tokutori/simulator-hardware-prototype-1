@@ -378,7 +378,7 @@ fn cylindrical_fit_validates_datum_alignment_and_radial_clearance() {
     })
     .expect("zero pose");
 
-    let report_for = |bore_offset_y: f64, bore_radius: f64, bore_direction: [f64; 3]| {
+    let report_for = |bore_offset: [f64; 3], bore_radius: f64, bore_direction: [f64; 3]| {
         let mut assembly = Assembly::new();
         let mut shaft_datums = DatumSet::for_definition(assembly.next_definition_id());
         let shaft_surface = shaft_datums.add(
@@ -429,7 +429,7 @@ fn cylindrical_fit_validates_datum_alignment_and_radial_clearance() {
             name: "bore".into(),
             definition: bore_definition,
             frame: world,
-            local_pose: RigidTransform::translated(0.0, bore_offset_y, 0.0),
+            local_pose: RigidTransform::translated(bore_offset[0], bore_offset[1], bore_offset[2]),
             location: ComponentLocation::new(),
         });
         assembly
@@ -449,27 +449,30 @@ fn cylindrical_fit_validates_datum_alignment_and_radial_clearance() {
             .expect("validation query succeeds")
     };
 
-    let valid = report_for(0.0, 4.15, [1.0, 0.0, 0.0]);
+    let valid = report_for([0.0; 3], 4.15, [1.0, 0.0, 0.0]);
     assert!(valid.is_valid(), "{valid:#?}");
     assert_eq!(
         valid.relation_checks[0].status,
         RelationValidationStatus::Validated
     );
 
-    let separated = report_for(0.2, 4.15, [1.0, 0.0, 0.0]);
+    let separated = report_for([0.0, 0.2, 0.0], 4.15, [1.0, 0.0, 0.0]);
     assert!(separated.issues.iter().any(|issue| matches!(
         issue.kind,
-        ValidationIssueKind::CylindricalFitOriginSeparation { distance_mm, .. }
+        ValidationIssueKind::CylindricalFitAxisSeparation { distance_mm, .. }
             if (distance_mm - 0.2).abs() < 1.0e-8
     )));
 
-    let tilted = report_for(0.0, 4.15, [1.0, 0.01, 0.0]);
+    let axially_shifted = report_for([3.0, 0.0, 0.0], 4.15, [1.0, 0.0, 0.0]);
+    assert!(axially_shifted.is_valid(), "{axially_shifted:#?}");
+
+    let tilted = report_for([0.0; 3], 4.15, [1.0, 0.01, 0.0]);
     assert!(tilted.issues.iter().any(|issue| matches!(
         issue.kind,
         ValidationIssueKind::CylindricalFitAxisMismatch { .. }
     )));
 
-    let wrong_clearance = report_for(0.0, 4.35, [1.0, 0.0, 0.0]);
+    let wrong_clearance = report_for([0.0; 3], 4.35, [1.0, 0.0, 0.0]);
     assert!(wrong_clearance.issues.iter().any(|issue| matches!(
         issue.kind,
         ValidationIssueKind::CylindricalFitClearanceMismatch {
