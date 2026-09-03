@@ -16,23 +16,38 @@ pub enum GeometryFidelity {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DefinitionCoverage {
+    Selected,
+    All,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MotionCoverage {
     StaticPose,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ValidationProfile {
+    pub definitions: DefinitionCoverage,
     pub geometry: GeometryFidelity,
     pub motion: MotionCoverage,
 }
 
 impl ValidationProfile {
-    pub const STRUCTURAL_STATIC: Self = Self {
+    pub const STRUCTURAL_PROXY_STATIC: Self = Self {
+        definitions: DefinitionCoverage::Selected,
         geometry: GeometryFidelity::StructuralProxy,
         motion: MotionCoverage::StaticPose,
     };
 
+    pub const STRUCTURAL_EXACT_STATIC: Self = Self {
+        definitions: DefinitionCoverage::Selected,
+        geometry: GeometryFidelity::Exact,
+        motion: MotionCoverage::StaticPose,
+    };
+
     pub const EXACT_STATIC: Self = Self {
+        definitions: DefinitionCoverage::All,
         geometry: GeometryFidelity::Exact,
         motion: MotionCoverage::StaticPose,
     };

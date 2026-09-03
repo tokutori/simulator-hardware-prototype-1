@@ -132,7 +132,7 @@ fn surface_contact_validates_semantic_planes_with_engineering_tolerance() {
         })
         .expect("zero pose");
 
-    let report_for_offset = |offset: f64, minimum_contact_area_mm2: f64| {
+    let report_for_offset = |offset: f64, minimum_contact_area_mm2: f64, reversed: bool| {
         let mut assembly = Assembly::new();
         let mut first_datums = DatumSet::for_definition(assembly.next_definition_id());
         let first_plane = first_datums.add(
@@ -180,10 +180,21 @@ fn surface_contact_validates_semantic_planes_with_engineering_tolerance() {
             local_pose: RigidTransform::translated(offset, 0.0, 0.0),
             location: ComponentLocation::new(),
         });
+        let (first_endpoint, second_endpoint) = if reversed {
+            (
+                DatumEndpoint::new(second, second_plane),
+                DatumEndpoint::new(first, first_plane),
+            )
+        } else {
+            (
+                DatumEndpoint::new(first, first_plane),
+                DatumEndpoint::new(second, second_plane),
+            )
+        };
         assembly
             .add_relation(AssemblyRelation::SurfaceContact(SurfaceContact {
-                first: DatumEndpoint::new(first, first_plane),
-                second: DatumEndpoint::new(second, second_plane),
+                first: first_endpoint,
+                second: second_endpoint,
                 minimum_contact_area: PositiveArea::square_mm(minimum_contact_area_mm2)
                     .expect("positive contact area"),
                 tolerance: EngineeringTolerance {
@@ -197,8 +208,9 @@ fn surface_contact_validates_semantic_planes_with_engineering_tolerance() {
             .expect("validation query succeeds")
     };
 
-    assert!(report_for_offset(10.0, 90.0).is_valid());
-    let insufficient_area = report_for_offset(10.0, 101.0);
+    assert!(report_for_offset(10.0, 90.0, false).is_valid());
+    assert!(report_for_offset(10.0, 90.0, true).is_valid());
+    let insufficient_area = report_for_offset(10.0, 101.0, false);
     assert!(!insufficient_area.is_valid());
     assert!(insufficient_area.issues.iter().any(|issue| matches!(
         issue.kind,
@@ -209,7 +221,7 @@ fn surface_contact_validates_semantic_planes_with_engineering_tolerance() {
             && (minimum_area_mm2 - 101.0).abs() < 1.0e-8
     )));
 
-    let separated = report_for_offset(10.1, 90.0);
+    let separated = report_for_offset(10.1, 90.0, false);
     assert!(!separated.is_valid());
     assert!(separated.issues.iter().any(|issue| matches!(
         issue.kind,
@@ -886,7 +898,7 @@ fn explicit_structural_plan_skips_only_unselected_definitions_and_uses_proxy_che
     }
     let mut structural_settings = settings();
     structural_settings.plan =
-        ValidationPlan::include_only(ValidationProfile::STRUCTURAL_STATIC, [structure]);
+        ValidationPlan::include_only(ValidationProfile::STRUCTURAL_PROXY_STATIC, [structure]);
     let report = AssemblyValidator::new(&graph, &assembly, &pose, structural_settings)
         .validate()
         .expect("structural validation succeeds");

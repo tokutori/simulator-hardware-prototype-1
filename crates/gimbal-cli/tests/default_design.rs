@@ -487,7 +487,7 @@ fn sector_post_m3_joints_have_real_clearance_and_valid_datums() {
         "each of four sector/post joints needs two bolts"
     );
 
-    let report = validate_assembly(&design, ValidationProfile::STRUCTURAL_STATIC)
+    let report = validate_assembly(&design, ValidationProfile::STRUCTURAL_PROXY_STATIC)
         .expect("fast assembly validation succeeds");
     assert!(
         report
@@ -638,7 +638,7 @@ fn pitch_gearbox_plates_use_real_m3_fasteners_instead_of_placeholder_rods() {
         );
     }
 
-    let report = validate_assembly(&design, ValidationProfile::STRUCTURAL_STATIC)
+    let report = validate_assembly(&design, ValidationProfile::STRUCTURAL_PROXY_STATIC)
         .expect("fast assembly validation succeeds");
     assert!(
         report
@@ -1572,7 +1572,7 @@ fn roll_bearings_use_typed_inner_and_outer_cylindrical_fits() {
     assert_eq!(bearing_to_carrier, 2);
     assert_eq!(shaft_to_collar, 4);
 
-    let report = validate_assembly(&design, ValidationProfile::STRUCTURAL_STATIC)
+    let report = validate_assembly(&design, ValidationProfile::STRUCTURAL_PROXY_STATIC)
         .expect("structural validation query succeeds");
     for (relation_id, _) in fits {
         let check = report
@@ -1648,7 +1648,7 @@ fn pitch_shafts_are_supported_by_flanged_bearings_and_nominal_fits() {
         "every bearing flange must seat on a plate"
     );
 
-    let report = validate_assembly(&design, ValidationProfile::STRUCTURAL_STATIC)
+    let report = validate_assembly(&design, ValidationProfile::STRUCTURAL_PROXY_STATIC)
         .expect("structural validation query succeeds");
     for relation_id in bearing_fits
         .iter()
@@ -1800,7 +1800,7 @@ fn both_inner_races_are_shaft_locked_while_rear_outer_race_can_float_axially() {
         })
         .collect::<Vec<_>>();
     assert_eq!(bearing_collar_contacts.len(), 4);
-    let report = validate_assembly(&design, ValidationProfile::STRUCTURAL_STATIC)
+    let report = validate_assembly(&design, ValidationProfile::STRUCTURAL_PROXY_STATIC)
         .expect("structural validation query succeeds");
     for (relation_id, _) in &bearing_collar_contacts {
         let check = report
@@ -1938,7 +1938,7 @@ fn locating_outer_race_is_captured_and_rear_outer_race_has_a_float_stop() {
     );
     assert_eq!(retainer_to_carrier_contacts, 2);
 
-    let report = validate_assembly(&design, ValidationProfile::STRUCTURAL_STATIC)
+    let report = validate_assembly(&design, ValidationProfile::STRUCTURAL_PROXY_STATIC)
         .expect("structural validation query succeeds");
     for relation_id in retainer_fasteners {
         let check = report

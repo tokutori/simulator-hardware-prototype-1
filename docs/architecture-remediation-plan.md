@@ -50,6 +50,23 @@ gimbal-export -> gimbal-core
 | R-14 | Low | command parse、helpおよびdispatchが文字列で分散する | command追加時に同期漏れが起きる |
 | R-15 | Low | remediation planが長期履歴を同時に保持する | 現在状態を探しにくい |
 | R-16 | High | generationが既存`output`へ直接書き、旧artifactを存在確認だけでmanifestへ再収録し得る | source、validation report、画像・動画の世代が混在する |
+| R-17 | High | 検査対象definitionとgeometry fidelityを一つの`scope`として扱うと、高精細gear除外とproxy/exactの意味が結合する | 「歯形を省くが構造はexact」という中間gateを表現できない |
+| R-18 | High | AABB proxy候補をerrorとして列挙するだけではfalse positiveが多く、exact structural検査は現状数分を要する | 日常編集で大域的誤りを速く発見するrouteと、確定判定routeの間が空く |
+| R-19 | Medium | front/rearで上部接続形状が異なるcarriageを一つのdefinitionとして180度回転再利用していた | rearの取付足だけが下へ反転し、平面位置は一致しても接触面積0になる |
+| R-20 | Medium | definition/instance単位の存在理由監査だけでは、一つのsolid内に残る旧boss、rib、穴、逃げ形状を見落とす | 廃止済み機構のfeatureが干渉・造形時間・荷重集中を残す |
+
+## 3.1 Validation gate matrix
+
+検査はdefinition coverage、geometry fidelity、motion coverageの独立した三軸として扱う。command名や`full`という一語から保証範囲を推測しない。
+
+| Route | Definition coverage | Geometry | Motion | 用途 | 正式加工gate |
+| --- | --- | --- | --- | --- | --- |
+| `validate-proxy` | 高精細gearを除外 | conservative structural proxy | static pose | 1秒級の大域候補抽出 | しない |
+| `validate` | 高精細gearを除外 | exact solid | static pose | gear歯形以外の確定干渉とrelation検査 | 中間gate |
+| `validate-full` | 全definition | exact solid | static pose | 高精細gearを含む静止姿勢検査 | motion gateと併用時のみ |
+| 将来のmotion route | profileで明示 | proxyまたはexact | sampled/adaptive | ±pitch/roll包絡と床clearance | coverageをreportへ記録した場合のみ |
+
+`validate-proxy`のAABB overlap件数は実干渉数ではない。`validate`もstatic poseであり、全可動域を保証しない。現状のexact structural routeはrelease buildでも数分を要するため、AABBとfull Manifold Booleanの間に、topologyを保った低polygon structural solidによるsecond stageを追加する。性能改善のために干渉閾値を緩めたり、relation participantをallow-listで除外したりしない。
 
 ## 4. Phase計画
 
@@ -62,6 +79,7 @@ gimbal-export -> gimbal-core
 | A2 | CLI integration testの外部化 | 完了 | Phase 5前 |
 | A3 | CLIをcommand/generate/validate/manifestへ分割 | 完了 | Phase 5前 |
 | A4 | kernel validationをreport/interference/relationsへ分割 | 完了 | Phase 5前 |
+| A4P | validation coverage/fidelity分離と日常route高速化 | 進行中 | Phase 5–7と並行 |
 | A5 | prototypeをsubsystem別moduleへ分割しDefinitionsをgroup化 | 完了 | Phase 5前 |
 | A6 | `geared-gimbal-design` crateを追加し固有設計を移す | 進行中 | Phase 6前 |
 | A7 | generic identity、coordinateおよびmodule依存方向を整理 | 進行中 | Phase 6と並行 |
@@ -141,6 +159,22 @@ validation/
 - 高精細gear除外はdesign側がinstance/definition集合として明示する。
 - fast structural routeとexact routeの保証範囲を型にする。
 
+### A4P: validationを止めずに使える速度へする
+
+- `DefinitionCoverage::{Selected, All}`を`GeometryFidelity`および`MotionCoverage`から分離する。
+- high-detail gear除外はCLI/design composition rootがdefinition集合として決め、kernelはrole名を知らない。
+- AABBだけのrouteは候補抽出として保持し、candidate countをerror countまたは完成までの残件数と呼ばない。
+- structural-exact routeで確定したpairだけを形状修正へ用いる。
+- low-detail structural solidをdefinitionごとに一度評価・cacheし、同じdefinitionの多数instanceで再利用しない。
+- report filenameとerror messageをprofile固有pathへ一致させる。
+
+Exit criteria:
+
+- 高精細gearを除外したstatic exact検査が独立commandとstructured reportを持つ。
+- proxy、structural-exact、full-exactのcoverageがJSONで区別される。
+- 日常second-stage検査が通常開発機で30秒以内を目標とし、確定干渉0を証明するexact gateは節目で実行できる。
+- front/rear等の非同型部品を無理に同一definitionとして扱わず、製造artifactのquantityとvariantがmanifestに残る。
+
 ### A5: geared-gimbal designのmodule分割
 
 最初はcrateを増やさず、`gimbal-core/src/prototype/`配下で振舞いを変えない分割を行う。
@@ -164,6 +198,7 @@ prototype/
 - `Definitions`をfixed frame、pitch、roll、cockpit、hardwareへgroup化する。
 - 各subsystemが自分のdefinition、instance、relationを構築する。
 - feature/instance existence auditの分類結果を対応subsystemに残す。
+- definition/instanceだけでなく、solid builder内の各boss、rib、hole、reliefおよびmounting padに現在の機能を対応付ける。対応先がないfeatureは削除し、接続のためのoverlapへ転用しない。
 
 Exit criteria:
 

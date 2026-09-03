@@ -100,7 +100,9 @@ pub(crate) fn optional_artifact_paths(output: &Path) -> Vec<PathBuf> {
         "preview/pitch-gearbox-motion.mp4",
         "preview/roll-gearbox-motion.mp4",
         "validation-report.json",
-        "validation-report-structural.json",
+        "validation-report-structural-proxy.json",
+        "validation-report-structural-exact.json",
+        "validation-report-all-proxy.json",
         "validation-report-full.json",
     ]
     .into_iter()

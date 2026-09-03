@@ -163,13 +163,14 @@ commandのauthorityは`gimbal help`である。現在のcommandは次である�
 ```text
 generate           exact static validation後にartifactを生成
 generate-preview   未検証preview artifactを生成
-validate           structural proxyをstatic poseで検査
-validate-full      exact geometryをstatic poseで検査
+validate-proxy     高精細gearを除くAABB候補抽出をstatic poseで実行
+validate           高精細gearを除く実solidをstatic poseでexact検査
+validate-full      高精細gearを含むexact geometryをstatic poseで検査
 refresh-manifest   既存artifactのhashを更新
 clean-output       output directoryを削除
 ```
 
-`validate-full`の`full`は高精細geometryを含むことを表すhistorical command名であり、全可動域を意味しない。structured reportはgeometry fidelityとmotion coverageを別fieldで出力する。`clean-output` はcanonicalizeしたworkspace直下の `output` だけを削除する。
+`validate-proxy`は候補数を高速に得るscreeningであり、実干渉数ではない。`validate`は同じ高精細gear除外を維持しつつ、候補pairだけを実solid Booleanで判定する。`validate-full`の`full`は高精細geometryを含むことを表すhistorical command名であり、全可動域を意味しない。structured reportはdefinition coverage、geometry fidelityとmotion coverageを別fieldで出力する。`clean-output` はcanonicalizeしたworkspace直下の `output` だけを削除する。
 
 ## 8. Manufacturing境界
 

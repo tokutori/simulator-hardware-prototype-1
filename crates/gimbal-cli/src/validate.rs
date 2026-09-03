@@ -7,9 +7,9 @@ use gimbal_core::{
     PositiveVolume,
 };
 use gimbal_kernel_manifold::{
-    AssemblyValidator, GeometryFidelity, MotionCoverage, RelationValidationStatus,
-    UnrelatedProximityPolicy, ValidationIssueKind, ValidationPlan, ValidationProfile,
-    ValidationProgress, ValidationReport, ValidatorSettings,
+    AssemblyValidator, DefinitionCoverage, GeometryFidelity, MotionCoverage,
+    RelationValidationStatus, UnrelatedProximityPolicy, ValidationIssueKind, ValidationPlan,
+    ValidationProfile, ValidationProgress, ValidationReport, ValidatorSettings,
 };
 use serde_json::{Value, json};
 use std::error::Error;
@@ -59,9 +59,9 @@ pub fn validate_assembly(
             roll: Angle::degrees(0.0).expect("zero angle is valid"),
         })
         .map_err(|error| format!("zero pose rejected: {error:?}"))?;
-    let plan = match profile.geometry {
-        GeometryFidelity::Exact => ValidationPlan::all(profile),
-        GeometryFidelity::StructuralProxy => ValidationPlan::include_only(
+    let plan = match profile.definitions {
+        DefinitionCoverage::All => ValidationPlan::all(profile),
+        DefinitionCoverage::Selected => ValidationPlan::include_only(
             profile,
             design
                 .assembly
@@ -108,10 +108,26 @@ pub(crate) fn require_valid_assembly(report: &ValidationReport) -> Result<(), Bo
         Ok(())
     } else {
         Err(format!(
-            "assembly validation failed with {} errors; see output/validation-report.json",
-            report.error_count()
+            "assembly validation failed with {} errors; see output/{}",
+            report.error_count(),
+            validation_report_filename(report.profile),
         )
         .into())
+    }
+}
+
+fn validation_report_filename(profile: ValidationProfile) -> &'static str {
+    match (profile.definitions, profile.geometry) {
+        (DefinitionCoverage::Selected, GeometryFidelity::StructuralProxy) => {
+            "validation-report-structural-proxy.json"
+        }
+        (DefinitionCoverage::Selected, GeometryFidelity::Exact) => {
+            "validation-report-structural-exact.json"
+        }
+        (DefinitionCoverage::All, GeometryFidelity::Exact) => "validation-report-full.json",
+        (DefinitionCoverage::All, GeometryFidelity::StructuralProxy) => {
+            "validation-report-all-proxy.json"
+        }
     }
 }
 
@@ -132,10 +148,7 @@ pub(crate) fn write_validation_report_to(
     fs::create_dir_all(output)?;
     let bytes = serde_json::to_vec_pretty(&validation_report_json(design, report))?;
     fs::write(output.join("validation-report.json"), &bytes)?;
-    let scoped_name = match report.profile.geometry {
-        GeometryFidelity::StructuralProxy => "validation-report-structural.json",
-        GeometryFidelity::Exact => "validation-report-full.json",
-    };
+    let scoped_name = validation_report_filename(report.profile);
     fs::write(output.join(scoped_name), bytes)?;
     Ok(())
 }
@@ -445,6 +458,10 @@ pub(crate) fn validation_report_json(design: &PrototypeDesign, report: &Validati
         "preview_only": false,
         "valid": report.is_valid(),
         "profile": {
+            "definition_coverage": match report.profile.definitions {
+                DefinitionCoverage::Selected => "selected-definitions",
+                DefinitionCoverage::All => "all-definitions",
+            },
             "geometry_fidelity": match report.profile.geometry {
                 GeometryFidelity::StructuralProxy => "structural-proxy",
                 GeometryFidelity::Exact => "exact",

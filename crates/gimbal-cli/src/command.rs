@@ -19,8 +19,9 @@ impl Command {
 Commands:\n\
   generate           Validate exact static geometry, then generate artifacts\n\
   generate-preview   Generate unvalidated preview artifacts\n\
-  validate           Fast structural-proxy validation at the static pose\n\
-  validate-full      Exact validation at the static pose\n\
+  validate-proxy     Fast AABB candidate scan without high-detail gears\n\
+  validate           Exact structural validation without high-detail gears\n\
+  validate-full      Exact validation including high-detail gears at the static pose\n\
   refresh-manifest   Rehash artifacts already present in output\n\
   clean-output       Remove the generated output directory\n\
   help               Show this help";
@@ -29,7 +30,8 @@ Commands:\n\
         match argument.unwrap_or("generate") {
             "generate" => Ok(Self::Generate(GenerationMode::Validated)),
             "generate-preview" => Ok(Self::Generate(GenerationMode::PreviewOnly)),
-            "validate" => Ok(Self::Validate(ValidationProfile::STRUCTURAL_STATIC)),
+            "validate-proxy" => Ok(Self::Validate(ValidationProfile::STRUCTURAL_PROXY_STATIC)),
+            "validate" => Ok(Self::Validate(ValidationProfile::STRUCTURAL_EXACT_STATIC)),
             "validate-full" => Ok(Self::Validate(ValidationProfile::EXACT_STATIC)),
             "refresh-manifest" => Ok(Self::RefreshManifest),
             "clean-output" => Ok(Self::CleanOutput),
@@ -61,8 +63,16 @@ mod tests {
     fn parses_each_supported_command_and_rejects_unknown_values() {
         assert_eq!(Command::parse(Some("-h")), Ok(Command::Help));
         assert_eq!(
+            Command::parse(Some("validate-proxy")),
+            Ok(Command::Validate(
+                ValidationProfile::STRUCTURAL_PROXY_STATIC
+            ))
+        );
+        assert_eq!(
             Command::parse(Some("validate")),
-            Ok(Command::Validate(ValidationProfile::STRUCTURAL_STATIC))
+            Ok(Command::Validate(
+                ValidationProfile::STRUCTURAL_EXACT_STATIC
+            ))
         );
         assert_eq!(
             Command::parse(Some("validate-full")),

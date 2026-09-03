@@ -763,6 +763,22 @@ fn contact_area(
     second_plane: WorldPlane,
     probe_depth: f64,
 ) -> f64 {
+    let forward = directed_contact_area(first, second, first_plane, second_plane, probe_depth);
+    let reverse = directed_contact_area(second, first, second_plane, first_plane, probe_depth);
+    // Surface contact is an unordered mechanical relation. Sampling both
+    // inward sides makes the estimate invariant to endpoint order and avoids
+    // losing a valid section when a mirrored transform places one probe on a
+    // floating-point boundary.
+    forward.max(reverse)
+}
+
+fn directed_contact_area(
+    first: &Manifold,
+    second: &Manifold,
+    first_plane: WorldPlane,
+    second_plane: WorldPlane,
+    probe_depth: f64,
+) -> f64 {
     let to_plane = world_to_plane_transform(first_plane);
     let first = transform(first.clone(), to_plane);
     let second = transform(second.clone(), to_plane);
