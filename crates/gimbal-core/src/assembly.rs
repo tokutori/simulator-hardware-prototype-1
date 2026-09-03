@@ -20,6 +20,12 @@ pub struct FrameId(u32);
 #[derive(Clone, Debug, PartialEq)]
 pub enum Body {
     Solid(SolidId),
+    /// A monolithic compliant part whose unloaded manufacturing shape differs
+    /// from its elastically displaced assembly shape.
+    Compliant {
+        manufacturing_solid: SolidId,
+        assembly_solid: SolidId,
+    },
     Sheet {
         outer: RegionId,
         cutouts: Vec<RegionId>,
@@ -32,11 +38,35 @@ impl Body {
     pub const fn assembly_solid(&self) -> SolidId {
         match self {
             Self::Solid(solid)
+            | Self::Compliant {
+                assembly_solid: solid,
+                ..
+            }
             | Self::Sheet {
                 assembly_solid: solid,
                 ..
             } => *solid,
         }
+    }
+
+    /// Returns the shape to manufacture. Rigid parts use the same shape for
+    /// manufacturing and assembly; compliant parts retain their unloaded form.
+    pub const fn manufacturing_solid(&self) -> SolidId {
+        match self {
+            Self::Solid(solid)
+            | Self::Compliant {
+                manufacturing_solid: solid,
+                ..
+            }
+            | Self::Sheet {
+                assembly_solid: solid,
+                ..
+            } => *solid,
+        }
+    }
+
+    pub const fn is_compliant(&self) -> bool {
+        matches!(self, Self::Compliant { .. })
     }
 }
 

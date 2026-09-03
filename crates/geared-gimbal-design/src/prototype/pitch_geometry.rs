@@ -12,6 +12,18 @@ pub(super) struct PitchUnitLayout {
     pub(super) plate_center: [f64; 2],
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct CompliantSolidPair {
+    pub(super) manufacturing: SolidId,
+    pub(super) assembly: SolidId,
+}
+
+#[derive(Clone, Copy)]
+enum FlexureState {
+    Free,
+    Installed,
+}
+
 pub(super) fn pitch_unit_layout(
     p: &PrototypeParameters,
 ) -> Result<PitchUnitLayout, PrototypeError> {
@@ -60,9 +72,20 @@ pub(super) fn pitch_unit_layout(
     })
 }
 
-pub(super) fn pitch_contact_carriage_plate_solid(
+pub(super) fn pitch_contact_carriage_plate_solids(
     builder: &mut FeatureBuilder,
     p: &PrototypeParameters,
+) -> Result<CompliantSolidPair, PrototypeError> {
+    Ok(CompliantSolidPair {
+        manufacturing: pitch_contact_carriage_plate_solid(builder, p, FlexureState::Free)?,
+        assembly: pitch_contact_carriage_plate_solid(builder, p, FlexureState::Installed)?,
+    })
+}
+
+fn pitch_contact_carriage_plate_solid(
+    builder: &mut FeatureBuilder,
+    p: &PrototypeParameters,
+    flexure_state: FlexureState,
 ) -> Result<SolidId, PrototypeError> {
     let layout = pitch_unit_layout(p)?;
     let thickness = p.pitch_gearbox.side_plate_thickness.mm();
@@ -126,7 +149,6 @@ pub(super) fn pitch_contact_carriage_plate_solid(
         plate = builder.boolean(BooleanOperation::Union, plate, boss)?;
         let rib = beam_xz(builder, anchor, tie, thickness, 5.0)?;
         plate = builder.boolean(BooleanOperation::Union, plate, rib)?;
-        plate = subtract_y_bore(builder, plate, 1.7, thickness + 2.0, tie[0], tie[1])?;
     }
     let retention_center = [
         p.pitch_sector.sector.internal_reference().pitch_radius()
@@ -134,7 +156,15 @@ pub(super) fn pitch_contact_carriage_plate_solid(
             - layout.plate_center[0],
         -layout.plate_center[1],
     ];
-    plate = add_retention_flexure(builder, plate, retention_center, centers[0], thickness, p)?;
+    plate = add_retention_flexure(
+        builder,
+        plate,
+        retention_center,
+        centers[0],
+        thickness,
+        p,
+        flexure_state,
+    )?;
     let brace_origin = [
         layout.branch_midpoint[0] - layout.plate_center[0],
         layout.branch_midpoint[1] - layout.plate_center[1],
@@ -169,6 +199,11 @@ pub(super) fn pitch_contact_carriage_plate_solid(
         },
     )?;
     plate = builder.boolean(BooleanOperation::Union, plate, rail_pad)?;
+    // Cut fastener holes after every structural union. A later flexure or
+    // brace union must never refill a previously cut through-hole.
+    for tie in pitch_gearbox_tie_points() {
+        plate = subtract_y_bore(builder, plate, 1.7, thickness + 2.0, tie[0], tie[1])?;
+    }
     let bore_radius = p.pitch_gearbox.shaft_radius.mm() + 0.35;
     for center in centers {
         plate = subtract_y_bore(
@@ -183,9 +218,20 @@ pub(super) fn pitch_contact_carriage_plate_solid(
     Ok(plate)
 }
 
-pub(super) fn pitch_contact_outboard_plate_solid(
+pub(super) fn pitch_contact_outboard_plate_solids(
     builder: &mut FeatureBuilder,
     p: &PrototypeParameters,
+) -> Result<CompliantSolidPair, PrototypeError> {
+    Ok(CompliantSolidPair {
+        manufacturing: pitch_contact_outboard_plate_solid(builder, p, FlexureState::Free)?,
+        assembly: pitch_contact_outboard_plate_solid(builder, p, FlexureState::Installed)?,
+    })
+}
+
+fn pitch_contact_outboard_plate_solid(
+    builder: &mut FeatureBuilder,
+    p: &PrototypeParameters,
+    flexure_state: FlexureState,
 ) -> Result<SolidId, PrototypeError> {
     let layout = pitch_unit_layout(p)?;
     let thickness = p.pitch_gearbox.side_plate_thickness.mm();
@@ -244,7 +290,15 @@ pub(super) fn pitch_contact_outboard_plate_solid(
         encoder[0] - layout.branch_midpoint[0],
         encoder[1] - layout.branch_midpoint[1],
     ];
-    plate = add_retention_flexure(builder, plate, retention_center, centers[2], thickness, p)?;
+    plate = add_retention_flexure(
+        builder,
+        plate,
+        retention_center,
+        centers[2],
+        thickness,
+        p,
+        flexure_state,
+    )?;
     subtract_y_bore(builder, plate, 1.7, thickness + 2.0, 0.0, 0.0)
 }
 
@@ -355,13 +409,14 @@ pub(super) fn pitch_gearbox_plate_fastener_datums(
     })
 }
 
-pub(super) fn add_retention_flexure(
+fn add_retention_flexure(
     builder: &mut FeatureBuilder,
     mut plate: SolidId,
     bearing_center: [f64; 2],
     rigid_anchor: [f64; 2],
     thickness: f64,
     p: &PrototypeParameters,
+    state: FlexureState,
 ) -> Result<SolidId, PrototypeError> {
     let contact = &p.contact_unit;
     let length = contact.retention_flexure_length.mm();
@@ -369,27 +424,34 @@ pub(super) fn add_retention_flexure(
     let bridge_width = contact.retention_flexure_bridge_width.mm();
     let island_radius = contact.retention_bearing_island_radius.mm();
     let beam_offset = island_radius * 0.65;
-    let fixed_bridge_center = [bearing_center[0], bearing_center[1] - length];
+    let free_center = [
+        bearing_center[0] + contact.retention_installed_deflection.as_mm(),
+        bearing_center[1],
+    ];
+    let moving_center = match state {
+        FlexureState::Free => free_center,
+        FlexureState::Installed => bearing_center,
+    };
+    // The fixed bridge belongs to the rigid plate and therefore remains at
+    // the free-state radial coordinate in both shape states.
+    let fixed_bridge_center = [free_center[0], bearing_center[1] - length];
 
     let island = cylinder_y(builder, island_radius, thickness)?;
     let island = builder.translate(
         island,
         Translation3 {
-            x: bearing_center[0],
+            x: moving_center[0],
             y: 0.0,
-            z: bearing_center[1],
+            z: moving_center[1],
         },
     )?;
     plate = builder.boolean(BooleanOperation::Union, plate, island)?;
 
-    for x in [
-        bearing_center[0] - beam_offset,
-        bearing_center[0] + beam_offset,
-    ] {
-        let beam = beam_xz(
+    for offset in [-beam_offset, beam_offset] {
+        let beam = flexure_beam_xz(
             builder,
-            [x, bearing_center[1]],
-            [x, fixed_bridge_center[1]],
+            [fixed_bridge_center[0] + offset, fixed_bridge_center[1]],
+            [moving_center[0] + offset, moving_center[1]],
             thickness,
             beam_width,
         )?;
@@ -397,8 +459,8 @@ pub(super) fn add_retention_flexure(
     }
     let moving_bridge = beam_xz(
         builder,
-        [bearing_center[0] - beam_offset, bearing_center[1]],
-        [bearing_center[0] + beam_offset, bearing_center[1]],
+        [moving_center[0] - beam_offset, moving_center[1]],
+        [moving_center[0] + beam_offset, moving_center[1]],
         thickness,
         bridge_width,
     )?;
@@ -425,9 +487,39 @@ pub(super) fn add_retention_flexure(
         plate,
         contact.encoder_shaft_radius.mm() + 0.35,
         thickness + 2.0,
-        bearing_center[0],
-        bearing_center[1],
+        moving_center[0],
+        moving_center[1],
     )
+}
+
+fn flexure_beam_xz(
+    builder: &mut FeatureBuilder,
+    fixed: [f64; 2],
+    moving: [f64; 2],
+    thickness_y: f64,
+    width: f64,
+) -> Result<SolidId, PrototypeError> {
+    const SEGMENTS: usize = 8;
+    let point = |index: usize| {
+        let u = index as f64 / SEGMENTS as f64;
+        let smooth = 3.0 * u * u - 2.0 * u * u * u;
+        [
+            fixed[0] + (moving[0] - fixed[0]) * smooth,
+            fixed[1] + (moving[1] - fixed[1]) * u,
+        ]
+    };
+    let mut beam = beam_xz(builder, point(0), point(1), thickness_y, width)?;
+    for segment in 1..SEGMENTS {
+        let next = beam_xz(
+            builder,
+            point(segment),
+            point(segment + 1),
+            thickness_y,
+            width,
+        )?;
+        beam = builder.boolean(BooleanOperation::Union, beam, next)?;
+    }
+    Ok(beam)
 }
 
 pub(super) fn subtract_y_bore(

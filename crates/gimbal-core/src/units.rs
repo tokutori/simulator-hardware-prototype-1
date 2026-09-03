@@ -26,6 +26,9 @@ pub struct PositiveArea(f64);
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
 pub struct PositiveVolume(f64);
 
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+pub struct PositiveRatio(f64);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UnitError {
     NonFinite,
@@ -205,6 +208,22 @@ impl PositiveVolume {
     }
 }
 
+impl PositiveRatio {
+    pub fn new(value: f64) -> Result<Self, UnitError> {
+        if !value.is_finite() {
+            Err(UnitError::NonFinite)
+        } else if value <= 0.0 {
+            Err(UnitError::NotPositive)
+        } else {
+            Ok(Self(value))
+        }
+    }
+
+    pub const fn get(self) -> f64 {
+        self.0
+    }
+}
+
 impl fmt::Display for UnitError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -225,6 +244,8 @@ mod tests {
         assert!(PositiveArea::square_mm(0.0).is_err());
         assert!(PositiveVolume::cubic_mm(0.0).is_err());
         assert!(PositiveAngle::degrees(0.0).is_err());
+        assert!(PositiveRatio::new(0.0).is_err());
+        assert_eq!(PositiveRatio::new(0.005).unwrap().get(), 0.005);
         assert!(NonNegativeLength::mm(0.0).is_ok());
         assert!(NonNegativeAngle::degrees(0.0).is_ok());
         assert!(NonNegativeAngle::radians(-f64::EPSILON).is_err());

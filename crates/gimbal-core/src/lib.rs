@@ -45,5 +45,5 @@ pub use relation::{
 };
 pub use units::{
     Angle, Length, NonNegativeAngle, NonNegativeLength, PositiveAngle, PositiveArea,
-    PositiveLength, PositiveVolume, UnitError,
+    PositiveLength, PositiveRatio, PositiveVolume, UnitError,
 };

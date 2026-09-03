@@ -7,7 +7,9 @@ use geared_gimbal_design::{
     CockpitParameters, ContactUnitParameters, FrameParameters, MotionParameters,
     PitchGearboxParameters, PitchSectorParameters, PrototypeParameters, RollAxisParameters,
 };
-use gimbal_core::{Angle, FdmMaterial, GearSector, InternalGear, Length, SpurGear};
+use gimbal_core::{
+    Angle, FdmMaterial, GearSector, InternalGear, Length, PositiveLength, PositiveRatio, SpurGear,
+};
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -51,6 +53,8 @@ struct RawContactUnit {
     retention_flexure_beam_width_mm: f64,
     retention_flexure_bridge_width_mm: f64,
     retention_bearing_island_radius_mm: f64,
+    retention_installed_deflection_mm: f64,
+    retention_max_modeled_surface_strain: f64,
     outboard_support_plate_offset_mm: f64,
 }
 
@@ -166,6 +170,8 @@ pub enum ConfigError {
     Length(&'static str),
     #[error("invalid angle for {0}")]
     Angle(&'static str),
+    #[error("invalid positive ratio for {0}")]
+    Ratio(&'static str),
     #[error("invalid gear specification for {0}: {1}")]
     Gear(&'static str, gimbal_core::GearError),
     #[error("unsupported FDM material {0:?}; expected PLA, ABS, PETG, or ASA")]
@@ -356,6 +362,18 @@ pub fn load(parameters_path: &Path, fabrication_path: &Path) -> Result<LoadedCon
                     raw.contact_unit.retention_bearing_island_radius_mm,
                     "contact_unit.retention_bearing_island_radius_mm",
                 )?,
+                retention_installed_deflection: PositiveLength::mm(
+                    raw.contact_unit.retention_installed_deflection_mm,
+                )
+                .map_err(|_| {
+                    ConfigError::Length("contact_unit.retention_installed_deflection_mm")
+                })?,
+                retention_max_modeled_surface_strain: PositiveRatio::new(
+                    raw.contact_unit.retention_max_modeled_surface_strain,
+                )
+                .map_err(|_| {
+                    ConfigError::Ratio("contact_unit.retention_max_modeled_surface_strain")
+                })?,
                 outboard_support_plate_offset: positive(
                     raw.contact_unit.outboard_support_plate_offset_mm,
                     "contact_unit.outboard_support_plate_offset_mm",

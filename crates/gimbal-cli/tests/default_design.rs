@@ -122,6 +122,22 @@ fn instance_solid_by_id(
         .assembly_solid()
 }
 
+fn instance_manufacturing_solid_by_id(
+    design: &PrototypeDesign,
+    instance_id: ComponentInstanceId,
+) -> gimbal_core::SolidId {
+    let instance = design
+        .assembly
+        .instance(instance_id)
+        .expect("instance id exists");
+    design
+        .assembly
+        .definition(instance.definition)
+        .expect("instance definition exists")
+        .body
+        .manufacturing_solid()
+}
+
 fn instance_pose_by_id(
     design: &PrototypeDesign,
     instance_id: ComponentInstanceId,
@@ -667,10 +683,29 @@ fn pitch_gearbox_plates_use_real_m3_fasteners_instead_of_placeholder_rods() {
                         instance_pose_by_id(&design, second_id, 0.0, 0.0),
                     )
                     .expect("pitch gearbox fastener intersection query succeeds");
-                assert!(
-                    volume <= 1.0e-7,
-                    "pitch gearbox M3 participants overlap by {volume} mm^3"
-                );
+                let first_name = &design
+                    .assembly
+                    .instance(first_id)
+                    .expect("first fastener participant exists")
+                    .name;
+                let second_name = &design
+                    .assembly
+                    .instance(second_id)
+                    .expect("second fastener participant exists")
+                    .name;
+                if volume > 1.0e-7 {
+                    let manufacturing_volume = evaluator
+                        .intersection_volume_transformed(
+                            instance_manufacturing_solid_by_id(&design, first_id),
+                            instance_pose_by_id(&design, first_id, 0.0, 0.0),
+                            instance_manufacturing_solid_by_id(&design, second_id),
+                            instance_pose_by_id(&design, second_id, 0.0, 0.0),
+                        )
+                        .expect("pitch gearbox manufacturing-shape intersection query succeeds");
+                    panic!(
+                        "pitch gearbox M3 participants {first_name} and {second_name} overlap by {volume} mm^3 in assembly shape and {manufacturing_volume} mm^3 in manufacturing shape"
+                    );
+                }
             }
         }
     }
@@ -902,6 +937,54 @@ fn retention_flexures_are_integrated_into_the_moving_support_plates() {
             "the integrated retention flexure support {component:?} must travel with the pitch unit"
         );
     }
+}
+
+#[test]
+fn retention_flexures_keep_distinct_free_and_installed_shapes() {
+    let loaded = load_configuration();
+    let contact = &loaded.parameters.contact_unit;
+    let strain = contact.retention_modeled_surface_strain();
+    assert!((strain - 0.004_444_444_444_444_444).abs() < 1.0e-12);
+    assert!(strain <= contact.retention_max_modeled_surface_strain.get());
+
+    let design = build_prototype(&loaded.parameters).expect("repository design must be valid");
+    for role in [
+        ComponentRole::PitchContactOutboardPlate,
+        ComponentRole::PitchContactCarriagePlate,
+    ] {
+        let definition = design
+            .assembly
+            .definitions()
+            .iter()
+            .find(|definition| definition.role == role)
+            .expect("retention support definition exists");
+        let Body::Compliant {
+            manufacturing_solid,
+            assembly_solid,
+        } = &definition.body
+        else {
+            panic!("{role:?} must preserve free and installed flexure shapes");
+        };
+        let manufacturing_solid = *manufacturing_solid;
+        let assembly_solid = *assembly_solid;
+        assert_ne!(manufacturing_solid, assembly_solid);
+        assert_eq!(definition.body.manufacturing_solid(), manufacturing_solid);
+        assert_eq!(definition.body.assembly_solid(), assembly_solid);
+    }
+}
+
+#[test]
+fn retention_flexure_rejects_an_installed_deflection_above_the_strain_contract() {
+    let mut loaded = load_configuration();
+    loaded
+        .parameters
+        .contact_unit
+        .retention_installed_deflection =
+        PositiveLength::mm(0.50).expect("test deflection is positive");
+    assert!(matches!(
+        build_prototype(&loaded.parameters),
+        Err(geared_gimbal_design::PrototypeError::InvalidRetentionFlexure)
+    ));
 }
 
 #[test]

@@ -43,6 +43,10 @@ pub(super) fn validate(parameters: &PrototypeParameters) -> Result<(), Prototype
             <= contact.retention_bearing_island_radius.mm() * 2.0
         || contact.retention_flexure_beam_width.mm() >= contact.retention_bearing_island_radius.mm()
         || contact.retention_flexure_bridge_width.mm() <= contact.retention_flexure_beam_width.mm()
+        || contact.retention_installed_deflection.as_mm()
+            > contact.retention_flexure_length.mm() * 0.1
+        || contact.retention_modeled_surface_strain()
+            > contact.retention_max_modeled_surface_strain.get()
     {
         return Err(PrototypeError::InvalidRetentionFlexure);
     }

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 
-use crate::{Angle, AssemblyError, FeatureError, GearSector, Length, SpurGear};
+use crate::{
+    Angle, AssemblyError, FeatureError, GearSector, Length, PositiveLength, PositiveRatio, SpurGear,
+};
 
 #[derive(Clone, Debug)]
 pub struct PitchSectorParameters {
@@ -25,8 +27,23 @@ pub struct ContactUnitParameters {
     pub retention_flexure_beam_width: Length,
     pub retention_flexure_bridge_width: Length,
     pub retention_bearing_island_radius: Length,
+    /// Radial travel from the unloaded printed shape to the installed mesh position.
+    pub retention_installed_deflection: PositiveLength,
+    /// Geometric fixed-guided beam strain ceiling; this is not a material rating.
+    pub retention_max_modeled_surface_strain: PositiveRatio,
     /// Distance from the pitch-sector mid-plane toward the outside support plate.
     pub outboard_support_plate_offset: Length,
+}
+
+impl ContactUnitParameters {
+    /// Euler-Bernoulli fixed-guided beam estimate, `3 t delta / L^2`.
+    ///
+    /// This geometric proxy does not establish spring force or fatigue life;
+    /// those require the actual print material, orientation, and test coupons.
+    pub fn retention_modeled_surface_strain(&self) -> f64 {
+        3.0 * self.retention_flexure_beam_width.mm() * self.retention_installed_deflection.as_mm()
+            / (self.retention_flexure_length.mm() * self.retention_flexure_length.mm())
+    }
 }
 
 #[derive(Clone, Debug)]

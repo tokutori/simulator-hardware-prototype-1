@@ -83,13 +83,15 @@ pub(crate) fn generate(
             "vertices": metrics.vertices,
             "triangles": metrics.triangles,
             "volume_mm3": metrics.volume_mm3,
-            "surface_area_mm2": metrics.surface_area_mm2
+            "surface_area_mm2": metrics.surface_area_mm2,
+            "manufacturing_shape_differs": definition.body.is_compliant()
         }));
         match (mode, definition.manufacturing) {
             (GenerationMode::PreviewOnly, _) => {}
             (GenerationMode::Validated, Manufacturing::Fdm) => {
                 let path = fdm_dir.join(format!("{}.3mf", definition.name));
-                write_mesh_3mf(&definition.name, &mesh, &path)?;
+                let manufacturing_mesh = evaluator.mesh(definition.body.manufacturing_solid())?;
+                write_mesh_3mf(&definition.name, &manufacturing_mesh, &path)?;
                 fabrication_artifacts.push(path);
             }
             (GenerationMode::Validated, Manufacturing::LaserCut) => {

@@ -382,14 +382,18 @@ pub(super) fn build_definitions(
         color_rgba: [0.74, 0.22, 0.72, 1.0],
         datums: large_definition.datums,
     });
-    let pitch_contact_outboard_plate = add_solid_definition(
-        assembly,
-        "pitch_contact_outboard_plate",
-        ComponentRole::PitchContactOutboardPlate,
-        pitch_contact_outboard_plate_solid(builder, p)?,
-        fdm,
-        [0.20, 0.22, 0.27, 1.0],
-    );
+    let outboard_solids = pitch_contact_outboard_plate_solids(builder, p)?;
+    let pitch_contact_outboard_plate = assembly.add_definition(ComponentDefinition {
+        name: "pitch_contact_outboard_plate".into(),
+        role: ComponentRole::PitchContactOutboardPlate,
+        body: Body::Compliant {
+            manufacturing_solid: outboard_solids.manufacturing,
+            assembly_solid: outboard_solids.assembly,
+        },
+        manufacturing: fdm,
+        color_rgba: [0.20, 0.22, 0.27, 1.0],
+        datums: DatumSet::new(),
+    });
     let mut contact_carriage_datums = DatumSet::for_definition(assembly.next_definition_id());
     let contact_carriage_negative_y = add_plane_datum(
         &mut contact_carriage_datums,
@@ -408,15 +412,18 @@ pub(super) fn build_definitions(
         p.pitch_gearbox.side_plate_thickness.mm(),
         "near",
     );
-    let contact_carriage_plate = add_solid_definition_with_datums(
-        assembly,
-        "pitch_contact_carriage_plate",
-        ComponentRole::PitchContactCarriagePlate,
-        pitch_contact_carriage_plate_solid(builder, p)?,
-        fdm,
-        [0.20, 0.22, 0.27, 1.0],
-        contact_carriage_datums,
-    );
+    let carriage_solids = pitch_contact_carriage_plate_solids(builder, p)?;
+    let contact_carriage_plate = assembly.add_definition(ComponentDefinition {
+        name: "pitch_contact_carriage_plate".into(),
+        role: ComponentRole::PitchContactCarriagePlate,
+        body: Body::Compliant {
+            manufacturing_solid: carriage_solids.manufacturing,
+            assembly_solid: carriage_solids.assembly,
+        },
+        manufacturing: fdm,
+        color_rgba: [0.20, 0.22, 0.27, 1.0],
+        datums: contact_carriage_datums,
+    });
     let mut far_plate_datums = DatumSet::for_definition(assembly.next_definition_id());
     let pitch_gearbox_far_plate_fasteners = pitch_gearbox_plate_fastener_datums(
         &mut far_plate_datums,

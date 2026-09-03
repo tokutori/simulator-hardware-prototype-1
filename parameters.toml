@@ -26,6 +26,8 @@ retention_flexure_length_mm = 18.0
 retention_flexure_beam_width_mm = 1.2
 retention_flexure_bridge_width_mm = 4.0
 retention_bearing_island_radius_mm = 6.0
+retention_installed_deflection_mm = 0.40
+retention_max_modeled_surface_strain = 0.005
 outboard_support_plate_offset_mm = 8.0
 
 [pitch_gearbox]

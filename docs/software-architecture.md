@@ -143,6 +143,8 @@ DXFはR2013、`INSUNITS=Millimeters`、`CUT` layer、closed `LWPOLYLINE` とし�
 
 3MFはCore packageに必要な `[Content_Types].xml`、`_rels/.rels`、`3D/3dmodel.model` を直接生成する。ZIP timestampを固定し、同一meshからbyte-identicalな出力になることと、mm unit、object/build itemおよびXML escapingをtestする。外部3MF parserはruntime dependencyにしない。
 
+剛体部品はmanufacturingとassemblyで同じsolidを使う。一体flexure等のcompliant partは`Body::Compliant { manufacturing_solid, assembly_solid }`として、無負荷の加工形状と組付け変位後の検査形状を区別する。assembly mesh、animationおよび干渉検査は`assembly_solid`を使い、validated FDM artifactだけは`manufacturing_solid`を使う。これにより、予圧値をmetadataだけに置いた死んだparameterや、変形済み形状をそのまま印刷する誤りを避ける。
+
 ## 7. gimbal-cli
 
 ```text
