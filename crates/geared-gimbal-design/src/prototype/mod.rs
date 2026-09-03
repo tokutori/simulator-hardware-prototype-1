@@ -117,7 +117,7 @@ pub fn build_prototype(
         roll_pair.ratio(),
         pitch_gearbox_pair.ratio(),
     );
-    build_moving_carrier_contacts(&mut assembly, &definitions)?;
+    build_moving_carrier_contacts(&mut assembly, &definitions, parameters)?;
     build_roll_bearing_fits(&mut assembly, &definitions, parameters)?;
 
     let kinematics = Kinematics::new(

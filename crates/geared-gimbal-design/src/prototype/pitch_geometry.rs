@@ -239,13 +239,15 @@ fn pitch_contact_carriage_plate_solid(
     let carrier_contact_x = pitch_carriage_carrier_contact_local_x(p)?;
     let carrier_pad_depth = pitch_carriage_carrier_pad_depth_mm();
     let carrier_pad_height = pitch_carriage_carrier_pad_height_mm();
-    let carrier_pad_outer_x = carrier_contact_x + carrier_pad_depth;
+    let carrier_pad_center_x = carrier_contact_x + carrier_pad_depth * 0.5;
     let carrier_pad_center_z = pitch_carriage_carrier_contact_local_z(p, end)?;
     for anchor_z in [
         carrier_pad_center_z - carrier_pad_height * 0.25,
         carrier_pad_center_z + carrier_pad_height * 0.25,
     ] {
-        let anchor = [carrier_pad_outer_x, anchor_z];
+        // Join the truss at the pad centre. Extending the rib to the outer
+        // face would occupy the washer/head seating envelope of the M3 joint.
+        let anchor = [carrier_pad_center_x, anchor_z];
         let brace = beam_xz(builder, brace_origin, anchor, thickness, 8.0)?;
         plate = builder.boolean(BooleanOperation::Union, plate, brace)?;
     }
@@ -264,12 +266,26 @@ fn pitch_contact_carriage_plate_solid(
     let carrier_pad = builder.translate(
         carrier_pad,
         Translation3 {
-            x: carrier_contact_x + carrier_pad_depth * 0.5,
+            x: carrier_pad_center_x,
             y: 0.0,
             z: carrier_pad_center_z,
         },
     )?;
     plate = builder.boolean(BooleanOperation::Union, plate, carrier_pad)?;
+    // The carriage is a separate part from the carrier end. Trim every rib
+    // exactly at the semantic contact plane so a diagonal beam cannot project
+    // into the mating part merely because its rectangular end cap is rotated.
+    let trim_extent = p.pitch_sector.target_outer_diameter.mm() * 2.0;
+    let contact_plane_trim = centered_box(builder, [trim_extent, trim_extent, trim_extent]);
+    let contact_plane_trim = builder.translate(
+        contact_plane_trim,
+        Translation3 {
+            x: carrier_contact_x - trim_extent * 0.5,
+            y: 0.0,
+            z: carrier_pad_center_z,
+        },
+    )?;
+    plate = builder.boolean(BooleanOperation::Difference, plate, contact_plane_trim)?;
     // Cut fastener holes after every structural union. A later flexure or
     // brace union must never refill a previously cut through-hole.
     for tie in pitch_gearbox_tie_points() {
@@ -285,6 +301,35 @@ fn pitch_contact_carriage_plate_solid(
             center[0],
             center[1],
         )?;
+    }
+    for z_offset in pitch_carriage_carrier_fastener_z_offsets_mm() {
+        let bore = cylinder_x(builder, m3_clearance_radius_mm(), carrier_pad_depth + 2.0)?;
+        let bore = builder.translate(
+            bore,
+            Translation3 {
+                x: carrier_contact_x + carrier_pad_depth * 0.5,
+                y: 0.0,
+                z: carrier_pad_center_z + z_offset,
+            },
+        )?;
+        plate = builder.boolean(BooleanOperation::Difference, plate, bore)?;
+        // Keep the washer and screwdriver side clear without counterboring the
+        // load-bearing pad face. This removes only material projected beyond
+        // the outer seating plane by the diagonal truss end cap.
+        let tool_clearance = cylinder_x(
+            builder,
+            m3_carriage_tool_clearance_radius_mm(),
+            carrier_pad_depth,
+        )?;
+        let tool_clearance = builder.translate(
+            tool_clearance,
+            Translation3 {
+                x: carrier_contact_x + carrier_pad_depth * 1.5,
+                y: 0.0,
+                z: carrier_pad_center_z + z_offset,
+            },
+        )?;
+        plate = builder.boolean(BooleanOperation::Difference, plate, tool_clearance)?;
     }
     Ok(plate)
 }
@@ -318,11 +363,26 @@ pub(super) const fn pitch_carriage_carrier_pad_depth_mm() -> f64 {
 }
 
 pub(super) const fn pitch_carriage_carrier_pad_width_mm() -> f64 {
-    6.0
+    8.0
 }
 
 pub(super) const fn pitch_carriage_carrier_pad_height_mm() -> f64 {
-    12.0
+    32.0
+}
+
+pub(super) const fn pitch_carriage_carrier_fastener_z_offsets_mm() -> [f64; 2] {
+    // Straddle the 12 mm high longitudinal rail so the inner washer, nut and
+    // bolt tip have a real service envelope instead of occupying the rail.
+    [-11.0, 11.0]
+}
+
+pub(super) const fn m3_carriage_tool_clearance_radius_mm() -> f64 {
+    // 3.5 mm washer radius plus nominal FDM/tool clearance.
+    3.6
+}
+
+pub(super) fn pitch_carriage_carrier_mount_y_mm(p: &PrototypeParameters) -> f64 {
+    p.pitch_sector.carrier_spacing.mm() * 0.5 - p.pitch_gearbox.near_plate_inboard_offset.mm()
 }
 
 pub(super) fn pitch_contact_outboard_plate_solids(
@@ -477,7 +537,9 @@ pub(super) fn pitch_gearbox_far_plate_solid(
 }
 
 pub(super) const fn pitch_gearbox_tie_points() -> [[f64; 2]; 3] {
-    [[-35.0, -30.0], [26.0, -18.0], [0.0, 38.0]]
+    // The first tie stays below the reduction train but outboard of the rear
+    // carrier pad and its X-axis fastener stack.
+    [[-42.0, -18.0], [26.0, -18.0], [0.0, 38.0]]
 }
 
 pub(super) fn pitch_gearbox_plate_fastener_datums(

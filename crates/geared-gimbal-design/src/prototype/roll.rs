@@ -641,6 +641,7 @@ fn add_cylindrical_fit(
 pub(super) fn build_moving_carrier_contacts(
     assembly: &mut Assembly,
     d: &Definitions,
+    p: &PrototypeParameters,
 ) -> Result<(), PrototypeError> {
     let cockpit = required_instance(assembly, ComponentRole::Cockpit, ComponentLocation::new())?;
     for ordinal in [1, 2] {
@@ -697,8 +698,31 @@ pub(super) fn build_moving_carrier_contacts(
                 carriage_definition.datums.carrier_contact_face,
                 carrier_end,
                 carrier_definition.datums.carriage_face,
-                30.0,
+                120.0,
             )?;
+            let carrier_side_index = match (end, side) {
+                (LongitudinalEnd::Front, Side::Left) | (LongitudinalEnd::Rear, Side::Right) => 0,
+                (LongitudinalEnd::Front, Side::Right) | (LongitudinalEnd::Rear, Side::Left) => 1,
+            };
+            for physical_fastener_index in 0..2 {
+                let carriage_fastener_index = match end {
+                    LongitudinalEnd::Front => physical_fastener_index,
+                    LongitudinalEnd::Rear => 1 - physical_fastener_index,
+                };
+                add_carriage_carrier_fastener(
+                    assembly,
+                    d,
+                    p,
+                    end,
+                    side,
+                    carriage,
+                    carriage_definition.datums.carrier_fasteners[carriage_fastener_index],
+                    carrier_end,
+                    carrier_definition.datums.carriage_fasteners[carrier_side_index]
+                        [physical_fastener_index],
+                    physical_fastener_index,
+                )?;
+            }
         }
 
         for ordinal in [1, 2] {
@@ -732,6 +756,132 @@ pub(super) fn build_moving_carrier_contacts(
             )?;
         }
     }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_carriage_carrier_fastener(
+    assembly: &mut Assembly,
+    d: &Definitions,
+    p: &PrototypeParameters,
+    end: LongitudinalEnd,
+    side: Side,
+    carriage: ComponentInstanceId,
+    carriage_datums: AxialFastenerDatums,
+    carrier: ComponentInstanceId,
+    carrier_datums: AxialFastenerDatums,
+    index: usize,
+) -> Result<(), PrototypeError> {
+    const WASHER_THICKNESS: f64 = 0.5;
+    const NUT_THICKNESS: f64 = 2.4;
+    let outward = match end {
+        LongitudinalEnd::Front => 1.0,
+        LongitudinalEnd::Rear => -1.0,
+    };
+    let end_rotation = if outward > 0.0 { 0.0 } else { PI };
+    let contact_x =
+        p.frame.moving_carrier_half_span.mm() + p.frame.moving_carrier_member_width.mm();
+    let pad_outer_x = contact_x + pitch_carriage_carrier_pad_depth_mm();
+    let carrier_inner_x = p.frame.moving_carrier_half_span.mm();
+    let y = match side {
+        Side::Left => -pitch_carriage_carrier_mount_y_mm(p),
+        Side::Right => pitch_carriage_carrier_mount_y_mm(p),
+    };
+    let z =
+        p.frame.moving_carrier_height.mm() + pitch_carriage_carrier_fastener_z_offsets_mm()[index];
+    let pose = |x| {
+        RigidTransform::translated(outward * x, y, z)
+            .compose(RigidTransform::rotated(Axis3::Z, end_rotation))
+    };
+    let ordinal = 11 + index as u16;
+    let base_location = ComponentLocation::new()
+        .with_side(side)
+        .with_longitudinal_end(end);
+    let stem = format!(
+        "pitch_carriage_{}_{}_carrier_m3x25_{}",
+        side.as_str(),
+        end.as_str(),
+        index + 1
+    );
+    let bolt = add_located_instance(
+        assembly,
+        &format!("{stem}_bolt"),
+        d.hardware.m3x25_bolt.definition,
+        assembly.instance(carrier).expect("carrier exists").frame,
+        pose(pad_outer_x + WASHER_THICKNESS),
+        base_location.with_ordinal(ordinal),
+    );
+    let first_washer = add_located_instance(
+        assembly,
+        &format!("{stem}_head_washer"),
+        d.hardware.m3_washer.definition,
+        assembly.instance(carrier).expect("carrier exists").frame,
+        pose(pad_outer_x + WASHER_THICKNESS * 0.5),
+        base_location.with_ordinal(ordinal * 2 - 1),
+    );
+    let second_washer = add_located_instance(
+        assembly,
+        &format!("{stem}_nut_washer"),
+        d.hardware.m3_washer.definition,
+        assembly.instance(carrier).expect("carrier exists").frame,
+        pose(carrier_inner_x - WASHER_THICKNESS * 0.5),
+        base_location.with_ordinal(ordinal * 2),
+    );
+    let nut = add_located_instance(
+        assembly,
+        &format!("{stem}_nut"),
+        d.hardware.m3_nut.definition,
+        assembly.instance(carrier).expect("carrier exists").frame,
+        pose(carrier_inner_x - WASHER_THICKNESS - NUT_THICKNESS * 0.5),
+        base_location.with_ordinal(ordinal),
+    );
+    assembly
+        .add_relation(AssemblyRelation::Fastened(FastenedJoint {
+            first_hole: DatumEndpoint::new(carriage, carriage_datums.hole),
+            second_hole: DatumEndpoint::new(carrier, carrier_datums.hole),
+            head_seat: DatumEndpoint::new(carriage, carriage_datums.positive_x_seat),
+            nut_seat: DatumEndpoint::new(carrier, carrier_datums.negative_x_seat),
+            hardware: FastenerHardware {
+                bolt: BoltHardware {
+                    instance: bolt,
+                    axis: d.hardware.m3x25_bolt.axis,
+                    under_head_face: d.hardware.m3x25_bolt.under_head_face,
+                    shank_tip_face: d.hardware.m3x25_bolt.shank_tip_face,
+                },
+                nut: NutHardware {
+                    instance: nut,
+                    axis: d.hardware.m3_nut.axis,
+                    bearing_face: d.hardware.m3_nut.positive_x_face,
+                    outer_face: d.hardware.m3_nut.negative_x_face,
+                },
+                first_washer: Some(WasherHardware {
+                    instance: first_washer,
+                    axis: d.hardware.m3_washer.axis,
+                    member_face: d.hardware.m3_washer.negative_x_face,
+                    hardware_face: d.hardware.m3_washer.positive_x_face,
+                }),
+                second_washer: Some(WasherHardware {
+                    instance: second_washer,
+                    axis: d.hardware.m3_washer.axis,
+                    member_face: d.hardware.m3_washer.positive_x_face,
+                    hardware_face: d.hardware.m3_washer.negative_x_face,
+                }),
+            },
+            thread: MetricThread::M3,
+            target_hole_radial_clearance: NonNegativeLength::mm(0.2)
+                .expect("M3 clearance is non-negative"),
+            grip_length: PositiveLength::mm(
+                pitch_carriage_carrier_pad_depth_mm() + p.frame.moving_carrier_member_width.mm(),
+            )
+            .expect("carriage carrier grip is positive"),
+            tolerance: EngineeringTolerance {
+                linear: NonNegativeLength::mm(0.05)
+                    .expect("carriage carrier tolerance is non-negative"),
+                angular: NonNegativeAngle::degrees(0.1)
+                    .expect("carriage carrier angular tolerance is non-negative"),
+            },
+        }))
+        .map_err(PrototypeError::Assembly)?;
     Ok(())
 }
 
@@ -1015,6 +1165,26 @@ pub(super) fn roll_bearing_carrier_end_solid(
         },
     )?;
     pedestal = builder.boolean(BooleanOperation::Union, pedestal, tie)?;
+    let carriage_mount_y = pitch_carriage_carrier_mount_y_mm(p);
+    for y in [-carriage_mount_y, carriage_mount_y] {
+        let ear = centered_box(
+            builder,
+            [
+                p.frame.moving_carrier_member_width.mm(),
+                pitch_carriage_carrier_pad_width_mm(),
+                pitch_carriage_carrier_pad_height_mm(),
+            ],
+        );
+        let ear = builder.translate(
+            ear,
+            Translation3 {
+                x: tie_center_x,
+                y,
+                z: bridge_z,
+            },
+        )?;
+        pedestal = builder.boolean(BooleanOperation::Union, pedestal, ear)?;
+    }
 
     let pocket_inner_x = roll_bearing_inner_face_x(p);
     let pocket_outer_x = thickness * 0.5 + 1.0;
@@ -1048,6 +1218,24 @@ pub(super) fn roll_bearing_carrier_end_solid(
             y,
             z,
         )?;
+    }
+    for y in [-carriage_mount_y, carriage_mount_y] {
+        for z_offset in pitch_carriage_carrier_fastener_z_offsets_mm() {
+            let bore = cylinder_x(
+                builder,
+                m3_clearance_radius_mm(),
+                p.frame.moving_carrier_member_width.mm() + 2.0,
+            )?;
+            let bore = builder.translate(
+                bore,
+                Translation3 {
+                    x: tie_center_x,
+                    y,
+                    z: bridge_z + z_offset,
+                },
+            )?;
+            pedestal = builder.boolean(BooleanOperation::Difference, pedestal, bore)?;
+        }
     }
     Ok(pedestal)
 }

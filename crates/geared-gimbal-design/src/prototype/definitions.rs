@@ -81,6 +81,7 @@ pub(super) struct ContactCarriageDatums {
     pub(super) negative_y: DatumId<PlaneDatum>,
     pub(super) positive_y: DatumId<PlaneDatum>,
     pub(super) carrier_contact_face: DatumId<PlaneDatum>,
+    pub(super) carrier_fasteners: [AxialFastenerDatums; 2],
     pub(super) bearing_bores: [DatumId<CylinderDatum>; 6],
     pub(super) fasteners: [FastenerMemberDatums; 3],
 }
@@ -117,6 +118,7 @@ pub(super) struct CarrierEndDatums {
     pub(super) rail_face: DatumId<PlaneDatum>,
     pub(super) arm_face: DatumId<PlaneDatum>,
     pub(super) carriage_face: DatumId<PlaneDatum>,
+    pub(super) carriage_fasteners: [[AxialFastenerDatums; 2]; 2],
     pub(super) bearing_bore: DatumId<CylinderDatum>,
     pub(super) bearing_shoulder_face: DatumId<PlaneDatum>,
     pub(super) outer_face: DatumId<PlaneDatum>,
@@ -1071,6 +1073,39 @@ fn build_contact_carriage_definition(
         ],
         [-1.0, 0.0, 0.0],
     );
+    let carrier_pad_depth = pitch_carriage_carrier_pad_depth_mm();
+    let carrier_pad_center_x = pitch_carriage_carrier_contact_local_x(p)? + carrier_pad_depth * 0.5;
+    let carrier_pad_center_z = pitch_carriage_carrier_contact_local_z(p, end)?;
+    let carrier_fasteners =
+        pitch_carriage_carrier_fastener_z_offsets_mm().map(|z_offset| AxialFastenerDatums {
+            hole: add_cylinder_datum(
+                &mut datums,
+                "roll_bearing_carrier_m3_hole",
+                [carrier_pad_center_x, 0.0, carrier_pad_center_z + z_offset],
+                [1.0, 0.0, 0.0],
+                m3_clearance_radius_mm(),
+            ),
+            negative_x_seat: add_plane_datum(
+                &mut datums,
+                "roll_bearing_carrier_m3_contact_seat",
+                [
+                    carrier_pad_center_x - carrier_pad_depth * 0.5,
+                    0.0,
+                    carrier_pad_center_z + z_offset,
+                ],
+                [-1.0, 0.0, 0.0],
+            ),
+            positive_x_seat: add_plane_datum(
+                &mut datums,
+                "roll_bearing_carrier_m3_outer_seat",
+                [
+                    carrier_pad_center_x + carrier_pad_depth * 0.5,
+                    0.0,
+                    carrier_pad_center_z + z_offset,
+                ],
+                [1.0, 0.0, 0.0],
+            ),
+        });
     let bearing_bores = pitch_bearing_bore_datums(
         &mut datums,
         pitch_contact_carriage_bearing_centers(p)?,
@@ -1096,6 +1131,7 @@ fn build_contact_carriage_definition(
             negative_y,
             positive_y,
             carrier_contact_face,
+            carrier_fasteners,
             bearing_bores,
             fasteners,
         },
@@ -1141,6 +1177,42 @@ fn build_roll_bearing_carrier_definition(
         ],
         [1.0, 0.0, 0.0],
     );
+    let carriage_y = pitch_carriage_carrier_mount_y_mm(p);
+    let carriage_fasteners = [-carriage_y, carriage_y].map(|y| {
+        pitch_carriage_carrier_fastener_z_offsets_mm().map(|z_offset| AxialFastenerDatums {
+            hole: add_cylinder_datum(
+                &mut datums,
+                "contact_carriage_m3_hole",
+                [
+                    tie_center_x,
+                    y,
+                    p.frame.moving_carrier_height.mm() + z_offset,
+                ],
+                [1.0, 0.0, 0.0],
+                m3_clearance_radius_mm(),
+            ),
+            negative_x_seat: add_plane_datum(
+                &mut datums,
+                "contact_carriage_m3_inner_seat",
+                [
+                    tie_center_x - tie_half,
+                    y,
+                    p.frame.moving_carrier_height.mm() + z_offset,
+                ],
+                [-1.0, 0.0, 0.0],
+            ),
+            positive_x_seat: add_plane_datum(
+                &mut datums,
+                "contact_carriage_m3_contact_seat",
+                [
+                    tie_center_x + tie_half,
+                    y,
+                    p.frame.moving_carrier_height.mm() + z_offset,
+                ],
+                [1.0, 0.0, 0.0],
+            ),
+        })
+    });
     let bearing_bore = add_cylinder_datum(
         &mut datums,
         "bearing_bore",
@@ -1198,6 +1270,7 @@ fn build_roll_bearing_carrier_definition(
             rail_face,
             arm_face,
             carriage_face,
+            carriage_fasteners,
             bearing_bore,
             bearing_shoulder_face,
             outer_face,

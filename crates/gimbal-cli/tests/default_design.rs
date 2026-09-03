@@ -1491,6 +1491,128 @@ fn pitch_carriages_end_at_roll_bearing_carrier_contact_faces() {
 }
 
 #[test]
+fn pitch_carriages_are_fastened_to_roll_carriers_with_two_m3_bolts_each() {
+    let design = load_design();
+    let role_of = |instance_id| {
+        let instance = design
+            .assembly
+            .instance(instance_id)
+            .expect("fastened participant exists");
+        design
+            .assembly
+            .definition(instance.definition)
+            .expect("fastened participant definition exists")
+            .role
+    };
+    let joints = design
+        .assembly
+        .relations()
+        .iter()
+        .filter_map(|relation| {
+            let AssemblyRelation::Fastened(joint) = relation else {
+                return None;
+            };
+            matches!(
+                (
+                    role_of(joint.first_hole.instance),
+                    role_of(joint.second_hole.instance)
+                ),
+                (
+                    ComponentRole::PitchContactCarriagePlate,
+                    ComponentRole::RollBearingCarrierEnd
+                )
+            )
+            .then_some(*joint)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(joints.len(), 8, "four carriages need two M3 joints each");
+    for side in [Side::Left, Side::Right] {
+        for end in [LongitudinalEnd::Front, LongitudinalEnd::Rear] {
+            let carriage = design
+                .assembly
+                .instance_by_identity(located(
+                    ComponentRole::PitchContactCarriagePlate,
+                    ComponentLocation::new()
+                        .with_side(side)
+                        .with_longitudinal_end(end),
+                ))
+                .expect("pitch carriage exists");
+            assert_eq!(
+                joints
+                    .iter()
+                    .filter(|joint| joint.first_hole.instance == carriage)
+                    .count(),
+                2,
+                "{side:?} {end:?} carriage must resist joint rotation with two bolts"
+            );
+        }
+    }
+
+    let report = validate_assembly(&design, ValidationProfile::STRUCTURAL_PROXY_STATIC)
+        .expect("fast assembly validation succeeds");
+    assert!(
+        report
+            .issues
+            .iter()
+            .all(|issue| !is_fastener_validation_issue(issue.kind)),
+        "carriage hardware placement must satisfy the typed M3 relation: {:#?}",
+        report
+            .issues
+            .iter()
+            .filter(|issue| is_fastener_validation_issue(issue.kind))
+            .collect::<Vec<_>>()
+    );
+
+    let mut evaluator = Evaluator::new(&design.graph);
+    for joint in joints {
+        let participants = [
+            joint.first_hole.instance,
+            joint.second_hole.instance,
+            joint.hardware.bolt.instance,
+            joint.hardware.nut.instance,
+            joint
+                .hardware
+                .first_washer
+                .expect("head washer exists")
+                .instance,
+            joint
+                .hardware
+                .second_washer
+                .expect("nut washer exists")
+                .instance,
+        ];
+        for first_index in 0..participants.len() {
+            for second_index in first_index + 1..participants.len() {
+                let first_id = participants[first_index];
+                let second_id = participants[second_index];
+                let volume = evaluator
+                    .intersection_volume_transformed(
+                        instance_solid_by_id(&design, first_id),
+                        instance_pose_by_id(&design, first_id, 0.0, 0.0),
+                        instance_solid_by_id(&design, second_id),
+                        instance_pose_by_id(&design, second_id, 0.0, 0.0),
+                    )
+                    .expect("carriage M3 intersection query succeeds");
+                assert!(
+                    volume <= 1.0e-7,
+                    "carriage M3 participants {} and {} overlap by {volume} mm^3",
+                    design
+                        .assembly
+                        .instance(first_id)
+                        .expect("first participant exists")
+                        .name,
+                    design
+                        .assembly
+                        .instance(second_id)
+                        .expect("second participant exists")
+                        .name,
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn pitch_gearbox_rejects_bearing_overlap_and_an_invalid_axial_stack() {
     let loaded = load_configuration();
 

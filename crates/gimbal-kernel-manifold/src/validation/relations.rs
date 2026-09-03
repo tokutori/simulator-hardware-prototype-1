@@ -303,7 +303,19 @@ impl AssemblyValidator<'_> {
             first: joint.first_hole.instance,
             second: joint.second_hole.instance,
         };
-        if instances[pair.first.index()].is_none() || instances[pair.second.index()].is_none() {
+        let hardware_instances = [
+            Some(joint.hardware.bolt.instance),
+            Some(joint.hardware.nut.instance),
+            joint.hardware.first_washer.map(|washer| washer.instance),
+            joint.hardware.second_washer.map(|washer| washer.instance),
+        ];
+        if instances[pair.first.index()].is_none()
+            || instances[pair.second.index()].is_none()
+            || hardware_instances
+                .into_iter()
+                .flatten()
+                .any(|instance| instances[instance.index()].is_none())
+        {
             return RelationValidationStatus::SkippedByScope;
         }
         let first_hole = world_cylinder(joint.first_hole, self.assembly, instances);
