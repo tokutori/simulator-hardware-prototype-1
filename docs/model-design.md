@@ -82,7 +82,7 @@ retention軸は、別体のrigid bearing blockと外観だけのleaf springを�
 
 固定案内梁のEuler–Bernoulli幾何proxyとして、梁幅を曲げ厚さ$t$、組付け変位を$\delta$、有効長を$L$とし、最大表面ひずみを$3t\delta/L^2$で評価する。現在値は約0.444%で、設計上限0.5%以内である。この上限は材料許容値ではなく、形状変更を検出するための保守的なprototype contractである。押付力、積層方向を含む実ひずみ、creep、疲労寿命およびABS/PLAの差は未検証であり、材料couponと実測なしには成立済みと扱わない。外側支持板にはpitch-sector mid-planeから8.0 mmの専用offsetを与え、drive/retention flangeとの最小0.25 mm隙間をparameter validationとexact Boolean testで検査する。
 
-pitch gearboxはmodule 0.6である。離した2本の18T branch gearを共通54T distribution gearへ接続し、その後18/54 teethの3:1を2段直列にする。distribution段の1:3と後段の9:1を相殺すると、固定外歯referenceと18T drive pinionの比を含む移動体上の入力軸からpitch角までの相対回転比の大きさは62:1となる。この値はprototypeの手回し確認用であり、本番減速比ではない。
+pitch gearboxはmodule 0.6である。離した2本の18T branch gearを共通54T distribution gearへ接続し、その後18/54 teethの3:1を2段直列にする。二つの減速stageは45度のV字へ折り、隣接shaftの8 mm bearing bodyおよび9.2 mm flange間に0.5 mm以上のgapを確保する。旧直交layoutはbranch shaftとcompound shaftが約7.3 mmまで接近し、軸受を物理的に配置できないため使用しない。distribution段の1:3と後段の9:1を相殺すると、固定外歯referenceと18T drive pinionの比を含む移動体上の入力軸からpitch角までの相対回転比の大きさは62:1となる。この値はprototypeの手回し確認用であり、本番減速比ではない。
 
 pitch unitの4 mm shaftは、3DP支持板の遊び穴へ直接通さず、MinebeaMitsumi公式寸法に基づくフランジ付き`DDLF-840ZZ`（内径4 mm、外径8 mm、幅3 mm、フランジ径9.2 mm、フランジ幅0.6 mm）で両側支持する（<https://product.minebeamitsumi.com/product/category/bearing/miniature_small/parts/DDLF840ZZ.html>）。各unitはoutboard plateに3個、near/carriage plateに6個、far plateに3個、合計12個を使用し、prototype全体では48個となる。軸受内輪と4 mm shaft、外輪と8 mm seatはnominal radial clearance 0 mmの`CylindricalFit`、フランジと支持板外面は`SurfaceContact`として検証する。実FDM seatの圧入代、shaft公差、内輪の軸方向保持およびbearing調達コストは未確定であり、nominal datumとprocess compensationを混同しない。
 
@@ -95,9 +95,9 @@ drive pinion relative angle = +(372 / 18) * pitch angle
 retention pinion relative angle = -(338 / 18) * pitch angle
 ```
 
-4 unitはroll軸周辺またはコクピ上側のmoving carrierでroll駆動部と一体化する。コクピ直下のcrossbarは撤去し、コクピ下側を床clearance用keep-out volumeとして空ける。moving carrierはroll軸より24 mm上にある左右2本の182 mm長手材と、前後の`RollBearingCarrierEnd`で構成する。このcarrier endは左右railの端部tie、roll bearing boss、ribおよびroll gearbox支持面を一部品へ統合する。接触carriageから各長手材へ伸びる2本のtruss webと20 mm幅のrail mounting padもFDM carriage plateの同一solidへ統合する。roll gearboxだけはコクピ前後でroll軸下側に置き、carrier endから面接触するL形bracketで支持する。
+4 unitはroll軸周辺またはコクピ上側のmoving carrierでroll駆動部と一体化する。コクピ直下のcrossbarは撤去し、コクピ下側を床clearance用keep-out volumeとして空ける。moving carrierはroll軸より24 mm上にある左右2本の182 mm長手材と、前後の`RollBearingCarrierEnd`で構成する。このcarrier endは左右railの端部tie、roll bearing boss、ribおよびroll gearbox支持面を一部品へ統合する。接触carriageのtrussはlongitudinal railまで貫通させず、carrier endのoutboard faceで終わる6 × 12 × 8 mm取付足へ接続する。前後で取付足のlocal Zが異なるためcarriageはfront/rearの別definitionとし、共通plate・bearing・flexure geometryだけを共有する。roll gearboxだけはコクピ前後でroll軸下側に置き、carrier endから面接触するL形bracketで支持する。
 
-ここで「外歯側／内歯側」はsectorに対する径方向、「左右frame間の内側」はY方向の軸方向配置を指し、両者を区別する。pitch gearboxとdistribution部は径方向外側のdrive pinionを駆動するが、gearbox本体は各sectorのY方向外側でなく左右frame間へ置く。各sectorのmid-planeから軸方向内側へ、近側支持板6.5 mm、第一gear layer 10.5 mm、遠側支持板24.0 mmの順に配置し、左右の遠側支持板間には52 mmの中央通路を残す。軸方向外側には接触pinionの反対側支持板とretention preload部だけを置く。motorとrotary encoder本体は今回含めない。
+ここで「外歯側／内歯側」はsectorに対する径方向、「左右frame間の内側」はY方向の軸方向配置を指し、両者を区別する。pitch gearboxとdistribution部は径方向外側のdrive pinionを駆動するが、gearbox本体は各sectorのY方向外側でなく左右frame間へ置く。各sectorのmid-planeから軸方向内側へ、near plate 8.3 mm、第一gear plane 12.0 mm、far plate 25.8 mmの順に配置する。sector flange–near bearing、near plate/bearing–gearおよび最深gear–far plate/bearingの軸方向gapはparameter validationで0.2 mm以上を要求する。軸方向外側には接触pinionの反対側支持板とretention preload部だけを置く。motorとrotary encoder本体は今回含めない。
 
 各pitch/roll gearboxの露出input shaftには、No.2プラスドライバーで低荷重手回しできるPH2-compatible cross recessを設ける。これはprototypeのkinematics確認用であり、規格適合、高トルク耐久または本番入力interfaceを保証しない。
 
@@ -118,7 +118,7 @@ shaft前後に同じ36T driven gearを固定し、各端を18T output pinionで�
 
 roll shaftの軸方向位置は前側608だけで決め、後側608は外輪がcarrier内を軸方向にfloatできるlocating/non-locating構成とする。SKFのlocating/non-locating配置に従い、回転軸へ固定する両方の内輪はそれぞれ両面を608ZZ向けNBK `NSCS-8-8-SB1` clamp collarで挟む。後側で内輪を軸上に滑らせる構成にはしない。購入部品のnominal body modelへ、公式寸法である内径8 mm、外径20 mm、幅8.5 mmおよび内輪当接boss径11.7 mmを反映する（<https://www.nbk1560.com/images/en/product/setcollar/NSCS-SB/NSCS-SB_1.pdf>）。inboard collarはcarrier内面の開口を通して内輪だけへ当たり、outboard collarはretainerの段付きcounterboreを通して内輪だけへ当たるため、外輪保持部と正の体積交差を持たない。前側外輪はshoulderとretainerで位置決めし、後側外輪にはcarrier boreへnominal 0.15 mmの径方向slide clearanceと、inboard shoulderからoutboard retainer stopまで1.0 mmの一方向軸移動量を与える。4個のcollar–shaft fit、4箇所の内輪端面contact、前側外輪の両面contactおよび後側外輪とstop間のtyped clearanceを検証する。製品に付属するM3 clamp screwの突出・工具envelope、collarの実保持力、購入shaft公差、後側外輪の実slide fitおよびFDM carrier穴補正は引き続きPhase 5のprocess validation対象である。
 
-各端にはroll軸の下側にmodule 0.6、18/54T×2段の9:1 gearbox、3本のshaft、軸受bossとribから成るside plateおよびpitch移動体へのmountを置く。roll最終段2:1を含む入力対コクピ比は18:1である。D-fitの軸方向保持と製造公差もPhase 5で確定する。
+各端にはroll軸の下側にmodule 0.6、18/54T×2段の9:1 gearbox、3本のshaft、軸受bossとribから成るside plateおよびpitch移動体へのmountを置く。gear center distanceを維持したままcompound shaftをY方向へ12 mmずらし、残るZ offsetをPythagorean relationから導く浅いV字配置とする。旧一方向L字配置はpitch far plateへ干渉し、純垂直stackはpitch限界で床clearanceを失うため使用しない。roll最終段2:1を含む入力対コクピ比は18:1である。D-fitの軸方向保持と製造公差もPhase 5で確定する。
 
 前後2入力を同時駆動する場合は機械同期またはtorque-sharingが必要である。本試作は両端のmechanical interfaceを示すだけで、2 motor制御の成立を保証しない。
 

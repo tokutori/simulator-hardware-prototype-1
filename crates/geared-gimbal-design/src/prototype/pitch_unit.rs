@@ -58,13 +58,14 @@ fn build_contact_unit(
     let base_location = ComponentLocation::new()
         .with_side(side)
         .with_longitudinal_end(end);
+    let contact_carriage_definition = d.pitch_unit.contact_carriage_plate(end);
     let side = side.as_str();
     let end = end.as_str();
     let internal = p.pitch_sector.sector.internal_reference();
-    let external = p.pitch_sector.sector.external_reference();
-    let drive_radius = external.pitch_radius() + p.contact_unit.drive_pinion.pitch_radius();
-    let offset = p.contact_unit.branch_angle_offset.as_radians();
-    let mut branch_centers = [[0.0; 2]; 2];
+    let layout = pitch_unit_layout(p)?;
+    let branch_centers = layout
+        .branches
+        .map(|center| rotate_pitch_layout(center, end_angle));
     // The reduction train sits between the two sector planes. Offsets are
     // measured from each sector mid-plane toward the assembly centre so the
     // left/right units remain exact mirrors of one another.
@@ -72,11 +73,8 @@ fn build_contact_unit(
     let gearbox_layer_y = y + inward_sign * p.pitch_gearbox.gear_plane_inboard_offset.mm();
     let mut branch_shafts = [None; 2];
 
-    for (branch, branch_offset) in [-offset, offset].into_iter().enumerate() {
-        let angle = end_angle + branch_offset;
-        let x = drive_radius * libm::cos(angle);
-        let z = drive_radius * libm::sin(angle);
-        branch_centers[branch] = [x, z];
+    for (branch, center) in branch_centers.into_iter().enumerate() {
+        let [x, z] = center;
         let frame = revolute_frame(
             frames,
             pitch_frame,
@@ -177,26 +175,10 @@ fn build_contact_unit(
         );
     }
 
-    let radial = [libm::cos(end_angle), libm::sin(end_angle)];
-    let tangent = [-radial[1], radial[0]];
     let outboard_support_plane_y =
         y + side_sign * p.contact_unit.outboard_support_plate_offset.mm();
-
-    let branch_distance = p.pitch_gearbox.distribution_gear.pitch_radius()
-        + p.pitch_gearbox.small_gear.pitch_radius();
-    let midpoint = [
-        (branch_centers[0][0] + branch_centers[1][0]) * 0.5,
-        (branch_centers[0][1] + branch_centers[1][1]) * 0.5,
-    ];
-    let half_chord = distance2(branch_centers[0], branch_centers[1]) * 0.5;
-    if half_chord >= branch_distance {
-        return Err(PrototypeError::InvalidGearboxGeometry);
-    }
-    let radial_offset = libm::sqrt(branch_distance * branch_distance - half_chord * half_chord);
-    let central = [
-        midpoint[0] - radial_offset * radial[0],
-        midpoint[1] - radial_offset * radial[1],
-    ];
+    let midpoint = rotate_pitch_layout(layout.branch_midpoint, end_angle);
+    let central = rotate_pitch_layout(layout.distributor, end_angle);
     let distribution_ratio = p.pitch_gearbox.small_gear.teeth() as f64
         / p.pitch_gearbox.distribution_gear.teeth() as f64;
     let distributor_frame = revolute_frame(
@@ -215,16 +197,8 @@ fn build_contact_unit(
         base_location.with_ordinal(3),
     );
 
-    let stage_distance =
-        p.pitch_gearbox.small_gear.pitch_radius() + p.pitch_gearbox.large_gear.pitch_radius();
-    let compound_a = [
-        central[0] + tangent[0] * stage_distance,
-        central[1] + tangent[1] * stage_distance,
-    ];
-    let input_center = [
-        compound_a[0] + radial[0] * stage_distance,
-        compound_a[1] + radial[1] * stage_distance,
-    ];
+    let compound_a = rotate_pitch_layout(layout.compound, end_angle);
+    let input_center = rotate_pitch_layout(layout.input, end_angle);
     let compound_a_frame = revolute_frame(
         frames,
         pitch_frame,
@@ -272,10 +246,7 @@ fn build_contact_unit(
         RigidTransform::translated(0.0, layer * 2.0, 0.0),
         base_location.with_ordinal(5),
     );
-    let plate_center = [
-        (central[0] + input_center[0]) * 0.5,
-        (central[1] + input_center[1]) * 0.5,
-    ];
+    let plate_center = rotate_pitch_layout(layout.plate_center, end_angle);
     let inboard_near_plane_y = y + inward_sign * p.pitch_gearbox.near_plate_inboard_offset.mm();
     let outboard_plate_pose =
         RigidTransform::translated(midpoint[0], outboard_support_plane_y, midpoint[1])
@@ -294,7 +265,7 @@ fn build_contact_unit(
     let near_plate = add_located_instance(
         assembly,
         &format!("pitch_gearbox_{side}_{end}_contact_carriage_plate"),
-        d.pitch_unit.contact_carriage_plate.id,
+        contact_carriage_definition.id,
         pitch_frame,
         near_plate_pose,
         base_location,
@@ -321,6 +292,7 @@ fn build_contact_unit(
             pitch_frame,
             base_location,
             near_plate,
+            contact_carriage_definition,
             far_plate,
             plate_center,
             tie,
@@ -375,6 +347,7 @@ fn build_contact_unit(
         outboard_plate,
         outboard_plate_pose,
         near_plate,
+        contact_carriage_definition,
         near_plate_pose,
         far_plate,
         far_plate_pose,
@@ -399,6 +372,7 @@ fn build_pitch_bearing_supports(
     outboard_plate: ComponentInstanceId,
     outboard_plate_pose: RigidTransform,
     near_plate: ComponentInstanceId,
+    near_definition: Defined<ContactCarriageDatums>,
     near_plate_pose: RigidTransform,
     far_plate: ComponentInstanceId,
     far_plate_pose: RigidTransform,
@@ -415,9 +389,9 @@ fn build_pitch_bearing_supports(
         d.pitch_unit.pitch_contact_outboard_plate.datums.negative_y
     };
     let near_face = if side_sign > 0.0 {
-        d.pitch_unit.contact_carriage_plate.datums.positive_y
+        near_definition.datums.positive_y
     } else {
-        d.pitch_unit.contact_carriage_plate.datums.negative_y
+        near_definition.datums.negative_y
     };
     let far_face = if inward_sign > 0.0 {
         d.pitch_unit.pitch_gearbox_far_plate.datums.positive_y
@@ -471,7 +445,7 @@ fn build_pitch_bearing_supports(
             near_plate,
             near_plate_pose,
             near_centers[index],
-            d.pitch_unit.contact_carriage_plate.datums.bearing_bores[index],
+            near_definition.datums.bearing_bores[index],
             near_face,
             near_shafts[index],
             pitch_shaft_surface(d, index, false),
@@ -617,6 +591,7 @@ fn add_pitch_gearbox_fastener(
     frame: FrameId,
     base_location: ComponentLocation,
     near_plate: ComponentInstanceId,
+    near_definition: Defined<ContactCarriageDatums>,
     far_plate: ComponentInstanceId,
     plate_center: [f64; 2],
     tie: [f64; 2],
@@ -691,7 +666,7 @@ fn add_pitch_gearbox_fastener(
         pose(second_washer_y, true),
         base_location.with_ordinal(ordinal * 2),
     );
-    let near_datums = d.pitch_unit.contact_carriage_plate.datums.fasteners[index];
+    let near_datums = near_definition.datums.fasteners[index];
     let far_datums = d.pitch_unit.pitch_gearbox_far_plate.datums.fasteners[index];
     let head_seat = if outward_sign > 0.0 {
         near_datums.positive_y_seat
@@ -748,4 +723,13 @@ fn add_pitch_gearbox_fastener(
         }))
         .map_err(PrototypeError::Assembly)?;
     Ok(())
+}
+
+fn rotate_pitch_layout(point: [f64; 2], angle: f64) -> [f64; 2] {
+    let cosine = libm::cos(angle);
+    let sine = libm::sin(angle);
+    [
+        point[0] * cosine - point[1] * sine,
+        point[0] * sine + point[1] * cosine,
+    ]
 }

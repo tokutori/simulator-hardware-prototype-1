@@ -56,8 +56,14 @@ pub(super) fn pitch_unit_layout(
     ];
     let stage_distance =
         p.pitch_gearbox.small_gear.pitch_radius() + p.pitch_gearbox.large_gear.pitch_radius();
-    let compound = [distributor[0], distributor[1] + stage_distance];
-    let input = [compound[0] + stage_distance, compound[1]];
+    let diagonal = p.pitch_gearbox.stage_diagonal_angle.as_radians();
+    let diagonal_x = libm::cos(diagonal) * stage_distance;
+    let diagonal_z = libm::sin(diagonal) * stage_distance;
+    // Fold the two reduction stages into a V. The old orthogonal placement put
+    // the compound shaft only about 7.3 mm from one branch shaft, which cannot
+    // accommodate adjacent 8 mm bearing bodies or 9.2 mm flanges.
+    let compound = [distributor[0] - diagonal_x, distributor[1] + diagonal_z];
+    let input = [compound[0] + diagonal_x, compound[1] + diagonal_z];
     let plate_center = [
         (distributor[0] + input[0]) * 0.5,
         (distributor[1] + input[1]) * 0.5,
@@ -134,10 +140,11 @@ pub(super) fn pitch_gearbox_far_plate_bearing_centers(
 pub(super) fn pitch_contact_carriage_plate_solids(
     builder: &mut FeatureBuilder,
     p: &PrototypeParameters,
+    end: LongitudinalEnd,
 ) -> Result<CompliantSolidPair, PrototypeError> {
     Ok(CompliantSolidPair {
-        manufacturing: pitch_contact_carriage_plate_solid(builder, p, FlexureState::Free)?,
-        assembly: pitch_contact_carriage_plate_solid(builder, p, FlexureState::Installed)?,
+        manufacturing: pitch_contact_carriage_plate_solid(builder, p, FlexureState::Free, end)?,
+        assembly: pitch_contact_carriage_plate_solid(builder, p, FlexureState::Installed, end)?,
     })
 }
 
@@ -145,6 +152,7 @@ fn pitch_contact_carriage_plate_solid(
     builder: &mut FeatureBuilder,
     p: &PrototypeParameters,
     flexure_state: FlexureState,
+    end: LongitudinalEnd,
 ) -> Result<SolidId, PrototypeError> {
     let layout = pitch_unit_layout(p)?;
     let thickness = p.pitch_gearbox.side_plate_thickness.mm();
@@ -228,36 +236,40 @@ fn pitch_contact_carriage_plate_solid(
         layout.branch_midpoint[0] - layout.plate_center[0],
         layout.branch_midpoint[1] - layout.plate_center[1],
     ];
-    for anchor in [
-        [
-            p.frame.moving_carrier_half_span.mm() - 26.0 - layout.plate_center[0],
-            p.frame.moving_carrier_height.mm() - layout.plate_center[1],
-        ],
-        [
-            p.frame.moving_carrier_half_span.mm() - 6.0 - layout.plate_center[0],
-            p.frame.moving_carrier_height.mm() - layout.plate_center[1],
-        ],
+    let carrier_contact_x = pitch_carriage_carrier_contact_local_x(p)?;
+    let carrier_pad_depth = pitch_carriage_carrier_pad_depth_mm();
+    let carrier_pad_height = pitch_carriage_carrier_pad_height_mm();
+    let carrier_pad_outer_x = carrier_contact_x + carrier_pad_depth;
+    let carrier_pad_center_z = pitch_carriage_carrier_contact_local_z(p, end)?;
+    for anchor_z in [
+        carrier_pad_center_z - carrier_pad_height * 0.25,
+        carrier_pad_center_z + carrier_pad_height * 0.25,
     ] {
+        let anchor = [carrier_pad_outer_x, anchor_z];
         let brace = beam_xz(builder, brace_origin, anchor, thickness, 8.0)?;
         plate = builder.boolean(BooleanOperation::Union, plate, brace)?;
     }
-    // Give the sparse gearbox truss a real mounting pad against the cradle rail.
-    // Without this pad the braces only touched the rail over a few square
-    // millimetres, which was neither a useful load path nor an honest contact
-    // surface for the assembly relation.
-    let rail_pad = centered_box(
+    // Terminate the contact-unit truss at the outboard face of the front/rear
+    // roll-bearing carrier. The former diagonal brace crossed that carrier and
+    // then penetrated the longitudinal rail, conflating connection with solid
+    // overlap. This local foot stops at a semantic contact plane instead.
+    let carrier_pad = centered_box(
         builder,
-        [20.0, thickness, p.frame.moving_carrier_member_width.mm()],
+        [
+            carrier_pad_depth,
+            pitch_carriage_carrier_pad_width_mm(),
+            carrier_pad_height,
+        ],
     );
-    let rail_pad = builder.translate(
-        rail_pad,
+    let carrier_pad = builder.translate(
+        carrier_pad,
         Translation3 {
-            x: p.frame.moving_carrier_half_span.mm() - 16.0 - layout.plate_center[0],
+            x: carrier_contact_x + carrier_pad_depth * 0.5,
             y: 0.0,
-            z: p.frame.moving_carrier_height.mm() - layout.plate_center[1],
+            z: carrier_pad_center_z,
         },
     )?;
-    plate = builder.boolean(BooleanOperation::Union, plate, rail_pad)?;
+    plate = builder.boolean(BooleanOperation::Union, plate, carrier_pad)?;
     // Cut fastener holes after every structural union. A later flexure or
     // brace union must never refill a previously cut through-hole.
     for tie in pitch_gearbox_tie_points() {
@@ -275,6 +287,42 @@ fn pitch_contact_carriage_plate_solid(
         )?;
     }
     Ok(plate)
+}
+
+pub(super) fn pitch_carriage_carrier_contact_local_x(
+    p: &PrototypeParameters,
+) -> Result<f64, PrototypeError> {
+    let layout = pitch_unit_layout(p)?;
+    // The carrier's upper transverse tie projects beyond the bearing pedestal.
+    // Contact its actual outboard face, not the retainer plane hidden inside it.
+    Ok(
+        p.frame.moving_carrier_half_span.mm() + p.frame.moving_carrier_member_width.mm()
+            - layout.plate_center[0],
+    )
+}
+
+pub(super) fn pitch_carriage_carrier_contact_local_z(
+    p: &PrototypeParameters,
+    end: LongitudinalEnd,
+) -> Result<f64, PrototypeError> {
+    let layout = pitch_unit_layout(p)?;
+    let target_local_z = match end {
+        LongitudinalEnd::Front => p.frame.moving_carrier_height.mm(),
+        LongitudinalEnd::Rear => -p.frame.moving_carrier_height.mm(),
+    };
+    Ok(target_local_z - layout.plate_center[1])
+}
+
+pub(super) const fn pitch_carriage_carrier_pad_depth_mm() -> f64 {
+    8.0
+}
+
+pub(super) const fn pitch_carriage_carrier_pad_width_mm() -> f64 {
+    6.0
+}
+
+pub(super) const fn pitch_carriage_carrier_pad_height_mm() -> f64 {
+    12.0
 }
 
 pub(super) fn pitch_contact_outboard_plate_solids(
@@ -429,7 +477,7 @@ pub(super) fn pitch_gearbox_far_plate_solid(
 }
 
 pub(super) const fn pitch_gearbox_tie_points() -> [[f64; 2]; 3] {
-    [[-24.0, -24.0], [26.0, -18.0], [0.0, 38.0]]
+    [[-35.0, -30.0], [26.0, -18.0], [0.0, 38.0]]
 }
 
 pub(super) fn pitch_gearbox_plate_fastener_datums(

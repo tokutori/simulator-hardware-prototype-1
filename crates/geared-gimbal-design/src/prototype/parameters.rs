@@ -65,6 +65,8 @@ pub struct PitchGearboxParameters {
     pub gear_plane_inboard_offset: Length,
     /// Distance from the pitch-sector mid-plane toward the opposite sector.
     pub far_plate_inboard_offset: Length,
+    /// Acute angle used by both legs of the folded two-stage reduction path.
+    pub stage_diagonal_angle: Angle,
 }
 
 #[derive(Clone, Debug)]
@@ -138,6 +140,8 @@ pub enum PrototypeError {
     InvalidGearboxGeometry,
     InvalidGearboxPlacement,
     InvalidPitchGearboxBearing,
+    InvalidPitchBearingSpacing,
+    InvalidPitchAxialStack,
     InvalidRollBearing,
     InvalidRetentionFlexure,
     OutboardSupportHitsFlange,

@@ -97,6 +97,11 @@ pub(super) fn validate(parameters: &PrototypeParameters) -> Result<(), Prototype
     if parameters.pitch_gearbox.distribution_gear != parameters.pitch_gearbox.large_gear {
         return Err(PrototypeError::InvalidGearboxGeometry);
     }
+    let roll_stage_distance = parameters.pitch_gearbox.small_gear.pitch_radius()
+        + parameters.pitch_gearbox.large_gear.pitch_radius();
+    if parameters.roll_axis.gearbox_support_half_span.mm() >= roll_stage_distance {
+        return Err(PrototypeError::InvalidGearboxGeometry);
+    }
     let gearbox = &parameters.pitch_gearbox;
     const PITCH_GEARBOX_BOSS_RADIUS_MM: f64 = 5.5;
     const MINIMUM_FDM_WALL_MM: f64 = 0.8;
@@ -111,21 +116,48 @@ pub(super) fn validate(parameters: &PrototypeParameters) -> Result<(), Prototype
     {
         return Err(PrototypeError::InvalidPitchGearboxBearing);
     }
+    let diagonal_degrees = gearbox.stage_diagonal_angle.as_degrees();
+    if !(0.0 < diagonal_degrees && diagonal_degrees < 90.0) {
+        return Err(PrototypeError::InvalidGearboxGeometry);
+    }
+    let bearing_centers = pitch_contact_carriage_bearing_centers(parameters)?;
+    const MINIMUM_BEARING_FLANGE_GAP_MM: f64 = 0.5;
+    let required_bearing_separation =
+        gearbox.flanged_bearing_flange_radius.mm() * 2.0 + MINIMUM_BEARING_FLANGE_GAP_MM;
+    for first in 0..bearing_centers.len() {
+        for second in first + 1..bearing_centers.len() {
+            if distance2(bearing_centers[first], bearing_centers[second])
+                < required_bearing_separation
+            {
+                return Err(PrototypeError::InvalidPitchBearingSpacing);
+            }
+        }
+    }
     let plate_half = gearbox.side_plate_thickness.mm() * 0.5;
     let gear_half = gearbox.gear_face_width.mm() * 0.5;
     let layer_pitch = gearbox.gear_face_width.mm() + 1.0;
     let near = gearbox.near_plate_inboard_offset.mm();
     let gear = gearbox.gear_plane_inboard_offset.mm();
     let far = gearbox.far_plate_inboard_offset.mm();
-    let sector_half = parameters.pitch_sector.face_width.mm() * 0.5;
     let deepest_gear = gear + 2.0 * layer_pitch;
-    if near - plate_half <= sector_half
-        || gear - gear_half <= sector_half
-        || gear - near < plate_half + gear_half
-        || far - deepest_gear < plate_half + gear_half
+    const MINIMUM_AXIAL_GAP_MM: f64 = 0.2;
+    let flange_outer_extent = libm::fmax(drive_flange_outer_extent, encoder_flange_outer_extent);
+    let near_bearing_flange_outer_face =
+        near - plate_half - gearbox.flanged_bearing_flange_width.mm();
+    let near_plate_inner_face = near + plate_half;
+    let near_bearing_body_inner_end = near - plate_half + gearbox.flanged_bearing_width.mm()
+        - gearbox.flanged_bearing_flange_width.mm();
+    let far_plate_inner_face = far - plate_half;
+    let far_bearing_body_outer_start = far + plate_half - gearbox.flanged_bearing_width.mm()
+        + gearbox.flanged_bearing_flange_width.mm();
+    if near_bearing_flange_outer_face < flange_outer_extent + MINIMUM_AXIAL_GAP_MM
+        || gear - gear_half < near_plate_inner_face + MINIMUM_AXIAL_GAP_MM
+        || gear - gear_half < near_bearing_body_inner_end + MINIMUM_AXIAL_GAP_MM
+        || far_plate_inner_face < deepest_gear + gear_half + MINIMUM_AXIAL_GAP_MM
+        || far_bearing_body_outer_start < deepest_gear + gear_half + MINIMUM_AXIAL_GAP_MM
         || far >= parameters.pitch_sector.carrier_spacing.mm() * 0.5
     {
-        return Err(PrototypeError::InvalidGearboxPlacement);
+        return Err(PrototypeError::InvalidPitchAxialStack);
     }
     let carrier = &parameters.frame;
     let carrier_inner_span = parameters.pitch_sector.carrier_spacing.mm()

@@ -99,6 +99,11 @@ Frame / Joint       = kinematic motion
 | A-31 | High | `DatumId<T>`が発行元definitionを保持せず、同kind・同indexの別definition datumを誤受理し得る | relationが意図しない接続面・軸を参照する | 1 |
 | A-32 | High | relation validatorが未対応relationを黙って通過し、reportが`complete: true`になり得る | 未検証jointを検証済みと誤表示する | 2, 5, 6 |
 | A-33 | High | non-locating側608の内輪をshaft上でfloatさせる誤った配置を一時採用した | 回転嵌合面の摺動・frettingと軸位置不安定を招く | 5 |
+| A-34 | High | 高精細gear除外とproxy/exact fidelityを一つの検査scopeで表していた | 歯形評価を待たずに構造干渉を確定する中間gateを構成できない | 2, 7 |
+| A-35 | Blocker | pitch gearboxの旧直交layoutではbranch shaftとcompound shaftの軸間が約7.3 mmしかなく、直径8 mmの軸受と直径9.2 mmのflangeを配置できない | 支持軸受同士が干渉し、物理的に組み立てられない | 5, 6 |
+| A-36 | Blocker | contact carriageの旧trussがroll bearing carrierを貫通してlongitudinal railへ食い込んでいた | moving carrierへの接続を別instance間overlapで代用する | 3, 5 |
+| A-37 | High | 上側接続形状が前後で非対称なcarriageを一つのdefinitionの180度回転で再利用した | rear側取付足が下向きへ反転し、接触面積0のrelationを作る | 3, 5 |
+| A-38 | High | roll gearboxの旧一方向L字配置はpitch far plateへ干渉し、単純な垂直stackはpitch端で床clearanceを失う | 局所干渉回避が別の大域干渉を発生させる | 5, 7 |
 
 この一覧は完了条件ではない。Phase 2以降の全instance監査で新たに発見した問題も、この表へ追加する。
 
@@ -376,6 +381,7 @@ Phase 4の先頭でcomponent/feature existence auditを行う。締結を追加�
 - DXFへhole contourを出力し、closed contourと単位を再読込検証する。
 - 全instanceと主要なUnion/Difference featureについて、現在のrelation、load pathまたはkeep-out requirementへ到達する存在理由を監査する。
 - 高精細gearを除外した高速な全可動instance対floor検査を常時gateとし、歯形固有検査は独立した低頻度routeへ分ける。
+- definition coverage、geometry fidelity、motion coverageを独立させる。AABB proxyは候補抽出、gearを除外したexact structural検査は確定干渉の中間gate、高精細full exactは低頻度gateとする。
 
 Exit criteria:
 
@@ -418,6 +424,8 @@ Exit criteria:
 - shaft、bearing、gearおよびhubの全件について軸方向に拘束される理由を追跡できる。
 - key、hub、hanger、clampの別instance間に意図しない正の体積交差がない。
 - cockpitがroll軸下へ吊られ、roll駆動喪失時の重力復元方向をkinematicsで確認できる。
+- 各gearboxでbearing flange間隔と軸方向stackがparameter validationを通り、支持板、軸受、flangeおよびgear間に要求gapがある。
+- contact carriageはfront/rearの実接続形状に対応するdefinitionを使い、roll bearing carrier endへ面接触して別instanceへ食い込まない。
 
 ### Phase 6: gear mesh、位相、gearbox伝達
 
@@ -671,6 +679,12 @@ Exit criteria:
 - pitch unitの3.7 mm表示shaftと直径4.7 mmの無根拠な支持穴を撤去し、MinebeaMitsumi公式寸法のフランジ付き`DDLF-840ZZ`（4 × 8 × 3 mm、フランジ径9.2 mm、幅0.6 mm）へ置換した。outboard/near/far支持板に1 unit 12個、全4 unit 48個を配置し、96件のshaft/inner-race・outer-race/plate `CylindricalFit`と48件のflange `SurfaceContact`を登録した。nominal datumはclearance 0 mm、評価meshだけは完全一致円筒Booleanの退化を避ける0.01 mm radial reliefを持つ。
 - 上記軸受のrepresentative 1 unitについて、12個すべてのbearing–shaft・bearing–plate pairが正の交差体積を持たないことをexact Booleanで検査した。この検査でretention boreと一部M3 boreを後段Unionが埋め戻すCSG順序不良を再検出し、near/outboard/far全支持板を「構造Union完了後に全穴を最後にDifferenceする」順序へ統一した。軸受外輪の実FDM fit、内輪の軸方向保持およびgear–shaftトルク伝達は未完了なのでPhase 5を継続する。
 - フランジ軸受checkpointでworkspace 70 tests、format、warning-as-error Clippy、generic coreと固有designのnative/WASM `no_std` checkが成功した。高精細gearを除く高速検査は保守的AABB候補423件により依然失敗するため、この段階は引き続きpreview-onlyである。
+- 高精細gearを除外したままAABB proxyとexact solidを選択できるよう、definition coverageをgeometry fidelityから分離した。`validate-proxy`は1秒級の候補抽出、`validate`は高精細gear以外のstatic exact判定、`validate-full`は全definitionのstatic exact判定を行い、それぞれ別のstructured reportを生成する。proxy候補数を干渉件数または完成までの残件数とは扱わない。
+- pitch gearboxの支持軸受を追加したことで、旧直交layoutのbranch shaft–compound shaft間が約7.3 mmとなり、8 mm bearing bodyと9.2 mm flangeを配置不能であることを検出した。2段減速経路を45度のV字へ折り、全bearing flange間へ0.5 mm以上の平面間gapを要求するparameter validationを追加した。
+- pitch unitの軸方向stackをsector mid-planeからnear plate 8.3 mm、gear plane 12.0 mm、far plate 25.8 mmへ再設定した。sector側flange、near plate/bearing、3 gear layerおよびfar plate/bearingの各隣接面へ0.2 mm以上のnominal gapを要求し、旧値へ戻す失敗testを追加した。初期11.7/25.2 mm案はhigh-detail回帰testでnear plate–small gear 3.34 mm3、far plate–large gear 58.65 mm3の交差を順に検出したため採用しない。
+- contact carriageの旧braceはroll bearing carrierを貫通してlongitudinal railへ食い込んでいたため撤去した。trussはcarrier endのoutboard faceで終わる6 × 12 × 8 mmの取付足へ接続し、30 mm2以上のtyped `SurfaceContact`で荷重経路を表す。上側取付足はfront/rearでlocal Zが異なるため、共通body生成を保ちながらfront/rearを別definitionとして管理し、rear側を180度回して取付足まで反転する誤りを排除した。
+- roll gearboxの旧一方向L字gear trainがpitch far plateへ干渉したため撤去した。単純な垂直stackではpitch限界で床clearanceが5 mm未満となったため、12 mm lateral offsetとgear center distanceから導出するvertical offsetを用いた浅いV字へ変更した。全可動structural instance対床の9姿勢testと対象structural exact検査を維持する。
+- 上記変更後のrelease buildで`validate`を実行し、高精細gear 10 definitionを除外した31 definition、416 broad-phase候補をexact solid Booleanで検査した。結果は確定干渉0件、error 0件、近接warning 58件、`valid=true`かつ`complete=true`である。これはstatic poseの構造検査結果であり、高精細歯形または連続可動域を保証しない。所要時間は約4分半で、A4Pの日常second-stage 30秒目標には未達である。
 
 次の作業はPhase 4とPhase 5を依存順に進める。残る全instanceとdefinition内featureの存在理由監査を続け、不要形状を削除した上で、FDM前提の固定frame接合をM3通しbolt、実穴、washer/nut座面および工具空間を持つ実jointへ置換する。同時にroll軸系はcollar clamp screwの工具空間、保持力、購入shaft公差、後側外輪slide fitおよびFDM bore補正を確定する。relation coverage reportは実装済みであり、今後追加するrelationも未対応なら`Unsupported`として正式生成を失敗させる。LaserCutの`Body::Sheet` hole表現とDXF経路は次prototype向けに維持するが、現prototypeのcustom partはFDMを前提とする。
 

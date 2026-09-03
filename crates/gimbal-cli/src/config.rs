@@ -77,6 +77,7 @@ struct RawPitchGearbox {
     near_plate_inboard_offset_mm: f64,
     gear_plane_inboard_offset_mm: f64,
     far_plate_inboard_offset_mm: f64,
+    stage_diagonal_angle_deg: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -426,6 +427,10 @@ pub fn load(parameters_path: &Path, fabrication_path: &Path) -> Result<LoadedCon
                 far_plate_inboard_offset: positive(
                     raw.pitch_gearbox.far_plate_inboard_offset_mm,
                     "pitch_gearbox.far_plate_inboard_offset_mm",
+                )?,
+                stage_diagonal_angle: degrees(
+                    raw.pitch_gearbox.stage_diagonal_angle_deg,
+                    "pitch_gearbox.stage_diagonal_angle_deg",
                 )?,
             },
             roll_axis: RollAxisParameters {

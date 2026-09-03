@@ -129,10 +129,13 @@ pub(super) fn build_roll_assembly(
         let output_z =
             -(p.roll_axis.driven_gear.pitch_radius() + p.roll_axis.pinion.pitch_radius());
         let output_center = [gear_x, 0.0, output_z];
-        let stage_distance =
-            p.pitch_gearbox.small_gear.pitch_radius() + p.pitch_gearbox.large_gear.pitch_radius();
-        let compound_center = [gear_x, stage_distance, output_z];
-        let input_center = [gear_x, stage_distance, output_z - stage_distance];
+        let lateral = roll_gearbox_stage_lateral_offset(p);
+        let vertical = roll_gearbox_stage_vertical_offset(p);
+        // Fold both stages into a shallow V below the output. The former
+        // one-sided L intersected the right pitch unit, while a pure vertical
+        // stack lost floor clearance at the pitch limit.
+        let compound_center = [gear_x, lateral, output_z - vertical];
+        let input_center = [gear_x, 0.0, output_z - vertical * 2.0];
         let output_frame = revolute_frame(
             frames,
             pitch_frame,
@@ -218,8 +221,8 @@ pub(super) fn build_roll_assembly(
                 pitch_frame,
                 RigidTransform::translated(
                     gear_x + outward * plate_offset,
-                    stage_distance * 0.5,
-                    output_z - stage_distance * 0.5,
+                    0.0,
+                    output_z - vertical,
                 ),
                 location.with_ordinal((index + 1) as u16),
             );
@@ -659,6 +662,7 @@ pub(super) fn build_moving_carrier_contacts(
     for end in [LongitudinalEnd::Front, LongitudinalEnd::Rear] {
         let end_location = ComponentLocation::new().with_longitudinal_end(end);
         let carrier_definition = roll_bearing_carrier_definition(d, end);
+        let carriage_definition = d.pitch_unit.contact_carriage_plate(end);
         let carrier_end =
             required_instance(assembly, ComponentRole::RollBearingCarrierEnd, end_location)?;
         let rail_end_face = match end {
@@ -687,23 +691,13 @@ pub(super) fn build_moving_carrier_contacts(
                     .with_side(side)
                     .with_longitudinal_end(end),
             )?;
-            let (carriage_face, rail_side_face) = match side {
-                Side::Left => (
-                    d.pitch_unit.contact_carriage_plate.datums.positive_y,
-                    d.roll.pitch_cradle_longitudinal_rail.datums.negative_y,
-                ),
-                Side::Right => (
-                    d.pitch_unit.contact_carriage_plate.datums.negative_y,
-                    d.roll.pitch_cradle_longitudinal_rail.datums.positive_y,
-                ),
-            };
             add_surface_contact(
                 assembly,
                 carriage,
-                carriage_face,
-                rail,
-                rail_side_face,
-                20.0,
+                carriage_definition.datums.carrier_contact_face,
+                carrier_end,
+                carrier_definition.datums.carriage_face,
+                30.0,
             )?;
         }
 
@@ -745,20 +739,16 @@ pub(super) fn roll_gearbox_plate_solid(
     builder: &mut FeatureBuilder,
     p: &PrototypeParameters,
 ) -> Result<SolidId, PrototypeError> {
-    let stage_distance =
-        p.pitch_gearbox.small_gear.pitch_radius() + p.pitch_gearbox.large_gear.pitch_radius();
-    let centers = [
-        [-stage_distance * 0.5, stage_distance * 0.5],
-        [stage_distance * 0.5, stage_distance * 0.5],
-        [stage_distance * 0.5, -stage_distance * 0.5],
-    ];
+    let lateral = roll_gearbox_stage_lateral_offset(p);
+    let vertical = roll_gearbox_stage_vertical_offset(p);
+    let centers = [[0.0, vertical], [lateral, 0.0], [0.0, -vertical]];
     let supports = [
         [
-            -p.roll_axis.gearbox_support_half_span.mm() - stage_distance * 0.5,
+            -p.roll_axis.gearbox_support_half_span.mm(),
             roll_gearbox_plate_support_offset_z(),
         ],
         [
-            p.roll_axis.gearbox_support_half_span.mm() - stage_distance * 0.5,
+            p.roll_axis.gearbox_support_half_span.mm(),
             roll_gearbox_plate_support_offset_z(),
         ],
     ];
@@ -816,13 +806,22 @@ pub(super) fn roll_gearbox_plate_solid(
 
 pub(super) fn roll_gearbox_support_z(p: &PrototypeParameters) -> f64 {
     let output_z = -(p.roll_axis.driven_gear.pitch_radius() + p.roll_axis.pinion.pitch_radius());
+    output_z - roll_gearbox_stage_vertical_offset(p) + roll_gearbox_plate_support_offset_z()
+}
+
+pub(super) fn roll_gearbox_stage_lateral_offset(p: &PrototypeParameters) -> f64 {
+    p.roll_axis.gearbox_support_half_span.mm()
+}
+
+pub(super) fn roll_gearbox_stage_vertical_offset(p: &PrototypeParameters) -> f64 {
     let stage_distance =
         p.pitch_gearbox.small_gear.pitch_radius() + p.pitch_gearbox.large_gear.pitch_radius();
-    output_z - stage_distance * 0.5 + roll_gearbox_plate_support_offset_z()
+    let lateral = roll_gearbox_stage_lateral_offset(p);
+    libm::sqrt(stage_distance * stage_distance - lateral * lateral)
 }
 
 pub(super) const fn roll_gearbox_plate_support_offset_z() -> f64 {
-    -24.0
+    0.0
 }
 
 pub(super) fn moving_drive_mount_arm_solid(

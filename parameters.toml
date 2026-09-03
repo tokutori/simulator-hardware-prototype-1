@@ -45,9 +45,10 @@ flanged_bearing_width_mm = 3.0
 flanged_bearing_flange_diameter_mm = 9.2
 flanged_bearing_flange_width_mm = 0.6
 side_plate_thickness_mm = 3.0
-near_plate_inboard_offset_mm = 6.5
-gear_plane_inboard_offset_mm = 10.5
-far_plate_inboard_offset_mm = 24.0
+near_plate_inboard_offset_mm = 8.3
+gear_plane_inboard_offset_mm = 12.0
+far_plate_inboard_offset_mm = 25.8
+stage_diagonal_angle_deg = 45.0
 
 [roll_axis]
 module_mm = 1.0

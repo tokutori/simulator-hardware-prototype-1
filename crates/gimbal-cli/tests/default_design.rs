@@ -1,9 +1,10 @@
-use geared_gimbal_design::{PrototypeDesign, build_prototype};
+use geared_gimbal_design::{PrototypeDesign, PrototypeError, build_prototype};
 use gimbal_cli::{config, validate_assembly};
 use gimbal_core::*;
 use gimbal_kernel_manifold::{
-    Evaluator, GeometryEvaluationMode, RelationValidationStatus, ValidationIssueKind,
-    ValidationProfile,
+    AssemblyValidator, Evaluator, GeometryEvaluationMode, RelationValidationStatus,
+    UnrelatedProximityPolicy, ValidationIssueKind, ValidationPlan, ValidationProfile,
+    ValidatorSettings,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -1444,6 +1445,79 @@ fn upper_carrier_and_roll_mounts_do_not_use_solid_overlap() {
             "{first:?} intersects {second:?} by {volume} mm^3"
         );
     }
+}
+
+#[test]
+fn pitch_carriages_end_at_roll_bearing_carrier_contact_faces() {
+    let design = load_design();
+    let included_definitions =
+        design
+            .assembly
+            .definitions_with_ids()
+            .filter_map(|(id, definition)| {
+                matches!(
+                    definition.role,
+                    ComponentRole::PitchContactCarriagePlate | ComponentRole::RollBearingCarrierEnd
+                )
+                .then_some(id)
+            });
+    let zero_pose = design
+        .kinematics
+        .pose(command(0.0, 0.0))
+        .expect("zero pose is valid");
+    let settings = ValidatorSettings {
+        plan: ValidationPlan::include_only(
+            ValidationProfile::STRUCTURAL_EXACT_STATIC,
+            included_definitions,
+        ),
+        numerical_tolerance: NumericalTolerance {
+            linear_epsilon: PositiveLength::mm(1.0e-6).expect("positive linear epsilon"),
+            area_epsilon: PositiveArea::square_mm(1.0e-8).expect("positive area epsilon"),
+            volume_epsilon: PositiveVolume::cubic_mm(1.0e-7).expect("positive volume epsilon"),
+        },
+        unrelated_proximity_threshold: NonNegativeLength::mm(0.05)
+            .expect("non-negative proximity threshold"),
+        unrelated_proximity_policy: UnrelatedProximityPolicy::Warning,
+    };
+    let report = AssemblyValidator::new(&design.graph, &design.assembly, &zero_pose, settings)
+        .validate()
+        .expect("targeted carriage validation succeeds");
+    let errors = report
+        .issues
+        .iter()
+        .filter(|issue| issue.severity == gimbal_kernel_manifold::ValidationSeverity::Error)
+        .collect::<Vec<_>>();
+    assert!(errors.is_empty(), "carriage contact errors: {errors:#?}");
+}
+
+#[test]
+fn pitch_gearbox_rejects_bearing_overlap_and_an_invalid_axial_stack() {
+    let loaded = load_configuration();
+
+    let mut overlapping_bearings = loaded.parameters.clone();
+    overlapping_bearings.pitch_gearbox.stage_diagonal_angle =
+        Angle::degrees(10.0).expect("finite test angle");
+    assert!(matches!(
+        build_prototype(&overlapping_bearings),
+        Err(PrototypeError::InvalidPitchBearingSpacing)
+    ));
+
+    let mut invalid_stack = loaded.parameters;
+    invalid_stack.pitch_gearbox.gear_plane_inboard_offset =
+        Length::positive_mm(11.7).expect("finite test length");
+    assert!(matches!(
+        build_prototype(&invalid_stack),
+        Err(PrototypeError::InvalidPitchAxialStack)
+    ));
+
+    invalid_stack.pitch_gearbox.gear_plane_inboard_offset =
+        Length::positive_mm(12.0).expect("finite test length");
+    invalid_stack.pitch_gearbox.far_plate_inboard_offset =
+        Length::positive_mm(25.2).expect("finite test length");
+    assert!(matches!(
+        build_prototype(&invalid_stack),
+        Err(PrototypeError::InvalidPitchAxialStack)
+    ));
 }
 
 #[test]

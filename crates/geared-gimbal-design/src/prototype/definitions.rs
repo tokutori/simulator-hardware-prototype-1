@@ -80,6 +80,7 @@ pub(super) struct CarrierPostDatums {
 pub(super) struct ContactCarriageDatums {
     pub(super) negative_y: DatumId<PlaneDatum>,
     pub(super) positive_y: DatumId<PlaneDatum>,
+    pub(super) carrier_contact_face: DatumId<PlaneDatum>,
     pub(super) bearing_bores: [DatumId<CylinderDatum>; 6],
     pub(super) fasteners: [FastenerMemberDatums; 3],
 }
@@ -115,6 +116,7 @@ pub(super) struct PitchGearboxBearingDatums {
 pub(super) struct CarrierEndDatums {
     pub(super) rail_face: DatumId<PlaneDatum>,
     pub(super) arm_face: DatumId<PlaneDatum>,
+    pub(super) carriage_face: DatumId<PlaneDatum>,
     pub(super) bearing_bore: DatumId<CylinderDatum>,
     pub(super) bearing_shoulder_face: DatumId<PlaneDatum>,
     pub(super) outer_face: DatumId<PlaneDatum>,
@@ -195,10 +197,23 @@ pub(super) struct PitchUnitDefinitions {
     pub(super) gearbox_distribution: ComponentDefinitionId,
     pub(super) gearbox_large: ComponentDefinitionId,
     pub(super) pitch_contact_outboard_plate: Defined<PitchOutboardPlateDatums>,
-    pub(super) contact_carriage_plate: Defined<ContactCarriageDatums>,
+    pub(super) front_contact_carriage_plate: Defined<ContactCarriageDatums>,
+    pub(super) rear_contact_carriage_plate: Defined<ContactCarriageDatums>,
     pub(super) pitch_gearbox_far_plate: Defined<GearboxFarPlateDatums>,
     pub(super) pitch_gearbox_shaft: Defined<PitchGearboxShaftDatums>,
     pub(super) pitch_gearbox_bearing: Defined<PitchGearboxBearingDatums>,
+}
+
+impl PitchUnitDefinitions {
+    pub(super) const fn contact_carriage_plate(
+        &self,
+        end: LongitudinalEnd,
+    ) -> Defined<ContactCarriageDatums> {
+        match end {
+            LongitudinalEnd::Front => self.front_contact_carriage_plate,
+            LongitudinalEnd::Rear => self.rear_contact_carriage_plate,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -578,42 +593,10 @@ pub(super) fn build_definitions(
             bearing_bores: outboard_bearing_bores,
         },
     };
-    let mut contact_carriage_datums = DatumSet::for_definition(assembly.next_definition_id());
-    let contact_carriage_negative_y = add_plane_datum(
-        &mut contact_carriage_datums,
-        "negative_y",
-        [0.0, -p.pitch_gearbox.side_plate_thickness.mm() * 0.5, 0.0],
-        [0.0, -1.0, 0.0],
-    );
-    let contact_carriage_positive_y = add_plane_datum(
-        &mut contact_carriage_datums,
-        "positive_y",
-        [0.0, p.pitch_gearbox.side_plate_thickness.mm() * 0.5, 0.0],
-        [0.0, 1.0, 0.0],
-    );
-    let contact_carriage_bearing_bores = pitch_bearing_bore_datums(
-        &mut contact_carriage_datums,
-        pitch_contact_carriage_bearing_centers(p)?,
-        p,
-        "near",
-    );
-    let contact_carriage_fasteners = pitch_gearbox_plate_fastener_datums(
-        &mut contact_carriage_datums,
-        p.pitch_gearbox.side_plate_thickness.mm(),
-        "near",
-    );
-    let carriage_solids = pitch_contact_carriage_plate_solids(builder, p)?;
-    let contact_carriage_plate = assembly.add_definition(ComponentDefinition {
-        name: "pitch_contact_carriage_plate".into(),
-        role: ComponentRole::PitchContactCarriagePlate,
-        body: Body::Compliant {
-            manufacturing_solid: carriage_solids.manufacturing,
-            assembly_solid: carriage_solids.assembly,
-        },
-        manufacturing: fdm,
-        color_rgba: [0.20, 0.22, 0.27, 1.0],
-        datums: contact_carriage_datums,
-    });
+    let front_contact_carriage_plate =
+        build_contact_carriage_definition(builder, assembly, p, fdm, LongitudinalEnd::Front)?;
+    let rear_contact_carriage_plate =
+        build_contact_carriage_definition(builder, assembly, p, fdm, LongitudinalEnd::Rear)?;
     let mut far_plate_datums = DatumSet::for_definition(assembly.next_definition_id());
     let far_plate_negative_y = add_plane_datum(
         &mut far_plate_datums,
@@ -966,15 +949,8 @@ pub(super) fn build_definitions(
             gearbox_distribution,
             gearbox_large,
             pitch_contact_outboard_plate,
-            contact_carriage_plate: Defined {
-                id: contact_carriage_plate,
-                datums: ContactCarriageDatums {
-                    negative_y: contact_carriage_negative_y,
-                    positive_y: contact_carriage_positive_y,
-                    bearing_bores: contact_carriage_bearing_bores,
-                    fasteners: contact_carriage_fasteners,
-                },
-            },
+            front_contact_carriage_plate,
+            rear_contact_carriage_plate,
             pitch_gearbox_far_plate: Defined {
                 id: pitch_gearbox_far_plate,
                 datums: GearboxFarPlateDatums {
@@ -1064,6 +1040,68 @@ pub(super) fn build_definitions(
     })
 }
 
+fn build_contact_carriage_definition(
+    builder: &mut FeatureBuilder,
+    assembly: &mut Assembly,
+    p: &PrototypeParameters,
+    manufacturing: Manufacturing,
+    end: LongitudinalEnd,
+) -> Result<Defined<ContactCarriageDatums>, PrototypeError> {
+    let mut datums = DatumSet::for_definition(assembly.next_definition_id());
+    let thickness = p.pitch_gearbox.side_plate_thickness.mm();
+    let negative_y = add_plane_datum(
+        &mut datums,
+        "negative_y",
+        [0.0, -thickness * 0.5, 0.0],
+        [0.0, -1.0, 0.0],
+    );
+    let positive_y = add_plane_datum(
+        &mut datums,
+        "positive_y",
+        [0.0, thickness * 0.5, 0.0],
+        [0.0, 1.0, 0.0],
+    );
+    let carrier_contact_face = add_plane_datum(
+        &mut datums,
+        "roll_bearing_carrier_contact_face",
+        [
+            pitch_carriage_carrier_contact_local_x(p)?,
+            0.0,
+            pitch_carriage_carrier_contact_local_z(p, end)?,
+        ],
+        [-1.0, 0.0, 0.0],
+    );
+    let bearing_bores = pitch_bearing_bore_datums(
+        &mut datums,
+        pitch_contact_carriage_bearing_centers(p)?,
+        p,
+        "near",
+    );
+    let fasteners = pitch_gearbox_plate_fastener_datums(&mut datums, thickness, "near");
+    let solids = pitch_contact_carriage_plate_solids(builder, p, end)?;
+    let id = assembly.add_definition(ComponentDefinition {
+        name: format!("pitch_contact_carriage_plate_{}", end.as_str()),
+        role: ComponentRole::PitchContactCarriagePlate,
+        body: Body::Compliant {
+            manufacturing_solid: solids.manufacturing,
+            assembly_solid: solids.assembly,
+        },
+        manufacturing,
+        color_rgba: [0.20, 0.22, 0.27, 1.0],
+        datums,
+    });
+    Ok(Defined {
+        id,
+        datums: ContactCarriageDatums {
+            negative_y,
+            positive_y,
+            carrier_contact_face,
+            bearing_bores,
+            fasteners,
+        },
+    })
+}
+
 fn build_roll_bearing_carrier_definition(
     builder: &mut FeatureBuilder,
     assembly: &mut Assembly,
@@ -1086,6 +1124,16 @@ fn build_roll_bearing_carrier_definition(
     let arm_face = add_plane_datum(
         &mut datums,
         "arm_contact_face",
+        [
+            tie_center_x + tie_half,
+            0.0,
+            p.frame.moving_carrier_height.mm(),
+        ],
+        [1.0, 0.0, 0.0],
+    );
+    let carriage_face = add_plane_datum(
+        &mut datums,
+        "contact_carriage_face",
         [
             tie_center_x + tie_half,
             0.0,
@@ -1149,6 +1197,7 @@ fn build_roll_bearing_carrier_definition(
         datums: CarrierEndDatums {
             rail_face,
             arm_face,
+            carriage_face,
             bearing_bore,
             bearing_shoulder_face,
             outer_face,
